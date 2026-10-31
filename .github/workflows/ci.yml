@@ -1,13 +1,15 @@
-name: CI
+name: Self-hosted checks
 
+# Deliberately manual: pushing this private version does not install, build,
+# publish, or deploy anything automatically.
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
+  check:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,10 +23,13 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --include=dev
 
       - name: Run Typecheck
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit --incremental false
 
-      - name: Run Linter
-        run: npm run lint
+      - name: Check terminal sources
+        run: npx eslint components/TerminalPanel.tsx components/TerminalViewport.tsx lib/terminal-*.ts lib/terminal-*.test.mjs app/api/terminal/
+
+      - name: Terminal tests (including real PTY)
+        run: npm run test:terminal

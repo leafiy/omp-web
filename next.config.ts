@@ -11,6 +11,7 @@ try {
 
 const nextConfig: NextConfig = {
   serverExternalPackages: [
+    "@lydell/node-pty",
     "better-sqlite3",
     "undici",
     "@earendil-works/pi-coding-agent",

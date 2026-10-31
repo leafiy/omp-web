@@ -46,6 +46,8 @@ export function useGlobalKeyboardShortcuts(
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
+      // Terminal keys belong to the shell, never to the chat's global actions.
+      if (e.target instanceof Element && e.target.closest("[data-terminal]")) return;
       // ---- Esc: stop agent ----
       if (e.key === "Escape") {
         if (!globalAbortHandler) return;

@@ -1,6 +1,8 @@
-# omp-web
+# omp-web — Leafiy 自托管版
 
-[English](./README.en.md)
+基于 [17380936778/omp-web](https://github.com/17380936778/omp-web) 的私有自托管版本，保留本机模型兼容修复，并新增页面底部的交互式终端。终端可在 AI 工作期间独立使用，无需额外开放端口。
+
+**[自托管与终端使用说明](./docs/self-hosting.zh-CN.md)** · [English（上游说明）](./README.en.md)
 
 [Oh My Pi](https://github.com/badlogic/pi-mono) 编程智能体的浏览器界面——基于 [pi-web](https://github.com/agegr/pi-web) Fork 并改造，专门适配 Oh My Pi（omp）工作流。
 
@@ -19,9 +21,9 @@ Pi Web 要求 Node.js 22.19.0 或更高版本。可通过 `node --version` 检�
 **从源码运行（Git Clone）：**
 
 ```bash
-git clone https://github.com/17380936778/omp-web.git
+git clone https://github.com/leafiy/omp-web.git
 cd omp-web
-npm install
+npm ci --include=dev
 npm run dev      # 启动开发服务器（端口 30141）
 # 或构建后运行生产模式：
 npm run build
@@ -43,7 +45,45 @@ OMP_WEB_HOSTNAME=0.0.0.0 omp-web  # 显式开放网络访问
 OMP_WEB_NO_OPEN=1 omp-web         # 适用于后台服务或开机自启
 ```
 
-Pi Web 没有应用层身份验证，并且可以调用高权限智能体。请勿将其暴露到互联网；仅在可信网络中使用非 loopback 监听地址。
+设置 `PI_WEB_PASSWORD` 可启用 HTTP Basic Auth（用户名 `pi`），未设置时没有登录保护。网页终端和智能体都拥有服务账户权限；Basic Auth 不加密传输，远程访问应配合 HTTPS 或可信 VPN，切勿将无认证服务暴露到公网。终端可通过 `OMP_WEB_TERMINAL=0` 禁用。
+
+### 本机部署（端口 2225）
+
+- 安装目录：`/opt/omp-web`，生产模式运行。
+- 服务：`omp-web.service`，已启用容器启动自启和异常退出重启。
+- 监听：`0.0.0.0:2225`；主机名访问 `http://pc:2225`，本机访问 `http://127.0.0.1:2225`，局域网 IP 访问 `http://192.168.52.22:2225`。
+- 服务通过 `PI_WEB_ALLOWED_HOSTS=pc` 放行主机名。监听所有网卡并不会自动信任所有域名；新增访问域名时应更新此变量（多个主机名用逗号分隔）并重新加载、重启服务。未关闭其他 Host 和跨站请求检查。
+- 运行身份：Distrobox 容器内 `root`，未额外配置 systemd 沙箱；不改变容器原有隔离边界。
+- 数据目录：`/root/2/devbox-distrobox/.omp/agent`，复用现有模型凭据和会话。
+- 按本机部署要求未设置 `PI_WEB_PASSWORD`；`trust.json` 中的 `"/": true` 信任所有目录的项目资源。新会话的工具默认值在 `hooks/useAgentSession.ts` 中设为 `full`；上游更新时需要保留此本地改动。
+- 此配置允许网络访问者以服务账户权限运行命令、读写文件，也允许项目扩展执行代码。仅限可信网络，不要直接暴露到公网。
+
+在容器内管理服务：
+
+```bash
+systemctl status omp-web
+journalctl -u omp-web -n 100 --no-pager
+systemctl restart omp-web
+systemctl stop omp-web
+```
+
+初次部署已检查生产构建、systemd 启用与运行状态、回环及局域网地址的 HTTP 响应、模型列表和浏览器新会话界面（默认 `full`）。修复主机名访问后，已检查 `http://pc:2225/` 及同源 API 返回 HTTP 200，未放行的主机名和跨站 API 请求仍返回 HTTP 403。
+
+#### 本机模型与订阅兼容修复
+
+- `lib/omp-models.ts` 将缓存模型中的 `provider` 作为运行时提供商 ID，不把 `openai-codex:0.159.0` 等带版本的缓存键当作提供商。自定义模型配置仍覆盖缓存元数据。
+- 缓存中 `baseUrl` 为空的目录占位模型，不作为可调用的自定义模型导出；用户配置了提供商或模型端点后才导出，并继承该端点。不为 Azure 等服务编造默认端点，也不修改原始模型数据库。
+- OMP 数据库中的 API Key 可以导入运行时；OAuth 访问令牌不再作为 API Key 注入。ChatGPT 订阅使用网页版 `auth.json` 中的 OAuth 登录，保留账户信息和 SDK 的令牌刷新机制，不覆盖已登录账号。
+- 模型列表根据 SDK 运行时的认证状态识别网页版订阅，而不是只看 OMP 数据库。ChatGPT 订阅模型属于 `openai-codex`，不是 API Key 提供商 `openai`。
+- 模型配置页的测试接口与会话共用凭据适配逻辑。上游更新时需保留这些本地修复。
+
+回归检查：
+
+```bash
+node --test lib/omp-models.test.mjs lib/models-api.test.mjs lib/model-role-filter.test.mjs lib/models-cache.test.mjs
+```
+
+本次模型修复通过 13 项检查、生产构建、部署后的模型接口与浏览器模型选择检查。经用户授权，使用现有订阅向 `openai-codex/gpt-6-astra` 发送了一次最小请求，成功收到 `OK`；页面不再显示模型配置错误。
 
 ## HTTP 代理
 

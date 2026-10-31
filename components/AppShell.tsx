@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
+import { TerminalPanel } from "./TerminalPanel";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { ModelsConfig } from "./ModelsConfig";
@@ -1239,7 +1240,7 @@ export function AppShell() {
         </div>
 
         {/* Chat content */}
-        <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", position: "relative" }}>
           {showChat ? (
             <ChatWindow
               key={sessionKey}
@@ -1325,6 +1326,7 @@ export function AppShell() {
             )
           ) : null}
         </div>
+        <TerminalPanel key={projectTrustCwd ?? "no-directory"} cwd={projectTrustCwd} />
       </div>
 
       <div
