@@ -6,7 +6,6 @@ import { loadModelsWithCache, withModelRuntimeError, type ModelsData } from "../
 import { readOmpModelsFromDb, readOmpConfig, parseOmpDefaultModel, syncOmpRuntimeModelsJson, applyOmpRuntimeCredentials } from "../../../lib/omp-models";
 import { buildVisibleRoleModels } from "../../../lib/model-role-filter";
 import { readOmpModelsConfig } from "../../../lib/omp-model-config";
-import { getUsableOmpRuntimeCredentials } from "../../../lib/omp-auth";
 import { getOmpAgentDir } from "../../../lib/file-paths";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "../../../lib/file-access";
 
@@ -84,8 +83,12 @@ async function loadModels(cwd: string): Promise<ModelsData> {
   const settings = services.settingsManager;
   const enabledModels = settings.getEnabledModels();
 
-  const ompCredentials = getUsableOmpRuntimeCredentials();
-  const authedProviderIds = new Set(ompCredentials.map((c: { provider: string }) => c.provider));
+  // The runtime knows both web OAuth logins and imported CLI API keys.
+  const authedProviderIds = new Set(
+    services.modelRuntime.getProviders()
+      .filter((provider) => services.modelRuntime.hasConfiguredAuth(provider.id))
+      .map((provider) => provider.id),
+  );
   for (const p of Object.keys(customProvidersData)) {
     authedProviderIds.add(p);
   }

@@ -148,6 +148,9 @@ export async function applyOmpRuntimeCredentials(
   agentDir: string = getOmpAgentDir(),
 ): Promise<void> {
   for (const credential of getUsableOmpRuntimeCredentials()) {
+    // OAuth must stay in the SDK credential store so account metadata and
+    // token refresh are preserved. A runtime API key would shadow that login.
+    if (credential.credentialType !== "api_key") continue;
     await modelRuntime.setRuntimeApiKey(credential.provider, credential.apiKey, { allowNetwork: false });
   }
   const customProvidersData = (readOmpModelsConfig(agentDir).providers ?? {}) as Record<string, { apiKey?: string; key?: string }>;
@@ -175,10 +178,10 @@ export function readOmpModelsFromDb(): OmpModelItem[] {
     const items: OmpModelItem[] = [];
     for (const row of rows) {
       try {
-        const parsed = JSON.parse(row.models) as Array<{ id: string; name?: string }>;
+        const parsed = JSON.parse(row.models) as Array<{ id: string; name?: string; provider?: string }>;
         if (Array.isArray(parsed)) {
           for (const m of parsed) {
-            if (m && m.id) items.push({ id: m.id, name: m.name || m.id, provider: row.provider_id });
+            if (m && m.id) items.push({ id: m.id, name: m.name || m.id, provider: m.provider?.trim() || row.provider_id });
           }
         }
       } catch {
@@ -287,6 +290,7 @@ export function syncOmpRuntimeModelsJson(agentDir: string = getOmpAgentDir()): s
   const runtimeModelsPath = join(agentDir, "omp-web-models.json");
   const dbPath = join(agentDir, "models.db");
   const providers: Record<string, Record<string, unknown>> = {};
+  const configuredProviders = readOmpModelsConfig(agentDir).providers ?? {};
 
   if (existsSync(dbPath)) {
     try {
@@ -299,24 +303,41 @@ export function syncOmpRuntimeModelsJson(agentDir: string = getOmpAgentDir()): s
         try {
           const rawModels = JSON.parse(row.models) as Array<Record<string, unknown>>;
           if (!Array.isArray(rawModels) || rawModels.length === 0) continue;
-          const sanitizedModels = rawModels.map((m) => {
+          // Cache keys may include catalog versions or account fingerprints;
+          // model metadata carries the provider ID used by OAuth and roles.
+          const providerId = typeof rawModels[0].provider === "string" && rawModels[0].provider.trim()
+            ? rawModels[0].provider.trim()
+            : row.provider_id;
+          const sanitizedModels = rawModels.flatMap((m) => {
             const cleaned = sanitizeObject(m);
             delete cleaned.provider;
+            if (typeof cleaned.baseUrl === "string" && !cleaned.baseUrl.trim()) {
+              delete cleaned.baseUrl;
+              const configured = configuredProviders[providerId];
+              const configuredModel = Array.isArray(configured?.models)
+                ? configured.models.find((model) => model.id === cleaned.id)
+                : undefined;
+              const endpoint = configuredModel?.baseUrl ?? configured?.baseUrl;
+              // A catalog placeholder is not a custom runtime model until an
+              // endpoint is configured. Never invent an endpoint for it.
+              if (typeof endpoint !== "string" || !endpoint.trim()) return [];
+            }
             if (!cleaned.contextWindow || typeof cleaned.contextWindow !== "number" || (cleaned.contextWindow as number) <= 0) {
               cleaned.contextWindow = inferContextWindow(String(cleaned.id || ""));
             }
-            return cleaned;
+            return [cleaned];
           });
+          if (sanitizedModels.length === 0) continue;
           const sample = sanitizedModels[0];
           const providerObj: Record<string, unknown> = { models: sanitizedModels };
           if (sample.api) providerObj.api = sample.api;
           if (sample.baseUrl) providerObj.baseUrl = sample.baseUrl;
-          if (row.provider_id === "google-antigravity") {
+          if (providerId === "google-antigravity") {
             providerObj.api = "google-generative-ai";
             if (!providerObj.baseUrl) providerObj.baseUrl = "https://daily-cloudcode-pa.googleapis.com";
             for (const m of sanitizedModels) m.api = "google-generative-ai";
           }
-          providers[row.provider_id] = providerObj;
+          providers[providerId] = providerObj;
         } catch {
           // ignore row parse error
         }
@@ -326,7 +347,6 @@ export function syncOmpRuntimeModelsJson(agentDir: string = getOmpAgentDir()): s
     }
   }
 
-  const configuredProviders = readOmpModelsConfig(agentDir).providers ?? {};
   const customProviders: Record<string, Record<string, unknown>> = {};
   const cachedProviderIds = new Set(Object.keys(providers).map((providerId) => providerId.toLowerCase()));
   for (const [providerId, rawConfig] of Object.entries(configuredProviders)) {

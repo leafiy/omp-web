@@ -5,7 +5,7 @@ import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getOmpAgentDir } from "@/lib/file-paths";
-import { readOmpModelsConfig } from "@/lib/omp-model-config";
+import { applyOmpRuntimeCredentials } from "@/lib/omp-models";
 import { getUsableOmpRuntimeCredentials } from "@/lib/omp-auth";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
@@ -99,15 +99,11 @@ export async function POST(req: Request) {
       },
     }, null, 2), "utf8");
 
-    const modelRuntime = await ModelRuntime.create({ modelsPath });
-    for (const credential of getUsableOmpRuntimeCredentials()) {
-      await modelRuntime.setRuntimeApiKey(credential.provider, credential.apiKey, { allowNetwork: false });
-    }
-    const configuredProvider = readOmpModelsConfig(getOmpAgentDir()).providers?.[providerName];
-    const configuredKey = configuredProvider?.apiKey;
-    if (typeof configuredKey === "string" && configuredKey.trim()) {
-      await modelRuntime.setRuntimeApiKey(providerName, configuredKey.trim(), { allowNetwork: false });
-    }
+    const modelRuntime = await ModelRuntime.create({
+      modelsPath,
+      authPath: join(getOmpAgentDir(), "auth.json"),
+    });
+    await applyOmpRuntimeCredentials(modelRuntime);
     const loadError = modelRuntime.getError();
     if (loadError) return NextResponse.json({ ok: false, error: loadError });
 

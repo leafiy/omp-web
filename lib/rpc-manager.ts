@@ -1300,8 +1300,7 @@ export async function startRpcSession(
       modelsPath: runtimeModelsPath,
     });
 
-    // OMP stores credential metadata as JSON. The runtime needs the actual
-    // API key or OAuth access token, never the serialized credential object.
+    // Import CLI API keys without shadowing SDK-managed OAuth subscriptions.
     await applyOmpRuntimeCredentials(modelRuntime, agentDir);
 
     // Gate untrusted project extensions so opening a repository does not run
