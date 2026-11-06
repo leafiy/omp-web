@@ -252,6 +252,7 @@ export class ClaudeCodeSession {
       case "get_available_models": return { models: await this.query!.supportedModels() };
       case "get_native_usage": return this.query!.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
       case "get_commands": return { commands: claudeSlashCommands(await this.query!.supportedCommands(), this.terminalCommands) };
+      case "get_skill_commands": return { commands: await this.query!.supportedCommands() };
       case "get_tools": return this.tools.map((name) => ({ name, description: "Claude Code native tool", active: true }));
       case "get_available_thinking_levels": return { levels: [] };
       case "get_messages": return { messages: this.transcript!.getMessages() };

@@ -9,6 +9,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { OmpNativeSettings } from "./OmpNativeSettings";
+import { NativeSkillsPanel } from "./NativeSkillsPanel";
 import { SubscriptionUsage } from "./SubscriptionUsage";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
@@ -651,7 +652,7 @@ export function AppShell() {
           {
             label: translate("common.skills"),
             onClick: () => setSkillsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            disabled: false,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -1511,8 +1512,8 @@ export function AppShell() {
         onConfirm={() => void handleTrustProject()}
       />
     )}
-    {skillsConfigOpen && projectTrustCwd && (
-      <OmpNativeSettings engine={activeEngine} onClose={() => setSkillsConfigOpen(false)} />
+    {skillsConfigOpen && (
+      <NativeSkillsPanel key={`${activeEngine}:${projectTrustCwd ?? ""}`} engine={activeEngine} cwd={projectTrustCwd} onClose={() => setSkillsConfigOpen(false)} />
     )}
     {usageOpen && <SubscriptionUsage sessionId={selectedSession?.id} onClose={() => setUsageOpen(false)} />}
     </>
