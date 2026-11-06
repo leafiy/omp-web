@@ -204,6 +204,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.retrying": "正在重试（{attempt}/{max}）…",
     "chat.loadingCommands": "正在加载命令...",
     "chat.slashCommands": "斜杠命令 · {label}",
+    "chat.slashArguments": "命令参数 · {count} 个候选",
+    "chat.fillArgumentOnly": "仅填入参数，不会自动发送",
     "chat.tabEnter": "Tab / Enter",
     "chat.noCommands": "未找到扩展、提示词或技能命令",
     "chat.match": "1 个匹配项",

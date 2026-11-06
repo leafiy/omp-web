@@ -204,6 +204,8 @@ export const enLocale: LocalePlugin = {
     "chat.retrying": "Retrying ({attempt}/{max})…",
     "chat.loadingCommands": "Loading commands...",
     "chat.slashCommands": "Slash commands · {label}",
+    "chat.slashArguments": "Command arguments · {count} choices",
+    "chat.fillArgumentOnly": "Fill in only · does not send",
     "chat.tabEnter": "Tab / Enter",
     "chat.noCommands": "No extension, prompt, or skill commands found",
     "chat.match": "1 match",

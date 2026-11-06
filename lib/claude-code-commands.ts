@@ -15,6 +15,17 @@ export function claudeSlashCommandRestriction(name: string): string | undefined 
   return undefined;
 }
 
+function argumentHint(command: SlashCommand): string {
+  const hint = command.argumentHint?.trim() ?? "";
+  // Some CLIs advertise the builtin /effort with only a placeholder. This is
+  // syntax assistance, not a claim that the current model/account supports
+  // every level. Explicit native choices always win; user skills are untouched.
+  if (command.builtin && command.name === "effort" && ["", "[level]", "<level>", "[level|ultracode [on|off]]", "<level|ultracode [on|off]>"].includes(hint)) {
+    return "<low|medium|high|xhigh|max|auto|ultracode [on|off]>";
+  }
+  return hint;
+}
+
 /** Preserve native name/alias precedence, without inventing a command catalog. */
 export function claudeSlashCommands(commands: readonly SlashCommand[], terminalNames: readonly string[] = []): ClaudeSlashCommand[] {
   const named = new Map<string, SlashCommand>();
@@ -27,7 +38,7 @@ export function claudeSlashCommands(commands: readonly SlashCommand[], terminalN
   const result = new Map<string, ClaudeSlashCommand>();
   const add = (name: string, command: SlashCommand) => {
     if (validName(name) && visible(name)) result.set(name, {
-      name, description: command.description, argumentHint: command.argumentHint, source: "claude",
+      name, description: command.description, argumentHint: argumentHint(command), source: "claude",
     });
   };
   for (const [name, command] of named) {

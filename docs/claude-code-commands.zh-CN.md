@@ -11,6 +11,15 @@
 - `system/local_command_output` 作为助手文字显示并写入网页显示投影。收到原生 `result` 才结束运行状态，不把一条输出当作执行完成。
 - 原生目录中的直接命令名优先于别名；同名内置命令优先于被遮蔽的项目命令。未提供的命令明确拒绝，不把拼错的命令悄悄当作普通模型提示。
 
+## 参数补全
+
+- 输入 `/effort ` 显示参数候选；`/effort h` 筛选到 `high`；`/effort ultracode ` 继续提示 `on / off`。
+- 方向键、Tab / Enter、鼠标点击或手机点击只填入文字，不自动发送。最终仍由用户点击发送或在补全结束后按 Enter 执行。Esc 关闭菜单。
+- 优先解析原生命令的有限枚举提示，如 `<json|text>`、`[on|off]` 和带分支的可选参数；其他 Agent 提供同类提示时也能复用。路径、自由文本、无法识别或过于复杂的提示不猜测候选。
+- 本机标记为内置的 `/effort` 若只给空提示、`<level>` 等已知占位提示，使用兼容语法 `low / medium / high / xhigh / max / auto / ultracode [on|off]`。原生提供明确枚举时以原生为准；同名用户技能不会套用该兼容提示。
+- 候选只描述语法，不代表账号/模型支持所有等级；CC 仍负责权限、模型限制和最终参数校验。补全不会预先执行命令来探测选项。
+- 只补全输入末尾的当前参数；光标移到中间、存在选区、多行输入或使用输入法组合文字时，不抢占文字编辑。
+
 ## 保留的边界
 
 网页不是完整终端。登录/退出登录、终端布局或输入设置，以及网页尚不能跟踪的会话身份/历史切换操作不转发。原生明确标注为 terminal-only 的命令也不展示。`/new`、`/clear`、`/resume` 使用现有网页会话控件；其余不支持的操作请在本机 `claude` 中执行。
@@ -22,7 +31,7 @@
 回归入口（需按仓库规则获得运行授权）：
 
 ```sh
-node --test lib/claude-code.test.mjs components/ChatInput.test.mjs hooks/useAgentSession.test.mjs
+node --test lib/claude-code.test.mjs lib/slash-command-arguments.test.mjs components/ChatInput.test.mjs hooks/useAgentSession.test.mjs
 ```
 
 测试使用模拟 SDK 和临时文件，覆盖发现、参数转发、别名冲突、终端限制、未知命令拒绝、并发保护、本地输出持久化与完成信号，以及菜单合并/分组。不调用真实 CC 或模型。构建后浏览器检查同样使用模拟 API；不能把这些结果等同于真实账号聊天验收。

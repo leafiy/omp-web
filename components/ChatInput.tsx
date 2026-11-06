@@ -4,6 +4,7 @@ import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, f
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
 import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { slashArgumentCompletions, type SlashArgumentCompletion } from "@/lib/slash-command-arguments";
 import {
   MAX_ATTACHED_IMAGE_BYTES,
   MAX_ATTACHED_IMAGES,
@@ -127,12 +128,12 @@ function formatTokenCount(tokens: number): string {
   return tokens.toLocaleString();
 }
 
-type SlashCommandPaletteItem = SlashCommandInfo | {
+type SlashCommandPaletteItem = (SlashCommandInfo | {
   name: string;
   description: string;
   source: "builtin";
   argumentHint?: string;
-};
+}) & { completion?: SlashArgumentCompletion };
 
 type SlashCommandSource = SlashCommandPaletteItem["source"];
 
@@ -381,6 +382,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashCursorAtEnd, setSlashCursorAtEnd] = useState(true);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
   const [atMenuOpen, setAtMenuOpen] = useState(false);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
@@ -408,6 +410,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   const slashCommandsRequestedRef = useRef(false);
+  const pendingSlashCompletionRef = useRef<string | null>(null);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const historyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -675,13 +678,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     clearInput();
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
-  const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
+  const slashQuery = value.startsWith("/") && !/[\r\n]/.test(value)
     ? value.slice(1).toLowerCase()
     : null;
+  const slashArgumentMode = slashQuery !== null && /\s/.test(slashQuery);
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
     const commands = slashCommandsForEngine(engine, slashCommands ?? [], isStreaming);
+    if (slashArgumentMode) {
+      const commandName = value.slice(1).split(/\s/, 1)[0];
+      const command = commands.find((item) => item.name === commandName);
+      return command ? slashArgumentCompletions(value, [command]).map((completion) => ({ ...command, completion })) : [];
+    }
     return commands
       .filter((command) => {
         const name = command.name.toLowerCase();
@@ -700,6 +709,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     commands: displayedSlashCommands,
     groups: groupedSlashCommands,
   } = buildSlashCommandLayout(filteredSlashCommands, skillDormancy);
+  const slashMenuVisible = slashMenuOpen && slashQuery !== null && slashCursorAtEnd
+    && (!slashArgumentMode || filteredSlashCommands.length > 0);
 
   const slashCommandCountLabel = filteredSlashCommands.length === 1
     ? t(slashQuery ? "chat.match" : "chat.command")
@@ -875,19 +886,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
-    const nextValue = `/${command.name} `;
+    const nextValue = command.completion?.text ?? `/${command.name} `;
+    pendingSlashCompletionRef.current = nextValue;
     setValue(nextValue);
+    setSlashCursorAtEnd(true);
     setSlashMenuOpen(false);
     setSlashActiveIndex(0);
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.setSelectionRange(nextValue.length, nextValue.length);
-      ta.style.height = "auto";
-      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-    });
   }, []);
+
+  React.useLayoutEffect(() => {
+    const completion = pendingSlashCompletionRef.current;
+    pendingSlashCompletionRef.current = null;
+    const ta = textareaRef.current;
+    if (completion !== value || !ta) return;
+    // Move the caret as part of this render, not in a later animation frame
+    // that could overwrite a new selection or a subsequent edit.
+    ta.focus();
+    ta.setSelectionRange(value.length, value.length);
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, [value]);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
@@ -988,7 +1006,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (slashMenuOpen && slashQuery !== null) {
+      if (slashMenuVisible && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setSlashActiveIndex(getNextSlashIndex("down"));
@@ -1072,7 +1090,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuVisible, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
   );
 
   const handleInput = useCallback(() => {
@@ -1107,6 +1125,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     }
   }, [slashQuery, onLoadSlashCommands]);
+
+  useEffect(() => {
+    if (slashArgumentMode && !slashCommandsLoading && filteredSlashCommands.length === 0) {
+      slashCommandsRequestedRef.current = false;
+    }
+  }, [slashArgumentMode, slashCommandsLoading, filteredSlashCommands.length]);
 
   // Native engines own skill discovery; do not query the legacy SDK skill loader.
   useEffect(() => {
@@ -1469,8 +1493,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             </div>
           )}
-          {slashMenuOpen && slashQuery !== null && (
+          {slashMenuVisible && (
             <div
+              data-slash-menu={slashArgumentMode ? "arguments" : "commands"}
               style={{
                 position: "absolute",
                 left: 0,
@@ -1497,7 +1522,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   color: "var(--text-dim)",
                 }}
               >
-                 <span>{slashCommandsLoading ? t("chat.loadingCommands") : t("chat.slashCommands", { label: slashCommandCountLabel })}</span>
+                 <span>{slashCommandsLoading ? t("chat.loadingCommands") : slashArgumentMode ? t("chat.slashArguments", { count: filteredSlashCommands.length }) : t("chat.slashCommands", { label: slashCommandCountLabel })}</span>
                  <span style={{ fontFamily: "var(--font-mono)" }}>{t("chat.tabEnter")}</span>
               </div>
               <div style={{ maxHeight: "calc(min(56vh, 460px) - 34px)", overflowY: "auto", padding: 10 }}>
@@ -1540,15 +1565,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           const dormant = isDormantSkillCommand(command, skillDormancy);
                           return (
                             <button
-                              key={`${command.source}:${command.name}`}
+                              key={`${command.source}:${command.name}:${command.completion?.value ?? ""}`}
                               ref={(node) => {
                                 slashItemRefs.current[index] = node;
                               }}
                               type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                applySlashCommand(command);
-                              }}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => applySlashCommand(command)}
                               onMouseEnter={() => setSlashActiveIndex(index)}
                               style={{
                                 width: "100%",
@@ -1575,8 +1598,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                 wordBreak: "break-word",
                                 color: dormant ? "var(--text-dim)" : undefined,
                               }}>
-                                /{command.name}
-                                {command.argumentHint && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>{command.argumentHint}</span>}
+                                {command.completion ? command.completion.text.trimEnd() : `/${command.name}`}
+                                {!command.completion && command.argumentHint && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>{command.argumentHint}</span>}
                                 {dormant && (
                                   <span style={{
                                     marginLeft: 6,
@@ -1591,7 +1614,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   </span>
                                 )}
                               </span>
-                               {command.description && (
+                               {(command.description || command.completion) && (
                                 <span style={{
                                   display: "-webkit-box",
                                   WebkitBoxOrient: "vertical",
@@ -1601,7 +1624,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   lineHeight: 1.35,
                                   color: "var(--text-dim)",
                                 }}>
-                                   {getSlashDescription(command, t)}
+                                   {command.completion ? t("chat.fillArgumentOnly") : getSlashDescription(command, t)}
                                 </span>
                               )}
                             </button>
@@ -1733,11 +1756,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
+              setSlashCursorAtEnd(e.target.selectionStart === e.target.value.length && e.target.selectionEnd === e.target.value.length);
               setHistoryMenuOpen(false);
               updateAtQuery(e.target.value, e.target.selectionStart);
             }}
             onSelect={(e) => {
               const el = e.currentTarget;
+              setSlashCursorAtEnd(el.selectionStart === el.value.length && el.selectionEnd === el.value.length);
               updateAtQuery(el.value, el.selectionStart);
             }}
             onKeyDown={handleKeyDown}
