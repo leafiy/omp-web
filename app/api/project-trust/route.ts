@@ -1,66 +1,58 @@
-import { stat } from "fs/promises";
-import { resolve } from "path";
-import { NextResponse } from "next/server";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { invalidateModelsCache } from "@/lib/models-cache";
+import { parseEngine, type AgentEngine } from "@/lib/engine";
+import { getPiAgentDir } from "@/lib/engine-paths";
 import { getProjectTrustStatus, trustProject } from "@/lib/project-trust";
-import { destroyRpcSessionsForCwd, hasBusyRpcSessionForCwd } from "@/lib/rpc-manager";
+import { invalidateModelsCache } from "@/lib/models-cache";
+import { hasJsonContentType } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
 
-async function validateCwd(value: unknown): Promise<
-  { cwd: string } | { response: NextResponse }
-> {
-  if (typeof value !== "string" || !value.trim()) {
-    return { response: NextResponse.json({ error: "cwd required" }, { status: 400 }) };
-  }
-
-  const cwd = resolve(value);
+async function resolveAllowedCwd(requested: unknown): Promise<string | Response> {
+  if (typeof requested !== "string" || !requested) return Response.json({ error: "cwd required" }, { status: 400 });
+  const cwd = resolve(requested);
   try {
-    if (!(await stat(cwd)).isDirectory()) {
-      return { response: NextResponse.json({ error: "cwd must be a directory" }, { status: 400 }) };
-    }
+    if (!(await stat(cwd)).isDirectory()) return Response.json({ error: "cwd must be a directory" }, { status: 400 });
   } catch {
-    return { response: NextResponse.json({ error: "Directory does not exist" }, { status: 400 }) };
+    return Response.json({ error: "Directory does not exist" }, { status: 400 });
   }
-
-  const allowedRoots = await getAllowedFileRoots();
-  if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
-    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
-  }
-  return { cwd };
+  if (!isExistingFilePathAllowed(cwd, await getAllowedFileRoots())) return Response.json({ error: "Access denied" }, { status: 403 });
+  return cwd;
 }
 
 export async function GET(req: Request) {
-  const result = await validateCwd(new URL(req.url).searchParams.get("cwd"));
-  if ("response" in result) return result.response;
-  return NextResponse.json(getProjectTrustStatus(result.cwd, getAgentDir()));
+  const params = new URL(req.url).searchParams;
+  let engine: AgentEngine;
+  try { engine = parseEngine(params.get("engine")); }
+  catch (error) { return Response.json({ error: String(error) }, { status: 400 }); }
+  try {
+    const cwd = await resolveAllowedCwd(params.get("cwd"));
+    if (cwd instanceof Response) return cwd;
+    if (engine === "pi") return Response.json({ ...getProjectTrustStatus(cwd, getPiAgentDir()), policy: "pi-native" });
+    // Claude MVP does not load project settings, hooks, plugins or MCP servers.
+    if (engine === "codex") return Response.json({ requiresTrust: false, trusted: false, policy: "codex-native" });
+    if (engine === "claude") return Response.json({ requiresTrust: false, trusted: false, policy: "claude-native" });
+    // Pi's trust store is not an OMP sandbox.
+    return Response.json({ requiresTrust: false, trusted: false, policy: "omp-native" });
+  } catch (error) { return Response.json({ error: String(error) }, { status: 500 }); }
 }
 
 export async function POST(req: Request) {
+  if (!hasJsonContentType(req)) return Response.json({ error: "Expected JSON" }, { status: 415 });
+  let body: { cwd?: unknown; engine?: unknown };
+  let engine: AgentEngine;
   try {
-    const body = await req.json() as { cwd?: unknown };
-    const result = await validateCwd(body.cwd);
-    if ("response" in result) return result.response;
-
-    const agentDir = getAgentDir();
-    const current = getProjectTrustStatus(result.cwd, agentDir);
-    if (!current.requiresTrust) {
-      return NextResponse.json({ error: "This project has no resources that require trust" }, { status: 409 });
-    }
-    if (hasBusyRpcSessionForCwd(result.cwd)) {
-      return NextResponse.json({ error: "Wait for the active session to finish before trusting this project" }, { status: 409 });
-    }
-
-    const status = trustProject(result.cwd, agentDir);
+    body = await req.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Expected a JSON object");
+    engine = parseEngine(body.engine);
+  } catch (error) { return Response.json({ error: String(error) }, { status: 400 }); }
+  if (engine !== "pi") return Response.json({ error: "Pi trust.json does not authorize resources for another engine. Configure trust in that native tool." }, { status: 409 });
+  try {
+    const cwd = await resolveAllowedCwd(body.cwd);
+    if (cwd instanceof Response) return cwd;
+    const status = trustProject(cwd, getPiAgentDir());
     invalidateModelsCache();
-    await destroyRpcSessionsForCwd(result.cwd);
-    return NextResponse.json(status);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
-    );
-  }
+    return Response.json({ ...status, policy: "pi-native" });
+  } catch (error) { return Response.json({ error: String(error) }, { status: 500 }); }
 }

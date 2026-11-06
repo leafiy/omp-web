@@ -17,6 +17,8 @@ const path = require("path");
 const fs = require("fs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { parseLaunchOptions } = require("./omp-web-options");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { loadWebPassword } = require("./web-password");
 
 const pkgDir = path.join(__dirname, "..");
 const nextDir = path.join(pkgDir, ".next");
@@ -38,7 +40,13 @@ try {
 
 const { port, hostname, openBrowser } = parseLaunchOptions();
 const loopbackHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-const passwordEnabled = Boolean(process.env.PI_WEB_PASSWORD);
+let passwordEnabled;
+try { passwordEnabled = Boolean(loadWebPassword()); }
+catch (error) { console.error(error.message); process.exit(1); }
+if (process.env.OMP_WEB_REQUIRE_PASSWORD === "1" && !passwordEnabled) {
+  console.error("This deployment requires a web access password. Configure PI_WEB_PASSWORD_FILE.");
+  process.exit(1);
+}
 
 if (!fs.existsSync(nextDir)) {
   console.error("Build artifacts not found. Run `npm run build` first, or install via `npm install -g omp-web` to get a pre-built package.");
@@ -65,7 +73,7 @@ nextArgs.push("-H", hostname);
 const child = spawn(process.execPath, [nextBin, ...nextArgs], {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],
-  env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+  env: { ...process.env, PI_WEB_HOSTNAME: hostname, OMP_WEB_APP_DIR: pkgDir },
 });
 
 let browserOpened = false;

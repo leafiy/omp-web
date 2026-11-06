@@ -17,7 +17,7 @@ function spawnShell(cwd: string, size: TerminalSize): Pty {
   // Shells run as the web service user, NOT in a sandbox. Do not expose the
   // web password or agent session metadata to programs launched here.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) =>
-    value !== undefined && key !== "PI_WEB_PASSWORD" && !key.startsWith("PI_SESSION_")
+    value !== undefined && !key.startsWith("PI_WEB_") && !key.startsWith("PI_SESSION_")
   )) as Record<string, string>;
   return spawn(process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash", [], {
     name: "xterm-256color", cwd, cols: size.cols, rows: size.rows,

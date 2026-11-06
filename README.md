@@ -1,10 +1,18 @@
 # omp-web — Leafiy 自托管版
 
+**当前定位：原生 CLI 的网页访问层。** 自动发现本机 OMP、Pi、Claude Code、Codex；使用各工具自己的配置与登录，不分发或迁移 Agent 密钥。新部署强制访问密码，支持私有密码文件；左下角“用量”读取原生订阅周额度和明确范围的 Token 统计。见[多机部署](./docs/native-host-deployment.zh-CN.md)与[订阅用量](./docs/subscription-usage.zh-CN.md)。Claude Code 支持输入 `/` 搜索并发送当前原生命令，详见[命令菜单](./docs/claude-code-commands.zh-CN.md)。
+
 基于 [17380936778/omp-web](https://github.com/17380936778/omp-web) 的私有自托管版本，保留本机模型兼容修复，并新增页面底部的交互式终端。终端可在 AI 工作期间独立使用，无需额外开放端口。
 
-**[自托管与终端使用说明](./docs/self-hosting.zh-CN.md)** · [English（上游说明）](./README.en.md)
+**[本地 OMP / Pi 引擎与迁移说明](./docs/native-omp.zh-CN.md)** · [自托管与终端使用说明](./docs/self-hosting.zh-CN.md) · [English（上游说明）](./README.en.md)
 
-[Oh My Pi](https://github.com/badlogic/pi-mono) 编程智能体的浏览器界面——基于 [pi-web](https://github.com/agegr/pi-web) Fork 并改造，专门适配 Oh My Pi（omp）工作流。
+> **OMP / Pi 双引擎**：默认 OMP，已有会话固定引擎，模型、凭据和历史身份隔离。Pi 现在调用本机 `pi`（可用 `OMP_WEB_PI_EXECUTABLE` 指定路径），不再固定使用不兼容新版 OAuth 登录的内置 Pi 0.83.0。本项修正已通过类型检查、41 项回归及现有登录的真实模型 API/浏览器验证，显示 44 个 OpenAI 模型；没有发送模型提示或复制凭据。生产修复的最终发布结果查看 `/opt/omp-web-pi-fix-release-jakHJQ8T/status.json`。配置与限制见上方说明。
+
+> **历史兼容方案（不用于新部署）——Claude Code / Codex 实验接入**：本机 CC + loopback CLIProxyAPI + 用户本人的 ChatGPT/Codex OAuth。类型检查、63 项回归、真实 `gpt-6.1-sol` 的对话/工具/恢复/停止、隔离生产构建和构建后基础 API 检查均通过。用户已授权更新重启并自行测试网页；代理已由 systemd 托管，网页实际切换结果以发布状态文件为准。不是 Claude 模型或 CC 原生 OpenAI 登录；不复制 OMP/Pi 凭据，不修改终端 `~/.claude`。详情及状态文件路径见 [接入记录](./docs/claude-code-codex.zh-CN.md)。
+
+> **Codex CLI 独立聊天接入**：第四个聊天引擎，直接使用本机 Codex 及其登录，不经过 Claude Code 的代理。99 项回归、真实模型目录/空会话恢复、隔离构建和浏览器模拟检查通过；用户已授权上线，实际切换结果以发布状态文件为准。没有发送真实模型提示，实际聊天由用户测试。见 [Codex CLI 接入说明](./docs/codex-cli.zh-CN.md)。
+
+[Oh My Pi](https://github.com/can1357/oh-my-pi) 编程智能体的浏览器界面——基于 [pi-web](https://github.com/agegr/pi-web) Fork 并改造，专门适配 Oh My Pi（omp）工作流。
 
 > **来源说明**：本项目 Fork 自 [agegr/pi-web](https://github.com/agegr/pi-web)。核心架构、会话浏览、实时对话、文件预览均来自 pi-web 原作者的工作。本仓库的改动专注于与 Oh My Pi 环境的兼容性和工作流优化。
 
@@ -12,7 +20,7 @@
 
 ## 什么是 Oh My Pi？
 
-Oh My Pi（omp）是构建在 pi 编程智能体之上的 coding harness，在 pi 核心能力之上添加了结构化智能体会话、技能管理、worktree 协调和更丰富的工具协议。`omp-web` 将 omp 的会话格式呈现在浏览器中：pi 写入的同一批 `.jsonl` 文件，由本地运行的 Next.js 服务器读取并渲染。
+Oh My Pi（omp）是从 Pi 分叉发展的 coding harness，提供自己的工具、子代理、技能及项目工作流。当前源码可选择 OMP 或 Pi 的本地 RPC 驱动聊天；Next.js 服务器只读展示 `.jsonl` 历史，并把消息与工具交互事件转发给浏览器。
 
 ## 快速开始
 
@@ -69,21 +77,29 @@ systemctl stop omp-web
 
 初次部署已检查生产构建、systemd 启用与运行状态、回环及局域网地址的 HTTP 响应、模型列表和浏览器新会话界面（默认 `full`）。修复主机名访问后，已检查 `http://pc:2225/` 及同源 API 返回 HTTP 200，未放行的主机名和跨站 API 请求仍返回 HTTP 403。
 
-#### 本机模型与订阅兼容修复
+#### 旧 SDK 阶段的模型与订阅兼容修复（历史记录）
 
 - `lib/omp-models.ts` 将缓存模型中的 `provider` 作为运行时提供商 ID，不把 `openai-codex:0.159.0` 等带版本的缓存键当作提供商。自定义模型配置仍覆盖缓存元数据。
 - 缓存中 `baseUrl` 为空的目录占位模型，不作为可调用的自定义模型导出；用户配置了提供商或模型端点后才导出，并继承该端点。不为 Azure 等服务编造默认端点，也不修改原始模型数据库。
 - OMP 数据库中的 API Key 可以导入运行时；OAuth 访问令牌不再作为 API Key 注入。ChatGPT 订阅使用网页版 `auth.json` 中的 OAuth 登录，保留账户信息和 SDK 的令牌刷新机制，不覆盖已登录账号。
 - 模型列表根据 SDK 运行时的认证状态识别网页版订阅，而不是只看 OMP 数据库。ChatGPT 订阅模型属于 `openai-codex`，不是 API Key 提供商 `openai`。
-- 模型配置页的测试接口与会话共用凭据适配逻辑。上游更新时需保留这些本地修复。
+- 以上适配描述旧的进程内 SDK 方案，现不参与 OMP / Pi 原生引擎执行；旧模型配置和测试接口继续停用。当前两引擎各自读取认证，不再把 OMP 凭据导入 Pi。
 
-回归检查：
+当前原生双引擎相关模拟/只读回归入口（本轮已获授权执行；运行权限不自动延续到后续任务）：
 
 ```bash
-node --test lib/omp-models.test.mjs lib/models-api.test.mjs lib/model-role-filter.test.mjs lib/models-cache.test.mjs
+node --test lib/omp-rpc.test.mjs lib/session-reader.test.mjs lib/session-file-references.test.mjs lib/models-cache.test.mjs
 ```
 
 本次模型修复通过 13 项检查、生产构建、部署后的模型接口与浏览器模型选择检查。经用户授权，使用现有订阅向 `openai-codex/gpt-6-astra` 发送了一次最小请求，成功收到 `OK`；页面不再显示模型配置错误。
+
+## 聊天文件上传
+
+- 点击聊天输入框下方的附件按钮多选文件，或把本地文件拖入聊天区域；也可粘贴剪贴板中的文件。
+- 支持任意文件类型，单文件最大 25MB，每次选择合计最大 100MB；不支持文件夹上传。
+- PNG、JPEG、GIF、WebP 图片在 10MB 以内且未超过每条消息 10 张时，保留图片预览并直接发送给模型。其他文件（含超出图片附件限制的图片）保存到当前工作目录，上传成功后自动在草稿中加入文件引用。
+- 上传普通文件前需选择项目 / 工作目录。上传不会自动发送消息，也不会覆盖同名文件；遇到冲突可重命名后重试，或使用侧栏上传选择处理方式。
+- 普通文件通过路径交给智能体读取，不表示模型原生支持所有格式；实际解析取决于可用工具。删除草稿中的引用不会删除已经上传的文件。
 
 ## HTTP 代理
 
@@ -141,11 +157,11 @@ omp-web 直接 Fork 自 [pi-web](https://github.com/agegr/pi-web)，下表列出
 | 代码语法主题选择器 | **新增** 独立代码块主题选择器，支持 **One Dark Pro** 等主流主题切换 |
 | OMP 数据库与角色适配 | **新增** 对 `~/.omp/agent/` 下 `models.db`、`config.yml` 角色模型及 SQLite API Key 的读取与映射 |
 | 中文与国际化体验 | **增强** 完整双语界面与中文本地化交互优化 |
-| pi SDK 依赖 | 跟踪 omp 使用的 `@earendil-works/pi-*` 最新系列包 |
+| Agent 执行后端 | 当前源码调用本机 OMP RPC；`@earendil-works/pi-*` 仅暂留用于历史展示等兼容代码，不是 OMP 引擎 |
 | 会话与路径兼容性 | 适配 omp 会话格式、工具协议及 `~/.omp/agent/` 数据目录 |
 | 默认端口 | 30141（与 omp 开发约定一致） |
 
-其余内容——会话读取、AgentSession 生命周期、SSE 流式传输、Fork/分支逻辑、文件访问、worktree 管理——均继承自 pi-web，详见 [AGENTS.md](./AGENTS.md)。
+界面、文件访问和 worktree 等功能继承自 pi-web。当前源码的 Agent 生命周期、SSE 适配、Fork/分支与模型发现已转为本地 OMP，详见 [AGENTS.md](./AGENTS.md) 和 [迁移说明](./docs/native-omp.zh-CN.md)。
 
 ## 开发
 

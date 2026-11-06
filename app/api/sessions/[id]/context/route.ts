@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath, buildSessionContext, openSessionManager } from "@/lib/session-reader";
 
 export async function GET(
@@ -18,7 +19,9 @@ export async function GET(
     }
 
     const sm = openSessionManager(filePath);
-    const context = buildSessionContext(sm.getEntries() as never, leafId, {
+    const liveLeafId = getRpcSession(id)?.getActiveLeafId();
+    const defaultLeafId = liveLeafId !== undefined ? liveLeafId : sm.getLeafId();
+    const context = buildSessionContext(sm.getEntries() as never, leafId === undefined ? defaultLeafId : leafId, {
       deferThinking,
       deferToolResultImages,
     });

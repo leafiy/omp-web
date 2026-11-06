@@ -1,4 +1,6 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
+import { isApiRequestAllowed } from "@/lib/request-security";
+import { isValidBasicAuthorization, isWebPasswordEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -6,6 +8,11 @@ export const dynamic = "force-dynamic";
 // session ids. Pushes an update whenever any session starts or stops working,
 // so the sidebar never has to poll.
 export async function GET(req: Request) {
+  // This exact SSE endpoint bypasses proxy buffering, not authentication.
+  if (!isApiRequestAllowed(req)) return new Response("Untrusted request", { status: 403 });
+  if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
+    return new Response("Authentication required", { status: 401, headers: { "Cache-Control": "no-store" } });
+  }
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();

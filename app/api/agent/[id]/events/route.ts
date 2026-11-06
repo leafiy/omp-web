@@ -1,5 +1,7 @@
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manager";
+import { isApiRequestAllowed } from "@/lib/request-security";
+import { isValidBasicAuthorization, isWebPasswordEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,12 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // The Next proxy bypasses /events to avoid buffering; enforce access here
+  // before opening a process or exposing tool output.
+  if (!isApiRequestAllowed(req)) return new Response("Untrusted request", { status: 403 });
+  if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
+    return new Response("Authentication required", { status: 401 });
+  }
   const { id } = await params;
 
   // Fast path: already-running session

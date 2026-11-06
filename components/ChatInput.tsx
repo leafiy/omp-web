@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
-import { PI_CLI_BUILTIN_SLASH_COMMANDS } from "@/lib/pi-slash-commands";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
-import type { SkillsResponse } from "@/lib/api-types";
 import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
+import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import {
   MAX_ATTACHED_IMAGE_BYTES,
   MAX_ATTACHED_IMAGES,
@@ -14,6 +13,8 @@ import {
   buildEntriesFromFiles, buildAtInsertText, extractAtQuery, filterFileEntries,
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
+import { encodeFilePathForApi } from "@/lib/file-paths";
+import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
@@ -31,6 +32,7 @@ interface ModelOption {
 }
 
 interface Props {
+  engine?: AgentEngine;
   onSend: (message: string, images?: AttachedImage[]) => void;
   onAbort: () => void;
   onSteer?: (message: string, images?: AttachedImage[]) => void;
@@ -76,7 +78,7 @@ export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
   prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
+  addFiles: (files: File[]) => void;
 }
 
 const TOOL_PRESETS = ["off", "default", "full"] as const;
@@ -86,6 +88,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   "google-antigravity": "Google AntiGravity-login",
   "github-copilot": "GitHub Copilot",
   "openai-codex": "ChatGPT Plus/Pro",
+  "codex-cli": "Codex CLI",
 };
 
 function formatProviderName(provider: string): string {
@@ -128,6 +131,7 @@ type SlashCommandPaletteItem = SlashCommandInfo | {
   name: string;
   description: string;
   source: "builtin";
+  argumentHint?: string;
 };
 
 type SlashCommandSource = SlashCommandPaletteItem["source"];
@@ -144,18 +148,25 @@ const WEB_COMMAND_ALIASES: SlashCommandPaletteItem[] = [
   { name: "copy", description: "chat.commandCopy", source: "builtin" },
 ];
 
-export const BUILTIN_SLASH_COMMANDS: SlashCommandPaletteItem[] = [
-  ...PI_CLI_BUILTIN_SLASH_COMMANDS.map((cmd: { name: string; description?: string; argumentHint?: string }) => ({
-    name: cmd.name,
-    description: (cmd.description ?? "") + (cmd.argumentHint ? ` ${cmd.argumentHint}` : ""),
-    source: "builtin" as const,
-  })),
-  ...WEB_COMMAND_ALIASES,
-].filter((cmd, index, self) => self.findIndex((c) => c.name === cmd.name) === index);
+// Web conveniences plus the selected engine's live native command catalog.
+export const BUILTIN_SLASH_COMMANDS: SlashCommandPaletteItem[] = WEB_COMMAND_ALIASES;
 
-const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill"];
+export function slashCommandsForEngine(engine: AgentEngine, native: SlashCommandInfo[], isStreaming = false): SlashCommandPaletteItem[] {
+  const nativeNames = new Set(native.map((command) => command.name));
+  const web = isStreaming ? [] : BUILTIN_SLASH_COMMANDS.filter((command) => {
+    if (engine === "claude" && nativeNames.has(command.name)) return false;
+    if (!supportsExtendedChat(engine)) return !["compact", "reload", "session", "usage"].includes(command.name);
+    return engine !== "pi" || command.name !== "reload";
+  });
+  return [...web, ...native];
+}
+
+const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "omp", "pi", "claude", "extension", "prompt", "skill"];
 
 const SLASH_SOURCE_GROUP_LABEL_KEYS: Record<SlashCommandSource, string> = {
+  omp: "OMP",
+  pi: "Pi",
+  claude: "Claude Code",
   builtin: "chat.builtIn",
   extension: "chat.extensions",
   prompt: "chat.prompts",
@@ -163,6 +174,9 @@ const SLASH_SOURCE_GROUP_LABEL_KEYS: Record<SlashCommandSource, string> = {
 };
 
 const SLASH_SOURCE_ORDER: Record<SlashCommandSource, number> = {
+  omp: 1,
+  pi: 1,
+  claude: 1,
   builtin: 0,
   extension: 1,
   prompt: 2,
@@ -336,6 +350,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
+  engine = "omp",
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -359,6 +374,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
   ));
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
@@ -399,7 +416,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
-  const pendingImageCountRef = useRef(0);
+  const attachmentJobRef = useRef<AbortController | null>(null);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
@@ -457,48 +474,118 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
     },
-    addImages(files: File[]) {
-      processImageFiles(files);
+    addFiles(files: File[]) {
+      void processFiles(files);
     },
   }));
 
-  const processImageFiles = useCallback(async (files: File[]) => {
-    if (isStreaming) return;
-    const remaining = Math.max(
-      0,
-      MAX_ATTACHED_IMAGES - attachedImagesRef.current.length - pendingImageCountRef.current,
-    );
-    const imageFiles = files
-      .filter((f) => f.type.startsWith("image/") && f.size <= MAX_ATTACHED_IMAGE_BYTES)
-      .slice(0, remaining);
-    if (!imageFiles.length) return;
-    pendingImageCountRef.current += imageFiles.length;
-    try {
-      const newImages = await Promise.all(
-        imageFiles.map(
-          (file) =>
-            new Promise<AttachedImage>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const result = reader.result as string;
-                // result is "data:<mime>;base64,<data>"
-                const base64 = result.split(",")[1];
-                resolve({ data: base64, mimeType: file.type, previewUrl: URL.createObjectURL(file) });
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(file);
-            })
-        )
-      );
-      setAttachedImages((prev) => {
-        const accepted = newImages.slice(0, Math.max(0, MAX_ATTACHED_IMAGES - prev.length));
-        newImages.slice(accepted.length).forEach(revokeImagePreview);
-        return [...prev, ...accepted];
-      });
-    } finally {
-      pendingImageCountRef.current -= imageFiles.length;
+  // A switched/unmounted composer must never receive another draft's uploads.
+  useEffect(() => {
+    setAttachmentBusy(false);
+    setAttachmentError(null);
+    return () => {
+      attachmentJobRef.current?.abort();
+      attachmentJobRef.current = null;
+    };
+  }, [draftKey, cwd]);
+
+  const processFiles = useCallback(async (files: File[]) => {
+    if (isStreaming || !files.length) return;
+    if (attachmentJobRef.current) {
+      setAttachmentError(t("chat.uploadWait"));
+      return;
     }
-  }, [isStreaming]);
+    const job = new AbortController();
+    attachmentJobRef.current = job;
+    setAttachmentBusy(true);
+    setAttachmentError(null);
+    try {
+      const oversized = files.find((file) => file.size > MAX_UPLOAD_FILE_BYTES);
+      if (oversized) throw new Error(t("chat.uploadTooLarge", { name: oversized.name }));
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
+        throw new Error(t("chat.uploadTotalTooLarge"));
+      }
+
+      // Only model-compatible raster images go into the prompt. Other image
+      // formats and larger images are ordinary files, not silently discarded.
+      const imageFiles: File[] = [];
+      const uploadFiles: File[] = [];
+      for (const file of files) {
+        if (/^image\/(png|jpeg|gif|webp)$/.test(file.type)
+          && file.size > 0 && file.size <= MAX_ATTACHED_IMAGE_BYTES
+          && attachedImagesRef.current.length + imageFiles.length < MAX_ATTACHED_IMAGES) {
+          imageFiles.push(file);
+        } else {
+          uploadFiles.push(file);
+        }
+      }
+      if (uploadFiles.length && !cwd) throw new Error(t("chat.uploadNeedsDirectory"));
+
+      const newImages = await Promise.all(imageFiles.map((file) => (
+        new Promise<AttachedImage>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const previewUrl = String(reader.result);
+            resolve({ data: previewUrl.split(",")[1], mimeType: file.type, previewUrl });
+          };
+          reader.onerror = () => reject(new Error(t("chat.fileReadFailed", { name: file.name })));
+          reader.onabort = () => reject(new Error(t("chat.fileReadFailed", { name: file.name })));
+          reader.readAsDataURL(file);
+        })
+      )));
+      if (job.signal.aborted) return;
+      setAttachedImages((prev) => [...prev, ...newImages]);
+
+      if (uploadFiles.length && cwd) {
+        const formData = new FormData();
+        uploadFiles.forEach((file) => formData.append("files", file, file.name));
+        const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, {
+          method: "POST",
+          body: formData,
+          signal: job.signal,
+        });
+        const result = await response.json().catch(() => ({})) as {
+          uploaded?: string[];
+          errors?: Array<{ name: string; error: string }>;
+          conflicts?: string[];
+          error?: string;
+        };
+        if (job.signal.aborted) return;
+        if (response.status === 409) {
+          throw new Error(t("chat.uploadConflict", { names: (result.conflicts ?? []).join(", ") }));
+        }
+        if (!response.ok) throw new Error(result.error ?? t("chat.uploadFailed", { status: response.status }));
+        if (result.uploaded?.length) {
+          // Prepend references so an existing /command or !shell draft cannot
+          // accidentally execute instead of sending the uploaded file context.
+          const references = result.uploaded.map((name) => `@${JSON.stringify(name)}`).join(" ");
+          setValue((current) => `${references}\n${current}`);
+          setAtQuery(null);
+          setFileIndex(null);
+          fileIndexMetaRef.current = null;
+          textareaRef.current?.focus();
+        }
+        if (result.errors?.length) {
+          setAttachmentError(result.errors.map(({ name, error }) => `${name}: ${error}`).join("\n"));
+        } else if (!result.uploaded?.length) {
+          throw new Error(t("chat.uploadFailed", { status: response.status }));
+        } else {
+          setAttachmentError(null);
+        }
+      } else {
+        setAttachmentError(null);
+      }
+    } catch (error) {
+      if (!job.signal.aborted) {
+        setAttachmentError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (attachmentJobRef.current === job) {
+        attachmentJobRef.current = null;
+        setAttachmentBusy(false);
+      }
+    }
+  }, [isStreaming, cwd, t]);
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {
@@ -518,6 +605,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const clearInput = useCallback(() => {
     setValue("");
+    setAttachmentError(null);
     setAtQuery(null);
     setHistoryMenuOpen(false);
     if (draftKey) clearDraft(draftKey);
@@ -574,7 +662,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
-    if (isStreaming) return;
+    if (isStreaming || attachmentJobRef.current) return;
     onAudioUnlock?.();
     if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
       const result = await onBuiltinCommand(msg);
@@ -593,8 +681,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
-    const commands = [...(isStreaming ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
-    return [...commands]
+    const commands = slashCommandsForEngine(engine, slashCommands ?? [], isStreaming);
+    return commands
       .filter((command) => {
         const name = command.name.toLowerCase();
         const description = getSlashDescription(command, t).toLowerCase();
@@ -617,7 +705,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ? t(slashQuery ? "chat.match" : "chat.command")
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim());
-  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0;
+  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy;
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -804,7 +892,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
-    if (attachedImages.length) return;
+    if (attachedImages.length || attachmentJobRef.current) return;
     onAudioUnlock?.();
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
@@ -996,12 +1084,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItems = items.filter((item) => item.type.startsWith("image/"));
-    if (!imageItems.length) return;
+    const files = items.filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+    if (!files.length) return;
     e.preventDefault();
-    const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null);
-    processImageFiles(files);
-  }, [processImageFiles]);
+    void processFiles(files);
+  }, [processFiles]);
 
   useEffect(() => {
     if (slashQuery === null) {
@@ -1020,32 +1108,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [slashQuery, onLoadSlashCommands]);
 
-  // Lazy-load skill dormancy (disable-model-invocation) each time the slash
-  // palette opens, so toggles made in the skills panel are reflected on the
-  // next open. Failures degrade silently to the unannotated palette.
+  // Native engines own skill discovery; do not query the legacy SDK skill loader.
   useEffect(() => {
-    if (!slashMenuOpen || !cwd) return;
-    const requestCwd = cwd;
-    let cancelled = false;
-    setSkillDormancyState({ cwd: requestCwd, values: {} });
-    fetch(`/api/skills?cwd=${encodeURIComponent(requestCwd)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`skills fetch failed: ${res.status}`);
-        return res.json() as Promise<Partial<SkillsResponse>>;
-      })
-      .then((data) => {
-        if (cancelled) return;
-        const dormancy: Record<string, boolean> = {};
-        for (const skill of data.skills ?? []) dormancy[skill.name] = skill.disableModelInvocation;
-        setSkillDormancyState({ cwd: requestCwd, values: dormancy });
-      })
-      .catch(() => {
-        if (!cancelled) setSkillDormancyState({ cwd: requestCwd, values: {} });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [slashMenuOpen, cwd]);
+    if (cwd) setSkillDormancyState({ cwd, values: {} });
+  }, [cwd]);
 
   useEffect(() => {
     if (slashActiveIndex >= displayedSlashCommands.length) {
@@ -1148,19 +1214,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
         multiple
-        disabled={isStreaming}
+        disabled={isStreaming || attachmentBusy}
         style={{ display: "none" }}
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
-          processImageFiles(files);
+          void processFiles(files);
           e.target.value = "";
         }}
       />
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
+        {attachmentBusy && (
+          <div role="status" aria-live="polite" style={{ marginBottom: 8, fontSize: 12, color: "var(--text-muted)" }}>
+            {t("chat.uploadingFiles")}
+          </div>
+        )}
+        {attachmentError && (
+          <ModelNoticeBanner tone="error" title={t("chat.attachmentError")} body={attachmentError} />
+        )}
         {/* Queued steering / follow-up messages (delivered by pi on upcoming turns) */}
         {((queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)) > 0 && (
           <div style={{
@@ -1452,7 +1525,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           textTransform: "uppercase",
                         }}
                       >
-                           <span>{t(SLASH_SOURCE_GROUP_LABEL_KEYS[group.source])}</span>
+                           <span>{group.source === "omp" || group.source === "pi" ? (engine === "pi" ? "Pi" : "OMP") : t(SLASH_SOURCE_GROUP_LABEL_KEYS[group.source])}</span>
                         <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>{group.items.length}</span>
                       </div>
                       <div
@@ -1503,6 +1576,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                 color: dormant ? "var(--text-dim)" : undefined,
                               }}>
                                 /{command.name}
+                                {command.argumentHint && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>{command.argumentHint}</span>}
                                 {dormant && (
                                   <span style={{
                                     marginLeft: 6,
@@ -1757,8 +1831,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <button
               className="sf-send-btn"
               onClick={handleSend}
-              disabled={!value.trim() && !attachedImages.length}
+              disabled={attachmentBusy || (!value.trim() && !attachedImages.length)}
               style={{
+                opacity: attachmentBusy ? 0.5 : 1,
                 flexShrink: 0,
                 alignSelf: "flex-end",
                 display: "flex", alignItems: "center", gap: 6,
@@ -1805,16 +1880,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming}
-             title={t("chat.attachImage")}
+              disabled={isStreaming || attachmentBusy}
+              title={t("chat.attachFiles")}
+              aria-label={t("chat.attachFiles")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
-                cursor: isStreaming ? "not-allowed" : "pointer",
-                opacity: isStreaming ? 0.5 : 1,
+                cursor: isStreaming || attachmentBusy ? "not-allowed" : "pointer",
+                opacity: isStreaming || attachmentBusy ? 0.5 : 1,
                 transition: "background 0.12s, color 0.12s",
               }}
               onMouseEnter={(e) => {
@@ -1828,9 +1904,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
+                <path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.5-8.5" />
               </svg>
             </button>
             {/* Model selector — visible always, disabled during streaming */}
@@ -2235,7 +2309,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             )}
 
-            {!isStreaming && onCompact && (
+            {!isStreaming && onCompact && (!isCompacting || onAbortCompaction) && (
               <div>
                 <button
                   onClick={isCompacting ? onAbortCompaction : onCompact}

@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
+import { engineForSession, engineLabel, supportsExtendedChat } from "@/lib/engine";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -348,7 +349,7 @@ function PiWebTitle() {
   const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_OMP_VERSION ?? process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "OMP Web";
+  const target = showVersion ? `Web ${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"} · OMP / Pi RPC` : "OMP Web";
   const display = useScramble(target, scrambling);
 
   const triggerScramble = useCallback((toVersion: boolean) => {
@@ -2053,6 +2054,9 @@ function SessionItem({
               }}
               title={title}
             >
+              <span style={{ flexShrink: 0, padding: "0 4px", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-muted)", fontSize: 9, lineHeight: "15px", fontFamily: "var(--font-mono)" }}>
+                {engineLabel(session.engine ?? engineForSession(session.id))}
+              </span>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
@@ -2132,7 +2136,7 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
-              <button
+              {supportsExtendedChat(engineForSession(session.id)) && <button
                 onClick={handleDeleteClick}
                 title={t("sidebar.deleteWithShiftClick")}
                 style={{
@@ -2160,7 +2164,7 @@ function SessionItem({
                   <path d="M10 11v6M14 11v6" />
                   <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                 </svg>
-              </button>
+              </button>}
             </div>
           )}
         </>

@@ -8,9 +8,8 @@ import { ChatWindow } from "./ChatWindow";
 import { TerminalPanel } from "./TerminalPanel";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
-import { ModelsConfig } from "./ModelsConfig";
-import { SkillsConfig } from "./SkillsConfig";
-import { PluginsConfig } from "./PluginsConfig";
+import { OmpNativeSettings } from "./OmpNativeSettings";
+import { SubscriptionUsage } from "./SubscriptionUsage";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { ThemePicker } from "./ThemePicker";
@@ -26,6 +25,8 @@ import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
+import { engineForSession, engineLabel, parseEngine, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { clearDraft } from "@/lib/draft-store";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -58,17 +59,41 @@ export function AppShell() {
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
+  const [newSessionEngine, setNewSessionEngine] = useState<AgentEngine>("omp");
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("omp-web:new-chat-engine");
+      if (stored === "omp" || stored === "pi" || stored === "claude" || stored === "codex") setNewSessionEngine(stored);
+    } catch {
+      // Engine selection remains usable when browser storage is unavailable.
+    }
+  }, []);
+  const activeEngine = selectedSession
+    ? selectedSession.engine ?? engineForSession(selectedSession.id)
+    : newSessionEngine;
   const [initialCwdStatus, setInitialCwdStatus] = useState<"idle" | "validating" | "ready" | "error">(
     () => initialNavigation.requestedCwd ? "validating" : "idle",
   );
+  const [projectTrustSaved, setProjectTrustSaved] = useState(false);
   const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
+  const [installedEngines, setInstalledEngines] = useState<Partial<Record<AgentEngine, boolean>>>({});
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/engines", { signal: controller.signal, cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((data) => {
+      if (!Array.isArray(data?.engines) || controller.signal.aborted) return;
+      const found: Partial<Record<AgentEngine, boolean>> = {};
+      for (const item of data.engines) { try { found[parseEngine(item.engine)] = item.installed === true; } catch { /* Unknown future engine. */ } }
+      setInstalledEngines(found);
+    }).catch(() => { /* Runtime startup still validates the executable. */ });
+    return () => controller.abort();
+  }, [modelsRefreshKey]);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
-  const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
@@ -351,8 +376,13 @@ export function AppShell() {
     }
   }, [router, isMobile]);
 
-  const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
+  const handleNewSession = useCallback((_sessionId: string, cwd: string, engine?: AgentEngine) => {
+    if (engine) {
+      setNewSessionEngine(engine);
+      try { localStorage.setItem("omp-web:new-chat-engine", engine); } catch {}
+    }
     setSelectedSession(null);
+    setProjectTrustSaved(false);
     setNewSessionCwd(cwd);
     setSessionKey((k) => k + 1);
     setBranchTree([]);
@@ -362,6 +392,22 @@ export function AppShell() {
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
   }, [router, isMobile]);
+
+  const handleEngineChange = useCallback((engine: AgentEngine) => {
+    if (engine === activeEngine) return;
+    setNewSessionEngine(engine);
+    try { localStorage.setItem("omp-web:new-chat-engine", engine); } catch {}
+    const cwd = selectedSession?.cwd ?? newSessionCwd ?? activeCwd;
+    if (cwd) {
+      clearDraft(`new:${engine}:${cwd}`);
+      handleNewSession("", cwd, engine);
+    }
+  }, [activeEngine, selectedSession?.cwd, newSessionCwd, activeCwd, handleNewSession]);
+
+  const handleNewChat = useCallback((cwd: string, engine: AgentEngine) => {
+    clearDraft(`new:${engine}:${cwd}`);
+    handleNewSession("", cwd, engine);
+  }, [handleNewSession]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -384,7 +430,7 @@ export function AppShell() {
       .catch(() => {});
   }, []);
 
-  // Called by ChatWindow when a new session gets its real id from pi
+  // Called when a new chat receives its real, engine-owned web session ID.
   const handleSessionCreated = useCallback((session: SessionInfo) => {
     setNewSessionCwd(null);
     setSelectedSession(session);
@@ -410,6 +456,7 @@ export function AppShell() {
     setSelectedSession((prev) => ({
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
+      engine: engineForSession(newSessionId),
     }));
     hydrateSelectedSession(newSessionId);
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
@@ -500,6 +547,9 @@ export function AppShell() {
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
+  const projectTrustScope = JSON.stringify([activeEngine, projectTrustCwd]);
+  const projectTrustScopeRef = useRef(projectTrustScope);
+  projectTrustScopeRef.current = projectTrustScope;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -507,14 +557,16 @@ export function AppShell() {
     setProjectTrust(null);
     setProjectTrustDialogOpen(false);
     setProjectTrustError(null);
+    setProjectTrustSaved(false);
     if (!projectTrustCwd) return;
 
     const controller = new AbortController();
-    fetch(`/api/project-trust?cwd=${encodeURIComponent(projectTrustCwd)}`, {
+    fetch(`/api/project-trust?cwd=${encodeURIComponent(projectTrustCwd)}&engine=${activeEngine}`, {
       signal: controller.signal,
     })
       .then(async (response) => {
         const data = await response.json() as ProjectTrustStatus & { error?: string };
+        if (controller.signal.aborted) return;
         if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
         setProjectTrust(data);
       })
@@ -523,7 +575,7 @@ export function AppShell() {
         console.error("Failed to load project trust:", error);
       });
     return () => controller.abort();
-  }, [projectTrustCwd]);
+  }, [activeEngine, projectTrustCwd]);
 
   const handleTrustProject = useCallback(async () => {
     if (!projectTrustCwd || projectTrustBusy) return;
@@ -533,20 +585,21 @@ export function AppShell() {
       const response = await fetch("/api/project-trust", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: projectTrustCwd }),
+        body: JSON.stringify({ cwd: projectTrustCwd, engine: activeEngine }),
       });
       const data = await response.json() as ProjectTrustStatus & { error?: string };
+      if (projectTrustScopeRef.current !== projectTrustScope) return;
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       setProjectTrust(data);
       setProjectTrustDialogOpen(false);
       setModelsRefreshKey((key) => key + 1);
-      setSessionKey((key) => key + 1);
+      setProjectTrustSaved(true);
     } catch (error) {
       setProjectTrustError(error instanceof Error ? error.message : String(error));
     } finally {
       setProjectTrustBusy(false);
     }
-  }, [projectTrustBusy, projectTrustCwd]);
+  }, [activeEngine, projectTrustBusy, projectTrustCwd, projectTrustScope]);
 
   const activeFileTab = fileTabs.find((t) => t.id === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
@@ -585,16 +638,13 @@ export function AppShell() {
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           {
-            label: translate("common.models"),
+            label: translate("common.settings"),
             onClick: () => setModelsConfigOpen(true),
             disabled: false,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" />
-                <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
-                <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
-                <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
-                <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
+                <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+                <path d="m9 3-.5 2-2 1L4.5 5.5l-2 3.5L4 10.5v3L2.5 15l2 3.5 2-.5 2 1L9 21h6l.5-2 2-1 2 .5 2-3.5-1.5-1.5v-3L21.5 9l-2-3.5-2 .5-2-1L15 3Z" />
               </svg>
             ),
           },
@@ -611,15 +661,13 @@ export function AppShell() {
             ),
           },
           {
-            label: translate("common.plugins"),
-            onClick: () => setPluginsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            label: translate("common.usage"),
+            onClick: () => setUsageOpen(true),
+            disabled: false,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 7V2" />
-                <path d="M15 7V2" />
-                <path d="M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0Z" />
-                <path d="M12 19v3" />
+                <path d="M4 3v17h17" />
+                <path d="M8 16v-5M13 16V7M18 16V4" />
               </svg>
             ),
           },
@@ -849,8 +897,8 @@ export function AppShell() {
             <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
               <button
                 onClick={handleViewFullHistory}
-                disabled={!selectedSession}
-                 title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+                disabled={!selectedSession || !supportsExtendedChat(activeEngine)}
+                 title={!supportsExtendedChat(activeEngine) ? (locale === "zh-CN" ? `${engineLabel(activeEngine)} 暂不支持 HTML 导出` : `${engineLabel(activeEngine)} HTML export is not available yet`) : selectedSession ? translate("history.full") : translate("history.unsaved")}
                  aria-label={translate("history.full")}
                 style={{
                   display: "flex",
@@ -900,6 +948,7 @@ export function AppShell() {
                 </svg>
                 {!isMobile && <span>{t("Full history", "完整历史")}</span>}
                 </button>
+                {activeEngine === "omp" && (
                 <BranchNavigator
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
@@ -911,6 +960,7 @@ export function AppShell() {
                 onToggle={() => toggleTopPanel("branches")}
                 hasSession
               />
+                )}
               <button
                 ref={systemBtnRef}
                 onClick={() => toggleTopPanel("system")}
@@ -1238,14 +1288,39 @@ export function AppShell() {
           )}
 
         </div>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 12px", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5, flexShrink: 0 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, color: "var(--text-muted)" }}>
+            <span>{locale === "zh-CN" ? "引擎" : "Engine"}</span>
+            <select
+              aria-label={locale === "zh-CN" ? "新聊天引擎。切换会新建聊天，保留旧聊天。" : "New-chat engine. Switching starts a new chat; old chats are retained."}
+              aria-describedby="engine-switch-help"
+              value={activeEngine}
+              onChange={(event) => handleEngineChange(parseEngine(event.target.value))}
+              style={{ maxWidth: 150, height: 26, padding: "0 4px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", cursor: "pointer" }}
+            >
+              {(["omp", "pi", "claude", "codex"] as AgentEngine[]).map((value) => <option key={value} value={value} disabled={installedEngines[value] === false}>
+                {engineLabel(value)}{installedEngines[value] === false ? (locale === "zh-CN" ? "（未检测到）" : " (not found)") : ""}
+              </option>)}
+            </select>
+          </label>
+          <span id="engine-switch-help" style={{ flex: "1 1 220px" }}>{locale === "zh-CN" ? "切换引擎会在同一目录新建聊天；旧聊天和后台任务会保留。" : "Switching engine starts a new chat in the same directory. Old chats and background tasks are retained."}</span>
+        </div>
+        {projectTrustSaved && activeEngine === "pi" && projectTrustCwd && (
+          <div role="status" style={{ padding: "6px 12px", fontSize: 12, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+            {locale === "zh-CN" ? "已为 Pi 信任此项目。已有聊天不会重载；请新建 Pi 聊天以加载项目资源。" : "Project trusted for Pi. Existing chats are not reloaded; start a new Pi chat to load project resources."}
+            <button type="button" onClick={() => handleNewChat(projectTrustCwd, "pi")} style={{ marginLeft: 8, padding: "3px 8px", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", cursor: "pointer" }}>{locale === "zh-CN" ? "新建 Pi 聊天" : "New Pi chat"}</button>
+          </div>
+        )}
 
         {/* Chat content */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", position: "relative" }}>
           {showChat ? (
             <ChatWindow
-              key={sessionKey}
+              key={`${sessionKey}:${activeEngine}`}
               session={selectedSession}
               newSessionCwd={effectiveNewSessionCwd}
+              engine={activeEngine}
+              onNewSession={handleNewChat}
               onAgentEnd={handleAgentEnd}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
@@ -1305,7 +1380,7 @@ export function AppShell() {
                     </div>
                     <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, background: "rgba(27,54,93,0.3)", border: "1px solid #1e2d45", borderLeft: "3px solid #d99b26", padding: "14px 20px", textAlign: "left", width: "100%" }}>
                       <span style={{ color: "#e05a2b", fontFamily: "var(--font-mono)", fontWeight: 700 }}>01.</span> {t("Select a project directory from the sidebar", "从左侧边栏选择目标项目目录")}<br />
-                      <span style={{ color: "#e05a2b", fontFamily: "var(--font-mono)", fontWeight: 700 }}>02.</span> {t("Configure provider models via the Models configuration panel", "点击底部“模型”按钮配置 AI 模型")}
+                      <span style={{ color: "#e05a2b", fontFamily: "var(--font-mono)", fontWeight: 700 }}>02.</span> {t("Open Settings at the bottom left to manage software updates", "点击左下角“设置”，查看和更新软件")}
                     </div>
                   </div>
                 ) : (
@@ -1317,7 +1392,7 @@ export function AppShell() {
                       <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{t("Get Started", "开始使用")}</div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
                         <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>{t("Select a project directory from the sidebar", "从左侧边栏选择目标项目目录")}<br />
-                        <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{t("Add models via the Models button at the bottom", "点击底部“模型”按钮配置 AI 模型")}
+                        <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{t("Choose a model beside the chat input; update software in Settings", "模型在聊天输入框旁选择，软件在“设置”里更新")}
                       </div>
                     </div>
                   </div>
@@ -1424,7 +1499,7 @@ export function AppShell() {
         <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
       </svg>
     </button>
-    {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
+    {modelsConfigOpen && <OmpNativeSettings engine={activeEngine} onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}
@@ -1437,16 +1512,9 @@ export function AppShell() {
       />
     )}
     {skillsConfigOpen && projectTrustCwd && (
-      <SkillsConfig cwd={projectTrustCwd} onClose={() => setSkillsConfigOpen(false)} />
+      <OmpNativeSettings engine={activeEngine} onClose={() => setSkillsConfigOpen(false)} />
     )}
-    {pluginsConfigOpen && projectTrustCwd && (
-      <PluginsConfig
-        cwd={projectTrustCwd}
-        sessionId={selectedSession?.id ?? null}
-        onClose={() => setPluginsConfigOpen(false)}
-        onReloaded={() => setSessionKey((k) => k + 1)}
-      />
-    )}
+    {usageOpen && <SubscriptionUsage sessionId={selectedSession?.id} onClose={() => setUsageOpen(false)} />}
     </>
   );
 }

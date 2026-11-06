@@ -8,7 +8,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, filterModelOptions } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, filterModelOptions, buildSlashCommandLayout, slashCommandsForEngine } = await jiti.import("./ChatInput.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 test("renders the upstream model error", () => {
@@ -58,6 +58,27 @@ test("keeps the model selector visible when a model error leaves no options", ()
 
   assert.match(html, />No models</);
   assert.match(html, /title="No available models"/);
+});
+
+test("slash-command layout keeps Claude native commands in their own group", () => {
+  const native = { name: "review", description: "Review project changes", source: "claude", argumentHint: "<path>" };
+  const web = { name: "copy", description: "Copy the last response", source: "builtin" };
+  const layout = buildSlashCommandLayout([native, web], {});
+  assert.deepEqual(layout.commands, [web, native]);
+  assert.deepEqual(layout.groups.map((group) => group.source), ["builtin", "claude"]);
+  assert.deepEqual(layout.groups.flatMap((group) => group.items.map((item) => item.index)), [0, 1]);
+});
+
+test("Claude native commands replace web aliases and bypass extended-chat filtering", () => {
+  const native = ["usage", "compact", "help", "review"].map((name) => ({ name, source: "claude", description: name }));
+  const commands = slashCommandsForEngine("claude", native);
+  for (const command of native) assert.deepEqual(commands.filter((row) => row.name === command.name), [command]);
+  assert.equal(commands.some((row) => row.name === "reload"), false);
+  assert.equal(commands.some((row) => row.name === "session"), false);
+  assert.ok(commands.some((row) => row.source === "builtin" && row.name === "copy"));
+  assert.deepEqual(slashCommandsForEngine("claude", native, true), native);
+  assert.ok(!slashCommandsForEngine("codex", []).some((row) => row.name === "compact"));
+  assert.ok(slashCommandsForEngine("omp", []).some((row) => row.name === "compact"));
 });
 
 test("filters model options by name and id", () => {

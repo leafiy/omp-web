@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { engineForSession } from "@/lib/engine";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -10,7 +11,10 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const body = await req.json() as { type: string; [key: string]: unknown };
+    const { engine, ...body } = await req.json() as { type: string; engine?: unknown; [key: string]: unknown };
+    if (engine !== undefined && engine !== engineForSession(id)) {
+      return NextResponse.json({ error: "An existing session cannot change engines. Start a new session instead." }, { status: 409 });
+    }
 
     // Fast path: already-running session
     const existing = getRpcSession(id);

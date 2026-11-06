@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { loadWebPassword } from "../bin/web-password.js";
 
 export const PI_WEB_AUTH_USERNAME = "pi";
+export const getWebPassword = loadWebPassword;
 
 function hashSecret(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
@@ -11,14 +13,14 @@ function secretsEqual(actual: string, expected: string): boolean {
 }
 
 export function isWebPasswordEnabled(
-  password: string | undefined = process.env.PI_WEB_PASSWORD,
+  password: string | undefined = loadWebPassword(),
 ): password is string {
   return typeof password === "string" && password.length > 0;
 }
 
 export function isValidBasicAuthorization(
   authorization: string | null,
-  password = process.env.PI_WEB_PASSWORD,
+  password = loadWebPassword(),
 ): boolean {
   if (!isWebPasswordEnabled(password) || !authorization) return false;
 

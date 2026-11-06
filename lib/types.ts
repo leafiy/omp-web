@@ -1,3 +1,5 @@
+import type { AgentEngine } from "./engine";
+
 // Types mirrored from pi-mono coding-agent session-manager
 
 export interface SessionHeader {
@@ -7,6 +9,7 @@ export interface SessionHeader {
   timestamp: string;
   cwd: string;
   parentSession?: string;
+  title?: string;
 }
 
 export interface SessionEntryBase {
@@ -110,6 +113,8 @@ export interface BashExecutionMessage {
 export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CustomMessage | BashExecutionMessage;
 
 export type ExtensionUiRequest =
+  | { type: "extension_ui_request"; id: string; method: "cancel"; targetId: string }
+  | { type: "extension_ui_request"; id: string; method: "open_url"; url: string; launchUrl?: string; instructions?: string }
   | {
       type: "extension_ui_request";
       id: string;
@@ -132,6 +137,7 @@ export type ExtensionUiRequest =
       type: "extension_ui_request";
       id: string;
       method: "input";
+      secret?: boolean;
       title: string;
       placeholder?: string;
       timeout?: number;
@@ -285,6 +291,8 @@ export interface SessionTreeNode {
 export interface SessionInfo {
   path: string;
   id: string;
+  /** Immutable execution engine; optional only for older/local optimistic records. */
+  engine?: AgentEngine;
   cwd: string;
   name?: string;
   created: string;

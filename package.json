@@ -38,6 +38,7 @@
     "test:terminal": "node --test lib/terminal-manager.test.mjs lib/terminal-http.test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.318",
     "@earendil-works/pi-agent-core": "0.83.0",
     "@earendil-works/pi-ai": "0.83.0",
     "@earendil-works/pi-coding-agent": "0.83.0",

@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { allowFileRoot } from "@/lib/file-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
 import { startRpcSession } from "@/lib/rpc-manager";
+import { parseEngine, sessionKey, type AgentEngine } from "@/lib/engine";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -15,14 +16,16 @@ function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
   }
   throw new Error(`Invalid thinking level: ${String(value)}`);
 }
-// POST /api/agent/new  body: { cwd: string; type: string; message?: string; ... }
-// Spawns a brand-new pi session. Most calls immediately send the first command;
-// type:"ensure_session" only creates the runtime so clients can query commands.
-// Returns pi's real session id plus the model/thinking state selected at startup.
+// POST /api/agent/new selects the engine only when creating a session.
+// Existing session IDs permanently identify their engine; ensure_session does
+// not send a model prompt.
 export async function POST(req: Request) {
   try {
     const body = await req.json() as { cwd?: string; [key: string]: unknown };
-    const { cwd, ...command } = body;
+    const { cwd, engine: engineValue, ...command } = body;
+    let engine: AgentEngine;
+    try { engine = parseEngine(engineValue); }
+    catch (error) { return NextResponse.json({ error: String(error) }, { status: 400 }); }
 
     if (!cwd || typeof cwd !== "string") {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
@@ -41,8 +44,9 @@ export async function POST(req: Request) {
     // Must be unique per request: startRpcSession coalesces concurrent callers
     // that share a key onto one session. Date.now() (ms resolution) collides for
     // requests in the same millisecond, merging two new sessions into one.
-    const tempKey = `__new__${randomUUID()}`;
+    const tempKey = sessionKey(engine, `__new__${randomUUID()}`);
     const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, {
+      engine,
       ...(toolNames ? { toolNames } : {}),
       ...(provider && modelId ? { initialModel: { provider, modelId } } : {}),
       ...(explicitThinkingLevel ? { thinkingLevel: explicitThinkingLevel } : {}),
@@ -63,6 +67,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: true,
         sessionId: realSessionId,
+        engine,
         data: null,
         model: state.model
           ? { provider: state.model.provider, modelId: state.model.id }
@@ -76,6 +81,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       sessionId: realSessionId,
+      engine,
       data: result,
       model: state.model
         ? { provider: state.model.provider, modelId: state.model.id }

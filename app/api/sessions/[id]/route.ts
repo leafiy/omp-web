@@ -11,7 +11,8 @@ import {
   openSessionManager,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
-import { getRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { engineForSession, supportsExtendedChat } from "@/lib/engine";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -126,7 +127,8 @@ export async function GET(
 
     const sm = openSessionManager(filePath);
     const entries = sm.getEntries() as never;
-    const leafId = sm.getLeafId();
+    const liveLeafId = getRpcSession(id)?.getActiveLeafId();
+    const leafId = liveLeafId !== undefined ? liveLeafId : sm.getLeafId();
     const tree = projectTreeForResponse(sm.getTree());
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
@@ -137,11 +139,12 @@ export async function GET(
     let modified = header?.timestamp ?? new Date().toISOString();
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
     const parentSessionId = header?.parentSession
-      ? await resolveSessionIdByPath(header.parentSession)
+      ? await resolveSessionIdByPath(header.parentSession, engineForSession(id))
       : undefined;
     const info = header ? {
       path: filePath,
-      id: header.id,
+      id,
+      engine: engineForSession(id),
       cwd: header.cwd ?? "",
       name: sm.getSessionName(),
       created: header.timestamp,
@@ -185,8 +188,8 @@ export async function PATCH(
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
-    const sm = openSessionManager(filePath);
-    sm.appendSessionInfo(name.trim());
+    const { session } = await startRpcSession(id, filePath, undefined);
+    await session.send({ type: "set_session_name", name: name.trim() });
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -200,6 +203,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!supportsExtendedChat(engineForSession(id))) return NextResponse.json({ error: "Deletion is not enabled for this engine: native history and the web display projection must be handled together" }, { status: 409 });
   try {
     const filePath = await resolveSessionPath(id);
     if (!filePath) {

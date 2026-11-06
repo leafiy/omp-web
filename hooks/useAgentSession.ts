@@ -10,7 +10,8 @@ import type {
   SessionTreeNode,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { sendAgentCommand } from "@/lib/agent-client";
+import { createAgentSession, sendAgentCommand } from "@/lib/agent-client";
+import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
@@ -124,7 +125,8 @@ export interface CompactResultInfo {
 export interface SlashCommandInfo {
   name: string;
   description?: string;
-  source: "extension" | "prompt" | "skill";
+  source: "extension" | "prompt" | "skill" | "omp" | "pi" | "claude";
+  argumentHint?: string;
   sourceInfo?: {
     path: string;
     source: string;
@@ -141,6 +143,8 @@ export type BuiltinSlashCommandResult =
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
+  engine?: AgentEngine;
+  onNewSession?: (cwd: string, engine: AgentEngine) => void;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
@@ -304,7 +308,7 @@ export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (content: string) => void;
   prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
+  addFiles: (files: File[]) => void;
 }
 
 export interface AttachedImage {
@@ -332,11 +336,18 @@ type SlashCommandsResponse = {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
+    session, newSessionCwd, engine: newChatEngine = "omp", onNewSession, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
+  const engine = session ? session.engine ?? engineForSession(session.id) : newChatEngine;
+  const modelCwd = session?.cwd ?? newSessionCwd ?? "";
+  const modelScopeKey = JSON.stringify([engine, modelCwd]);
+  const modelScopeRef = useRef(modelScopeKey);
+  modelScopeRef.current = modelScopeKey;
+  const modelRequestRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -373,6 +384,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
+  const extensionDialogsRef = useRef(new Map<string, ExtensionUiDialogRequest>());
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -566,6 +578,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const loadTools = useCallback(async (sid: string) => {
+    if (engine !== "omp") return;
     try {
       const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
       if (tools) {
@@ -575,14 +588,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to load tools:", e);
     }
-  }, [setToolPresetState]);
+  }, [engine, setToolPresetState]);
 
   const promoteNewSession = useCallback((messageCount = 0, firstMessage = "(no messages)") => {
     const sid = sessionIdRef.current;
-    if (!isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
+    if (!mountedRef.current || !isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
     newSessionPromotedRef.current = true;
     onSessionCreated?.({
       id: sid,
+      engine,
       path: "",
       cwd: newSessionCwd,
       name: undefined,
@@ -591,7 +605,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       messageCount,
       firstMessage,
     });
-  }, [isNew, newSessionCwd, onSessionCreated]);
+  }, [engine, isNew, newSessionCwd, onSessionCreated]);
 
   const ensureNewSession = useCallback(async () => {
     if (sessionIdRef.current) return sessionIdRef.current;
@@ -599,31 +613,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
 
     const promise = (async () => {
-      // Only send explicit user overrides. The server resolves the current
-      // enabledModels scope atomically with AgentSession construction.
+      // Only send explicit overrides. Each engine resolves its own native config.
       const selectedModel = newSessionModelOverrideRef.current;
       const selectedThinkingLevel = thinkingLevelOverrideRef.current;
       if (selectedModel) setPendingModel(selectedModel);
-      const toolNames = getToolNamesForPreset(toolPreset);
-      const res = await fetch("/api/agent/new", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cwd: newSessionCwd,
-          type: "ensure_session",
-          toolNames,
-          ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
-          ...(selectedThinkingLevel
-            ? { thinkingLevel: selectedThinkingLevel }
-            : {}),
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const result = await res.json() as {
+      const result = await createAgentSession<{
         sessionId: string;
+        engine: AgentEngine;
         model?: SelectedModel | null;
         thinkingLevel?: ThinkingLevelOption;
-      };
+      }>(engine, {
+        cwd: newSessionCwd,
+        type: "ensure_session",
+        ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
+        ...(selectedThinkingLevel ? { thinkingLevel: selectedThinkingLevel } : {}),
+      });
       const realId = result.sessionId;
       sessionIdRef.current = realId;
       if (result.model && newSessionModelOverrideRef.current === selectedModel) {
@@ -645,7 +649,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionCwd, toolPreset]);
+  }, [engine, isNew, newSessionCwd]);
 
   const loadSlashCommands = useCallback(async () => {
     const sid = sessionIdRef.current ?? await ensureNewSession();
@@ -768,7 +772,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
     const sid = sessionIdRef.current;
-    setExtensionDialog((current) => current?.id === request.id ? null : current);
     if (!sid) return;
     try {
       await sendAgentCommand(sid, {
@@ -776,10 +779,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         id: request.id,
         ...response,
       });
+      extensionDialogsRef.current.delete(request.id);
+      setExtensionDialog(extensionDialogsRef.current.values().next().value ?? null);
     } catch (e) {
-      console.error("Failed to send extension UI response:", e);
+      setError(`Failed to send ${engineLabel(engine)} UI response: ${String(e)}`);
     }
-  }, []);
+  }, [engine]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
     const sid = sessionIdRef.current;
@@ -810,11 +815,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
     switch (request.method) {
+      case "cancel":
+        extensionDialogsRef.current.delete(request.targetId);
+        setExtensionDialog(extensionDialogsRef.current.values().next().value ?? null);
+        break;
+      case "open_url":
+        addNotice({ message: `${request.instructions ?? "Open this URL to continue"}: ${request.launchUrl ?? request.url}`, type: "info" });
+        break;
       case "select":
       case "confirm":
       case "input":
       case "editor":
-        setExtensionDialog(request);
+        extensionDialogsRef.current.set(request.id, request);
+        setExtensionDialog(extensionDialogsRef.current.values().next().value ?? null);
         break;
       case "notify": {
         addNotice({
@@ -1328,7 +1341,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           ...(piImages?.length ? { images: piImages } : {}),
         });
       }
-      if (isSlashCommandPrompt && sentSessionId) {
+      if (mountedRef.current && isSlashCommandPrompt && sentSessionId) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
     } catch (e) {
@@ -1337,12 +1350,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // before the response connection was lost. Keep SSE alive until the
       // server confirms idle so a real run cannot continue unseen.
       if (promptRequestStarted && sentSessionId) {
-        void waitForPromptSettlement(sentSessionId, promptRunId);
+        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        if (mountedRef.current) void waitForPromptSettlement(sentSessionId, promptRunId);
         return;
       }
       rpcPromptPendingRef.current = false;
       agentRunningRef.current = false;
       closeEvents();
+      if (!(e instanceof EventStreamConnectionError)) addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
       if (e instanceof EventStreamConnectionError) {
         const optimisticKey = optimisticUserMessageKeyRef.current;
         if (optimisticKey) {
@@ -1357,12 +1372,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // The prompt never reached the agent, so restore the user's text into
         // the input instead of losing it. Mirrors the shell-command recovery in
         // executeBash; insertIfEmpty avoids clobbering anything typed since.
-        if (message) opts.chatInputRef?.current?.insertIfEmpty(message);
+        if (mountedRef.current && message) opts.chatInputRef?.current?.insertIfEmpty(message);
       }
       optimisticUserMessageKeyRef.current = null;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
+    } finally {
+      // Switching chats detaches the browser, never aborts accepted native work.
+      // Startup may have attached SSE after the unmount cleanup already ran.
+      if (!mountedRef.current) {
+        cancelEventStreamGrace();
+        closeEvents();
+      }
     }
   }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, opts.chatInputRef]);
 
@@ -1385,7 +1407,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to execute shell command:", e);
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
-      opts.chatInputRef?.current?.insertIfEmpty(inputText);
+      if (mountedRef.current) opts.chatInputRef?.current?.insertIfEmpty(inputText);
     } finally {
       bashRunningRef.current = false;
       setPendingBash(null);
@@ -1423,7 +1445,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         entryId,
       });
       const { cancelled, newSessionId } = result ?? {};
-      if (!cancelled && newSessionId) {
+      if (mountedRef.current && !cancelled && newSessionId) {
         onSessionForked?.(newSessionId);
       }
     } catch (e) {
@@ -1497,11 +1519,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isCompacting, loadSession]);
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
-    const modelCwd = newSessionCwd ?? session?.cwd ?? "";
-    const modelsUrl = modelCwd ? `/api/models?cwd=${encodeURIComponent(modelCwd)}` : "/api/models";
-    const res = await fetch(modelsUrl, signal ? { signal } : undefined);
+    const requestId = ++modelRequestRef.current;
+    const params = new URLSearchParams({ engine, cwd: modelCwd });
+    const res = await fetch(`/api/models?${params}`, signal ? { signal } : undefined);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json() as ModelsResponse;
+    if (signal?.aborted || !mountedRef.current || modelScopeRef.current !== modelScopeKey || modelRequestRef.current !== requestId) return;
     setModelNames(d.models);
     setModelError(d.modelError ?? null);
     setModelScopeWarnings(d.modelScopeWarnings ?? []);
@@ -1513,7 +1536,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const match = d.defaultModel
         ? nextModelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
         : undefined;
-      const displayModel = match ?? nextModelList[0];
+      const displayModel = match ?? (supportsExtendedChat(engine) ? nextModelList[0] : undefined);
       setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
       // An `enabledModels` pattern may pin a thinking level (`anthropic/*:high`).
       // Like pi, apply it to the model a new session starts with.
@@ -1522,7 +1545,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
       }
     }
-  }, [isNew, newSessionCwd, session?.cwd]);
+  }, [engine, isNew, modelCwd, modelScopeKey]);
 
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
     if (!text.startsWith("/")) return { handled: false };
@@ -1543,6 +1566,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
 
     try {
+      if (!supportsExtendedChat(engine)) {
+        if (commandName === "login" || commandName === "logout") return complete({ handled: true, message: engine === "codex"
+          ? "请在终端运行 codex login / codex logout 管理 Codex 登录，不要把登录凭据发到聊天里。"
+          : "请在终端运行 claude，使用其官方登录流程；网页不管理或复制登录凭据。" });
+        if (engine === "claude") {
+          // Native commands win over same-named web shortcuts (/usage, /compact,
+          // /help, project skills, etc.). Re-fetch so typed commands need not have
+          // appeared in an already-open palette. Sending still uses prompt/SSE.
+          const commands = await loadSlashCommands();
+          if (commands.some((command) => command.source === "claude" && command.name === commandName)) return { handled: false };
+        }
+        if (commandName === "help") return complete({ handled: true, message: engine === "claude"
+          ? "输入 / 查看本机会话提供的 Claude Code 命令。登录和终端专用操作请在本机 claude 中完成。"
+          : `${engineLabel(engine)}: /models, /name, /copy, /new, /clear, /settings, /resume. 暂不支持分支、队列或手动压缩。` });
+        if (!["name", "copy", "model", "models", "settings", "resume", "new", "clear", "hotkeys"].includes(commandName)) return complete({ handled: true, error: `/${commandName} is not supported by the ${engineLabel(engine)} web adapter yet` });
+      }
       switch (commandName) {
         case "compact": {
           if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
@@ -1558,17 +1597,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({ handled: true, message: "Compacted context" });
         }
 
-        case "reload": {
-          if (!sid) return complete({ handled: true, error: "No active session to reload" });
-          await sendAgentCommand(sid, { type: "reload" });
-          await Promise.all([
-            loadSession(sid, false, true),
-            loadTools(sid),
-            loadSlashCommands(),
-            loadModels(),
-          ]);
-          return complete({ handled: true, message: "Reloaded session resources" });
-        }
+        case "reload":
+          if (engine === "pi") return complete({ handled: true, error: "Pi RPC does not support reload. Start a new Pi chat after configuration changes." });
+          // Route through the normal prompt/SSE path so OMP can ask UI questions.
+          return { handled: false };
 
         case "name": {
           if (!sid) return complete({ handled: true, error: "No active session to name" });
@@ -1634,7 +1666,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         case "export": {
           if (!sid) return complete({ handled: true, error: "No active session to export" });
-          window.open(`/api/sessions/${sid}/export`, "_blank");
+          window.open(`/api/sessions/${encodeURIComponent(sid)}/export`, "_blank");
           return complete({ handled: true, message: "Opened session export" });
         }
 
@@ -1645,53 +1677,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         case "new":
         case "clear": {
-          onSessionCreated?.({
-            id: "",
-            path: "",
-            cwd: newSessionCwd ?? process.cwd(),
-            name: undefined,
-            created: new Date().toISOString(),
-            modified: new Date().toISOString(),
-            messageCount: 0,
-            firstMessage: "(new session)",
-          });
+          const cwd = session?.cwd ?? newSessionCwd;
+          if (!cwd || !onNewSession) return complete({ handled: true, error: "Select a project before starting a new chat" });
+          onNewSession(cwd, engine);
           return complete({ handled: true, message: "Started a new session" });
         }
 
         case "fork":
         case "clone": {
           if (!sid || !activeLeafId) return complete({ handled: true, error: "No active session position to fork" });
-          const res = await sendAgentCommand<{ sessionId?: string }>(sid, { type: "fork", entryId: activeLeafId });
+          const res = await sendAgentCommand<{ sessionId?: string }>(sid, { type: "fork", includeEntry: true });
           if (res?.sessionId) {
-            onSessionForked?.(res.sessionId);
+            if (mountedRef.current) onSessionForked?.(res.sessionId);
             return complete({ handled: true, message: `Forked session (${res.sessionId.slice(0, 8)})` });
           }
           return complete({ handled: true, message: "Forked session" });
         }
 
         case "tree": {
+          if (engine === "pi") return complete({ handled: true, error: "Pi RPC does not support history-branch navigation. Use Fork to start a separate branch chat." });
           return complete({ handled: true, message: "Use the branch switcher in the header to navigate session branches" });
         }
 
         case "login":
-        case "logout": {
-          if (args) {
-            if (commandName === "login") {
-              window.open(`/api/auth/login/${args}`, "_blank");
-              return complete({ handled: true, message: `Opened login flow for ${args}` });
-            } else {
-              await fetch(`/api/auth/logout/${args}`, { method: "POST" });
-              await Promise.all([loadModels(), loadSlashCommands()]);
-              return complete({ handled: true, message: `Logged out from ${args}` });
-            }
-          }
-          return complete({ handled: true, message: "Open Models & Settings from the sidebar to configure logins" });
-        }
+        case "logout":
+          return complete({ handled: true, message: engine === "omp" ? "Start omp in the embedded terminal and use /login or /logout there. This chat uses OMP credentials." : 'Start the bundled Pi CLI in the terminal with PI_CODING_AGENT_DIR="${OMP_WEB_PI_AGENT_DIR:-$HOME/.pi/agent}", then use /login or /logout. See Pi settings for the full command; do not use the inherited .omp directory.' });
 
         case "help": {
           addNotice({
             type: "success",
-            message: "Slash commands available: /usage, /models, /compact, /reload, /name, /session, /copy, /export, /fork, /tree, /new, /login, /logout",
+            message: engine === "pi"
+              ? "Slash commands available: /usage, /models, /compact, /name, /session, /copy, /export, /fork, /new, /login, /logout"
+              : "Slash commands available: /usage, /models, /compact, /reload, /name, /session, /copy, /export, /fork, /tree, /new, /login, /logout",
           });
           return complete({ handled: true, message: "Listed available commands" });
         }
@@ -1705,14 +1722,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         case "changelog": {
-          return complete({ handled: true, message: "Pi Web v0.8.0 — Full CLI feature & model parity" });
+          return complete({ handled: true, message: engine === "omp" ? "This chat uses local OMP RPC. Run omp --version in the terminal for its version." : "This chat uses local Pi RPC. Use the bundled Pi CLI command shown in Pi settings with --version for its version." });
         }
 
         case "trust":
         case "share":
         case "scoped-models":
         case "quit": {
-          return complete({ handled: true, message: `Command /${commandName} processed` });
+          return complete({ handled: true, error: `/${commandName} is not implemented by the web controls. Use local ${engine === "pi" ? "Pi (with its separate agent directory)" : "OMP"} in the terminal.` });
         }
 
         default:
@@ -1723,7 +1740,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [activeLeafId, addNotice, ensureNewSession, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, modelList, newSessionCwd, onSessionCreated, onSessionForked, onSessionStatsPanelOpen, promoteNewSession]);
+  }, [activeLeafId, addNotice, engine, ensureNewSession, isCompacting, loadSession, loadSlashCommands, modelList, newSessionCwd, onNewSession, onSessionForked, onSessionStatsPanelOpen, promoteNewSession, session?.cwd]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
@@ -1785,18 +1802,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       await sendAgentCommand(sid, { type: "abort_compaction" });
     } catch (e) {
-      console.error("Failed to abort compaction:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, []);
+  }, [addNotice]);
 
   const handleRecallQueue = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid) return;
     try {
       const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
-      // clearQueue also emits an empty queue_update, but that only reaches us
-      // while SSE is connected — clear locally so idle recalls update the UI.
-      setQueuedMessages({ steering: [], followUp: [] });
+      // Native OMP removes only messages that have not started delivery.
+      const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
+      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
       const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
@@ -1865,6 +1882,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Load session on mount
   useEffect(() => {
+    mountedRef.current = true;
     if (session) {
       sessionIdRef.current = session.id;
       loadSession(session.id, true, true).then((agentState) => {
@@ -1900,6 +1918,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
     }
     return () => {
+      mountedRef.current = false;
+      modelRequestRef.current += 1;
       bashRecoveryIdRef.current += 1;
       cancelEventStreamGrace();
       closeEvents();
@@ -1913,8 +1933,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   useEffect(() => {
     if (!onBranchDataChange) return;
-    onBranchDataChange(data?.tree ?? [], activeLeafId, handleLeafChange);
-  }, [data?.tree, activeLeafId, handleLeafChange, onBranchDataChange]);
+    onBranchDataChange(engine !== "omp" ? [] : data?.tree ?? [], activeLeafId, handleLeafChange);
+  }, [engine, data?.tree, activeLeafId, handleLeafChange, onBranchDataChange]);
 
   useEffect(() => {
     window.addEventListener("keydown", markUserScrollIntent);
@@ -1952,6 +1972,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+
+  // Never carry an explicit model/thinking choice into another engine or cwd.
+  useEffect(() => {
+    newSessionModelOverrideRef.current = null;
+    thinkingLevelOverrideRef.current = null;
+    setNewSessionModel(null);
+    setNewSessionDefaultModel(null);
+    setPendingModel(null);
+    setModelNames({});
+    setModelList([]);
+    setModelError(null);
+    setModelScopeWarnings([]);
+    setModelThinkingLevels({});
+    setModelThinkingLevelMaps({});
+    if (isNew) setThinkingLevel("auto");
+    // Session promotion does not change scope and must preserve its live state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelScopeKey]);
 
   // Load model list
   useEffect(() => {

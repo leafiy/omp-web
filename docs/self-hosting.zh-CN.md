@@ -27,11 +27,13 @@
 
 终端是完整 Shell，拥有 **omp-web 服务账户的权限**，不是沙箱。工作目录白名单只限制启动位置，并不限制 Shell 随后的文件访问或命令执行。即使 AI 工具被禁用，手动终端仍可执行命令。
 
-建议使用专用低权限账户、容器和可信 VPN/HTTPS。不要把 root 账户下的无认证服务暴露到公网。**当前本机的免密码和 root 配置未在本次开发中改变。**
+建议使用专用低权限账户、容器和可信 VPN/HTTPS。不要把 root 账户下的无认证服务暴露到公网。**旧本机实例未在远端部署时切换；新远端实例已强制访问密码并只绑定私有隧道地址。** 最新部署说明见 [原生访问层](./native-host-deployment.zh-CN.md)。
 
 | 环境变量 | 用途 |
 | --- | --- |
-| `PI_WEB_PASSWORD` | 启用现有 Basic Auth，用户名固定为 `pi`；未设置时无密码保护 |
+| `PI_WEB_PASSWORD_FILE` | 推荐：绝对路径的私有密码文件（0600）；用户名固定为 `pi`。文件无效时失败关闭 |
+| `OMP_WEB_REQUIRE_PASSWORD=1` | 部署时强制要求访问密码，未配置则拒绝启动 |
+| `PI_WEB_PASSWORD` | 兼容旧环境变量方式，不与密码文件同时设置非空值 |
 | `PI_WEB_ALLOWED_HOSTS` | 允许的额外访问主机名，逗号分隔 |
 | `OMP_WEB_TERMINAL=0` | 禁用所有终端 API；默认启用 |
 | `SHELL` | Linux/macOS 下使用的 Shell 绝对路径，未设置时使用 `/bin/bash` |

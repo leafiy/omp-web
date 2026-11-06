@@ -4,65 +4,59 @@ import {
   buildSessionContext as piBuildSessionContext,
 } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "fs";
-import { dirname } from "path";
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync, writeFileSync } from "fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "fs";
 import { join, normalize as normalizePath } from "path";
-import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
+import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext, SessionTreeNode } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { sessionPathKey } from "./session-path";
 import { resolveProject, type ProjectInfo } from "./worktree";
 
-import { getOmpAgentDir } from "./file-paths";
-export { getOmpAgentDir as getAgentDir };
+import { getEngineAgentDir } from "./engine-paths";
+import { engineForSession, sessionKey, type AgentEngine } from "./engine";
+export { getOmpAgentDir as getAgentDir } from "./file-paths";
 
-async function loadAllSessions(): Promise<SessionInfo[]> {
-  let piSessions: PiSessionInfo[] = [];
-  try {
-    piSessions = await SessionManager.listAll();
-  } catch {
-    // ignore
+async function loadEngineSessions(engine: AgentEngine): Promise<SessionInfo[]> {
+  const sessionsDir = join(getEngineAgentDir(engine), "sessions");
+  if (!existsSync(sessionsDir)) return [];
+  const directories = [sessionsDir];
+  for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) directories.push(join(sessionsDir, entry.name));
   }
-
-  // Always scan getOmpAgentDir()/sessions for session files that SessionManager missed
-  // (e.g. files where title entry or thinking_level_change is at line 1)
+  // An explicit SDK listAll directory is flat, not an agent root. Scan each
+  // project directory explicitly; never rely on the web process's Pi env.
+  const groups = await Promise.all(directories.map(async (directory) => {
+    try { return await SessionManager.listAll(directory); } catch { return []; }
+  }));
+  const piSessions: Omit<PiSessionInfo, "allMessagesText">[] = groups.flat();
   const knownPaths = new Set(piSessions.map((s) => sessionPathKey(s.path)));
-  const sessionsDir = join(getOmpAgentDir(), "sessions");
-  if (existsSync(sessionsDir)) {
+  // Native OMP title slots can precede the header, which Pi's indexer skips.
+  for (const directory of directories) {
     try {
-      const subdirs = readdirSync(sessionsDir);
-      for (const sub of subdirs) {
-        const dirPath = join(sessionsDir, sub);
-        if (!statSync(dirPath).isDirectory()) continue;
-        const files = readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
-        for (const file of files) {
-          const filePath = join(dirPath, file);
-          if (knownPaths.has(sessionPathKey(filePath))) continue;
-
-          const header = readSessionHeader(filePath);
-          if (header && header.id) {
-            const stat = statSync(filePath);
-            piSessions.push({
-              path: filePath,
-              id: header.id,
-              cwd: header.cwd || "",
-              name: (header as unknown as Record<string, unknown>).name as string || (header as unknown as Record<string, unknown>).title as string,
-              created: header.timestamp ? new Date(header.timestamp) : stat.birthtime,
-              modified: stat.mtime,
-              messageCount: 1,
-              firstMessage: (header as unknown as Record<string, unknown>).title as string || "(session)",
-              parentSessionPath: header.parentSession,
-            } as unknown as PiSessionInfo);
-            knownPaths.add(sessionPathKey(filePath));
-          }
-        }
+      for (const file of readdirSync(directory).filter((name) => name.endsWith(".jsonl"))) {
+        const filePath = join(directory, file);
+        if (knownPaths.has(sessionPathKey(filePath))) continue;
+        const header = readSessionHeader(filePath);
+        if (!header?.id) continue;
+        const stat = statSync(filePath);
+        piSessions.push({
+          path: filePath,
+          id: header.id,
+          cwd: header.cwd || "",
+          name: header.title,
+          created: header.timestamp ? new Date(header.timestamp) : stat.birthtime,
+          modified: stat.mtime,
+          messageCount: 1,
+          firstMessage: header.title || "(session)",
+          parentSessionPath: header.parentSession,
+        });
+        knownPaths.add(sessionPathKey(filePath));
       }
-    } catch {
-      // ignore error
-    }
+    } catch { /* A concurrently removed project/session must not hide other histories. */ }
   }
   const pathToId = new Map<string, string>();
-  for (const s of piSessions) pathToId.set(sessionPathKey(s.path), s.id);
+  for (const s of piSessions) pathToId.set(sessionPathKey(s.path), sessionKey(engine, s.id));
+  const nativeIds = new Set(piSessions.map((s) => s.id));
   // Resolve each unique cwd to its project root (main repo shared by all
   // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
   const uniqueCwds = [...new Set(piSessions.map((s) => s.cwd).filter(Boolean))];
@@ -72,22 +66,31 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
   }));
 
   return piSessions.map((s) => {
-    cacheSessionPath(s.id, s.path);
+    const id = sessionKey(engine, s.id);
+    cacheSessionPath(id, s.path);
+    const header = readSessionHeader(s.path);
     const project = s.cwd ? projectByCwd.get(s.cwd) : undefined;
+    const parent = header?.parentSession ?? s.parentSessionPath;
     return {
       path: s.path,
-      id: s.id,
+      id,
+      engine,
       cwd: s.cwd,
-      name: s.name,
+      name: header?.title ?? s.name,
       created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
       modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || "(no messages)",
-      parentSessionId: s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined,
+      parentSessionId: parent ? pathToId.get(sessionPathKey(parent)) ?? (nativeIds.has(parent) ? sessionKey(engine, parent) : undefined) : undefined,
       projectRoot: project?.projectRoot ?? s.cwd,
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
     };
   });
+}
+
+async function loadAllSessions(): Promise<SessionInfo[]> {
+  const groups = await Promise.all([loadEngineSessions("omp"), loadEngineSessions("pi"), loadEngineSessions("claude"), loadEngineSessions("codex")]);
+  return groups.flat().sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
 }
 
 export async function listAllSessions(): Promise<SessionInfo[]> {
@@ -163,13 +166,18 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   return getPathCache().get(sessionId) ?? null;
 }
 
-export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {
+export async function resolveSessionIdByPath(filePath: string, engine: AgentEngine = "omp"): Promise<string | undefined> {
+  // Resolve native parent IDs only within the child's engine namespace.
+  const id = sessionKey(engine, filePath);
+  if (getPathCache().has(id)) return id;
   const pathKey = sessionPathKey(filePath);
   const cached = getPathToIdCache().get(pathKey);
-  if (cached) return cached;
+  if (cached) return engineForSession(cached) === engine ? cached : undefined;
 
   await listAllSessions();
-  return getPathToIdCache().get(pathKey);
+  if (getPathCache().has(id)) return id;
+  const resolved = getPathToIdCache().get(pathKey);
+  return resolved && engineForSession(resolved) === engine ? resolved : undefined;
 }
 
 export function cacheSessionPath(sessionId: string, filePath: string): void {
@@ -221,11 +229,14 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
     const text = buffer.subarray(0, bytesRead).toString("utf8");
     const lines = text.split("\n");
     let sessionHeader: (SessionHeader & { name?: string; title?: string }) | null = null;
+    let slotTitle: string | undefined;
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const entry = JSON.parse(line.trim()) as Record<string, unknown>;
-        if (entry && entry.type === "session" && !sessionHeader) {
+        if (entry?.type === "title" && typeof entry.title === "string") {
+          slotTitle = entry.title;
+        } else if (entry && entry.type === "session" && !sessionHeader) {
           sessionHeader = entry as unknown as SessionHeader;
         } else if (entry && entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) {
           if (sessionHeader) {
@@ -237,6 +248,7 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
         // continue scanning
       }
     }
+    if (sessionHeader && slotTitle !== undefined) sessionHeader.title = slotTitle;
     return sessionHeader;
   } catch {
     return null;
@@ -263,39 +275,56 @@ export function loadOmpSessionEntries(filePath: string): SessionEntry[] {
         // ignore invalid lines
       }
     }
-    const sessionIdx = entries.findIndex((e) => hasSessionType(e));
-    if (sessionIdx > 0) {
-      const [sessionHeader] = entries.splice(sessionIdx, 1);
-      entries.unshift(sessionHeader);
-      try {
-        const fixedContent = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
-        writeFileSync(filePath, fixedContent, "utf8");
-      } catch {
-        // ignore write error
-      }
-    }
+    // OMP's fixed-width title slot intentionally precedes its session header.
+    // Browsing must NEVER reorder/rewrite a transcript owned by a live OMP process.
     return entries;
   } catch {
     return [];
   }
 }
 
-type SessionManagerConstructor = new (
-  cwd: string,
-  dir: string,
-  sessionFile: string,
-  watch: boolean,
-  options: unknown,
-  fileEntries: unknown[]
-) => SessionManager;
-
-export function openSessionManager(filePath: string, sessionDir?: string, cwdOverride?: string): SessionManager {
-  const entries = loadOmpSessionEntries(filePath);
-  const header = entries.find((e) => hasSessionType(e)) as (SessionEntry & { cwd?: string }) | undefined;
-  const cwd = cwdOverride ?? header?.cwd ?? process.cwd();
-  const dir = sessionDir ? normalizePath(sessionDir) : dirname(filePath);
-  const Ctor = SessionManager as unknown as SessionManagerConstructor;
-  return new Ctor(cwd, dir, filePath, true, undefined, entries);
+// A read-only structural view, not a Pi SessionManager (which can migrate/write
+// files on construction). Mutations belong exclusively to the native OMP RPC.
+export function openSessionManager(filePath: string) {
+  const raw = loadOmpSessionEntries(filePath);
+  const header = readSessionHeader(filePath);
+  const entries = raw.filter((entry) => !hasSessionType(entry) && typeof entry.id === "string");
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const last = entries.at(-1) as (SessionEntry & { activeLeafId?: string | null }) | undefined;
+  let leafId = last?.activeLeafId !== undefined ? last.activeLeafId : last?.id ?? null;
+  if (leafId !== null && !byId.has(leafId)) {
+    leafId = [...entries].reverse().find((entry) => {
+      const active = (entry as SessionEntry & { activeLeafId?: string | null }).activeLeafId;
+      return active === undefined || active === entry.id;
+    })?.id ?? null;
+  }
+  return {
+    getHeader: () => header,
+    getEntries: () => entries,
+    getLeafId: () => leafId,
+    getSessionName: () => {
+      for (let i = raw.length - 1; i >= 0; i--) {
+        const entry = raw[i] as unknown as Record<string, unknown>;
+        if (entry.type === "title_change" && typeof entry.title === "string") return entry.title;
+        if (entry.type === "session_info" && typeof entry.name === "string") return entry.name;
+      }
+      return header?.title;
+    },
+    getTree: (): SessionTreeNode[] => {
+      const nodes = new Map<string, SessionTreeNode>(entries.map((entry) => [entry.id, { entry, children: [] }]));
+      const roots: SessionTreeNode[] = [];
+      for (const node of nodes.values()) {
+        const parent = node.entry.parentId ? nodes.get(node.entry.parentId) : undefined;
+        if (parent && parent !== node) parent.children.push(node);
+        else roots.push(node);
+        if (node.entry.type === "label") {
+          const target = nodes.get(node.entry.targetId);
+          if (target) target.label = node.entry.label;
+        }
+      }
+      return roots;
+    },
+  };
 }
 export function getSessionEntries(filePath: string): SessionEntry[] {
   const sm = openSessionManager(filePath);
@@ -307,16 +336,22 @@ export function buildSessionContext(
   leafId?: string | null,
   options: { deferThinking?: boolean; deferToolResultImages?: boolean } = {},
 ): SessionContext {
-  const byId = new Map<string, SessionEntry>();
-  for (const e of entries) byId.set(e.id, e);
-
-  const piEntries = entries as unknown as PiSessionEntry[];
-  const piCtx = piBuildSessionContext(piEntries, leafId, byId as unknown as Map<string, PiSessionEntry>);
+  // Adapt OMP metadata in memory only. Non-default role changes must not replace
+  // the chat model, but retain their ids/parents so branch traversal stays intact.
+  const piEntries = entries.map((entry) => {
+    const raw = entry as unknown as Record<string, unknown>;
+    if (raw.type !== "model_change" || typeof raw.model !== "string") return entry;
+    if (raw.role && raw.role !== "default") return { ...entry, type: "custom", customType: "omp_model_role" };
+    const slash = raw.model.indexOf("/");
+    return slash > 0 ? { ...entry, provider: raw.model.slice(0, slash), modelId: raw.model.slice(slash + 1) } : entry;
+  }) as unknown as PiSessionEntry[];
+  const contextById = new Map(piEntries.map((entry) => [entry.id, entry]));
+  const piCtx = piBuildSessionContext(piEntries, leafId, contextById);
 
   const contextEntries = piBuildContextEntries(
     piEntries,
     leafId,
-    byId as unknown as Map<string, PiSessionEntry>,
+    contextById,
   );
 
   // Convert the SDK-selected context entries and their IDs together. This keeps
