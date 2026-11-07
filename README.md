@@ -10,6 +10,8 @@ Your agents do the work. The browser makes them easier to use.
 
 Instead of juggling terminal windows, repeatedly reconnecting over SSH, or rebuilding your agent setup for another chat frontend, open a link, choose a project and an agent, and get to work—from your desktop or your phone.
 
+**Connect through Tailscale, EasyTier, or another trusted private network. Once connected, a browser is enough to get to work.**
+
 ## Your agents, not another agent platform
 
 omp-web is a convenient way to operate the agents already installed on your machine. It is **not a replacement agent, a model gateway, or a separate AI tool system**.
@@ -48,6 +50,47 @@ Your browser — desktop or phone
 | **Comfortable browsing** | Desktop and mobile layouts, English and Chinese UI, paged conversation history, and bounded in-memory caching for faster navigation. |
 
 The terminal is there when you want a shell—not because every conversation needs its own terminal window. Likewise, the file manager is a convenience for working with your project, not a replacement for the agent's native tools.
+
+## Work from anywhere with Tailscale or EasyTier
+
+Leave your agents and projects on the workstation or server where they already work. Use [Tailscale](https://tailscale.com/docs/features/tailscale-serve), [EasyTier](https://github.com/EasyTier/EasyTier), or a comparable private network to reach that machine from elsewhere.
+
+1. Run omp-web on the host under the account that already has your agents configured, with web authentication enabled.
+2. Set up the private network on the host and connect your other devices—or a trusted gateway—to it. Bind omp-web to the private address, or keep it on loopback behind an HTTPS proxy such as Tailscale Serve.
+3. Open the protected web URL from a laptop, phone, or tablet. **No agent CLI, desktop agent app, or SSH client is needed on that device.**
+
+The host must stay online and the private connection must be reachable. A browser does not establish the VPN for you, and these networking tools are optional—not bundled into omp-web. Keep the web password, network access rules, and hostname checks in place.
+
+### Remote Claude Code, without doing everything inside a terminal
+
+Remote coding is not just about sending a prompt. It is also about getting information and files into and out of the session:
+
+- **Copy replies and code** from a normal browser view instead of fighting terminal selection and scrollback, especially on a phone.
+- **Upload screenshots and files** through the browser instead of opening a separate file-transfer tool for every attachment.
+- **Browse, preview, and manage project files** without typing a path for every copy, move, rename, or download. Touch devices get a “More” menu.
+- **Use a shell when you actually need one**, alongside the conversation. The embedded terminal remains independent of the agent's chat.
+
+This makes remote Claude Code—and the other supported agents—more comfortable to use without replacing the agent underneath. Browser clipboard permissions and agent attachment support still apply; ordinary uploaded files are stored on the host and passed as file references.
+
+## Why this fork: a different priority from Herdr and Orca
+
+**Maintainer's motivation:**
+
+> I tried Herdr, Orca, and other agent integrations. For my workflow, the extra configuration, terminal management, and workspace conventions too often got in the way. I wanted browser access to the agents I already use—not another platform I had to reorganize my work around.
+
+The distinction is the workflow, not whether these projects can run native agents:
+
+| Project | Main focus | What that means for this use case |
+| --- | --- | --- |
+| [Herdr](https://github.com/herdrdev/herdr) | A runtime for agents' terminals: background sessions, panes, agent status, and local/SSH machines; also an official [desktop app](https://github.com/herdrdev/herdr-app). | A fit when you want a persistent terminal-centric environment. This fork instead makes the browser the main entry point, with a shell as an optional companion—not a new pane-management workflow to adopt. |
+| [Orca](https://github.com/stablyai/orca) | An agent orchestration workspace with parallel worktrees, Chat/Terminal modes, review tools, remote runtimes, and a mobile companion. | A fit when you want a broader agent workspace. This fork concentrates on opening an existing project and using its local agents, without making orchestration or a new worktree workflow a prerequisite. |
+| **omp-web — this fork** | A self-hosted browser entry point for OMP, Pi, Claude Code, and Codex CLI, plus an independent terminal and file manager. | Keep the existing agents, logins, configurations, and projects. Add web access; do not migrate to a replacement agent or configuration system. |
+
+Herdr and Orca also support native agents, and Orca already has file browsing, previews, and mobile access. Those are not exclusive claims for omp-web. The preference here is a narrower, browser-first workflow—not a claim to replace their entire feature sets or a measured ranking of setup difficulty.
+
+**Keep your CLI setup. Change the interface, not your workflow.** Continue using your CLIs normally when you prefer; the web UI is an additional way to operate them. There is still one-time web-server, authentication, and network setup, and browser support varies by agent.
+
+Comparison based on official documentation, checked 2026-11-07: [sources and scope](./docs/agent-workspace-comparison-research.zh-CN.md). The quoted experience is the maintainer's motivation, not a claim that every user will have the same experience.
 
 ## Get started
 
@@ -97,7 +140,7 @@ The default listener is loopback-only. Before exposing the app beyond your machi
    node bin/omp-web.js --hostname 127.0.0.1 --port 30141 --no-open
    ```
 
-3. Use an **HTTPS reverse proxy** or a **trusted VPN**. For direct VPN access, bind to the machine's private VPN address rather than a public wildcard address. If using a custom hostname, configure `PI_WEB_ALLOWED_HOSTS`.
+3. Use an **HTTPS reverse proxy** or a **trusted private network**, such as Tailscale or EasyTier. For direct VPN access, bind to the machine's private VPN address rather than a public wildcard address. If using a custom hostname, configure `PI_WEB_ALLOWED_HOSTS`.
 
 The web login username is **`pi`**. This password protects the website; it is separate from every agent's own login.
 
