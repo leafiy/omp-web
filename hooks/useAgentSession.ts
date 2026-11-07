@@ -73,6 +73,7 @@ type AgentStateResponse = {
   systemPrompt?: string;
   thinkingLevel?: string;
   isStreaming?: boolean;
+  supportsSteering?: boolean;
   isPromptRunning?: boolean;
   isBashRunning?: boolean;
   isCompacting?: boolean;
@@ -390,6 +391,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  const [nativeSteeringAvailable, setNativeSteeringAvailable] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
@@ -516,6 +518,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         const liveState = agentState.state;
         if (liveState) {
+          if (liveState.supportsSteering !== undefined) setNativeSteeringAvailable(liveState.supportsSteering);
           if (contextRevision === contextRevisionRef.current && liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
@@ -1209,6 +1212,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
+      case "agent_closed":
+        // A fail-closed Stop/CLI exit invalidates this SSE attachment. Reusing it
+        // for an exact-ID restart would miss the replacement process's events.
+        cancelEventStreamGrace();
+        closeEvents();
+        setNativeSteeringAvailable(false);
+        setQueuedMessages({ steering: [], followUp: [] });
+        break;
+      case "agent_capabilities":
+        if (engine === "claude") setNativeSteeringAvailable(event.supportsSteering === true);
+        break;
       case "queue_update":
         setQueuedMessages({
           steering: [...((event.steering as string[] | undefined) ?? [])],
@@ -1242,7 +1256,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, closeEvents, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage, engine]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1743,18 +1757,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // a ghost message if the queue is recalled.
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) return false;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
-      await sendAgentCommand(sid, {
-        type: "steer",
-        message,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
+      await ensureEventsConnected(sid);
+      await sendAgentCommand(sid, { type: "steer", message, ...(piImages?.length ? { images: piImages } : {}) });
+      return true;
     } catch (e) {
-      console.error("Failed to steer:", e);
+      addNotice({ type: "error", message: `${e instanceof Error ? e.message : String(e)} — 消息未确认，草稿已保留；请先检查队列和聊天记录，勿盲目重复发送。` });
+      return false;
     }
-  }, []);
+  }, [addNotice, ensureEventsConnected]);
 
   const handlePromptWithStreamingBehavior = useCallback(async (
     message: string,
@@ -1762,34 +1775,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     images?: AttachedImage[],
   ) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) return false;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
-      await sendAgentCommand(sid, {
-        type: "prompt",
-        message,
-        streamingBehavior: behavior,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
+      await ensureEventsConnected(sid);
+      await sendAgentCommand(sid, { type: "prompt", message, streamingBehavior: behavior, ...(piImages?.length ? { images: piImages } : {}) });
+      return true;
     } catch (e) {
-      console.error("Failed to queue prompt:", e);
+      addNotice({ type: "error", message: `${e instanceof Error ? e.message : String(e)} — 消息未确认，草稿已保留；请先检查队列和聊天记录。` });
+      return false;
     }
-  }, []);
+  }, [addNotice, ensureEventsConnected]);
 
   const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) return false;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     try {
-      await sendAgentCommand(sid, {
-        type: "follow_up",
-        message,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
+      await ensureEventsConnected(sid);
+      await sendAgentCommand(sid, { type: "follow_up", message, ...(piImages?.length ? { images: piImages } : {}) });
+      return true;
     } catch (e) {
-      console.error("Failed to follow up:", e);
+      addNotice({ type: "error", message: `${e instanceof Error ? e.message : String(e)} — 消息未确认，草稿已保留；请先检查队列和聊天记录。` });
+      return false;
     }
-  }, []);
+  }, [addNotice, ensureEventsConnected]);
 
   const handleAbortCompaction = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -1902,6 +1912,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           }
         }
         if (agentState?.state) {
+          if (agentState.state.supportsSteering !== undefined) setNativeSteeringAvailable(agentState.state.supportsSteering);
           if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
           if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
           if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
@@ -2029,6 +2040,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage: sessionStats?.contextUsage ?? contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
+    canSendDuringRun: supportsExtendedChat(engine) || (engine === "claude" && nativeSteeringAvailable),
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

@@ -224,6 +224,8 @@ export const enLocale: LocalePlugin = {
     "chat.agentPlaceholder": "Agent is running…",
     "chat.messagePlaceholder": "Message… Type / for commands, @ for files",
     "chat.steer": "Steer",
+    "chat.claudeSteerHint": "Send plain text to Claude at its next processing point without stopping the run. Send commands and attachments when idle.",
+    "chat.claudeFollowUpHint": "Send plain text for the next native turn. Send commands and attachments when idle.",
     "chat.followUp": "Follow-up",
     "chat.send": "Send",
     "chat.attachImage": "Attach image",

@@ -208,7 +208,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages,
+    slashCommands, slashCommandsLoading, queuedMessages, canSendDuringRun,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -353,9 +353,9 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       engine={engine}
       onSend={handleSend}
       onAbort={handleAbort}
-      onSteer={agentRunning && supportsExtendedChat(engine) ? handleSteer : undefined}
-      onFollowUp={agentRunning && supportsExtendedChat(engine) ? handleFollowUp : undefined}
-      onPromptWithStreamingBehavior={agentRunning && supportsExtendedChat(engine) ? handlePromptWithStreamingBehavior : undefined}
+      onSteer={agentRunning && canSendDuringRun ? handleSteer : undefined}
+      onFollowUp={agentRunning && canSendDuringRun ? handleFollowUp : undefined}
+      onPromptWithStreamingBehavior={agentRunning && canSendDuringRun ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={sessionBusy}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}

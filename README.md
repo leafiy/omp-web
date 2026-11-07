@@ -1,6 +1,6 @@
 # omp-web — Leafiy 自托管版
 
-**当前定位：原生 CLI 的网页访问层。** 自动发现本机 OMP、Pi、Claude Code、Codex；使用各工具自己的配置与登录，不分发或迁移 Agent 密钥。新部署强制访问密码，支持私有密码文件；左下角“用量”读取原生订阅周额度和明确范围的 Token 统计。见[多机部署](./docs/native-host-deployment.zh-CN.md)与[订阅用量](./docs/subscription-usage.zh-CN.md)。Claude Code 支持输入 `/` 搜索并发送当前原生命令，详见[命令菜单](./docs/claude-code-commands.zh-CN.md)。“技能”使用独立的[原生技能只读面板](./docs/native-skills.zh-CN.md)，不再打开设置。CC [上下文容量](./docs/claude-code-context.zh-CN.md)读取原生摘要，不再默认显示 128K。
+**当前定位：原生 CLI 的网页访问层。** 自动发现本机 OMP、Pi、Claude Code、Codex；使用各工具自己的配置与登录，不分发或迁移 Agent 密钥。新部署强制访问密码，支持私有密码文件；左下角“用量”读取原生订阅周额度和明确范围的 Token 统计。见[多机部署](./docs/native-host-deployment.zh-CN.md)与[订阅用量](./docs/subscription-usage.zh-CN.md)。Claude Code 支持输入 `/` 搜索并发送当前原生命令，详见[命令菜单](./docs/claude-code-commands.zh-CN.md)。“技能”使用独立的[原生技能只读面板](./docs/native-skills.zh-CN.md)，不再打开设置。CC [上下文容量](./docs/claude-code-context.zh-CN.md)读取原生摘要，不再默认显示 128K；支持原生[运行中引导与后续消息](./docs/claude-code-steering.zh-CN.md)。
 
 基于 [17380936778/omp-web](https://github.com/17380936778/omp-web) 的私有自托管版本，保留本机模型兼容修复，并新增页面底部的交互式终端。终端可在 AI 工作期间独立使用，无需额外开放端口。
 

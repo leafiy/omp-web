@@ -224,6 +224,9 @@ export const zhCNLocale: LocalePlugin = {
     "chat.agentPlaceholder": "Agent 运行中…",
     "chat.messagePlaceholder": "消息…输入 / 使用命令，输入 @ 查找文件",
     "chat.steer": "引导",
+    "chat.claudeSteerHint": "在 CC 下一处理点接收文字补充，不先停止当前任务。命令和附件请等运行结束后发送。",
+    "chat.claudeFollowUpHint": "文字消息留待 CC 下一轮处理。命令和附件请等运行结束后发送。",
+
     "chat.followUp": "后续消息",
     "chat.send": "发送",
     "chat.attachImage": "附加图片",

@@ -36,9 +36,9 @@ interface Props {
   engine?: AgentEngine;
   onSend: (message: string, images?: AttachedImage[]) => void;
   onAbort: () => void;
-  onSteer?: (message: string, images?: AttachedImage[]) => void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => void;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
+  onSteer?: (message: string, images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
+  onFollowUp?: (message: string, images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
+  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -376,6 +376,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
   ));
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [queuedSendBusy, setQueuedSendBusy] = useState(false);
+  const queuedSendRef = useRef(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
@@ -716,7 +718,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ? t(slashQuery ? "chat.match" : "chat.command")
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim());
-  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy;
+  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy && !queuedSendBusy
+    && !(engine === "claude" && value.trimStart().startsWith("/"));
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -907,24 +910,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
 
-  const sendQueued = useCallback((mode: "steer" | "followup") => {
+  const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = value.trim();
-    if (!msg && !attachedImages.length) return;
-    if (attachedImages.length || attachmentJobRef.current) return;
+    if (!msg || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
+    if (engine === "claude" && msg.startsWith("/")) return;
     onAudioUnlock?.();
-    const streamingBehavior = mode === "steer" ? "steer" : "followUp";
-    if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      onPromptWithStreamingBehavior(msg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
-      clearInput();
-      return;
-    }
-    if (mode === "steer" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
-    } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
-    }
-    clearInput();
-  }, [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+    queuedSendRef.current = true; setQueuedSendBusy(true);
+    let accepted: void | boolean = false;
+    try {
+      if (msg.startsWith("/") && onPromptWithStreamingBehavior) accepted = await onPromptWithStreamingBehavior(msg, mode === "steer" ? "steer" : "followUp");
+      else if (mode === "steer" && onSteer) accepted = await onSteer(msg);
+      else if (mode === "followup" && onFollowUp) accepted = await onFollowUp(msg);
+      // A failed/ambiguous POST keeps the draft; a newer edit is never cleared.
+      if (accepted !== false && valueRef.current === value) clearInput();
+    } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
+    finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
+  }, [value, attachedImages, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1808,7 +1809,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={() => sendQueued("steer")}
                   disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
+                  title={engine === "claude" ? t("chat.claudeSteerHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
@@ -1831,7 +1832,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={() => sendQueued("followup")}
                   disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
+                  title={engine === "claude" ? t("chat.claudeFollowUpHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",

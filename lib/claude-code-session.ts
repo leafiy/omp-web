@@ -5,6 +5,8 @@ import { sessionKey } from "./engine";
 import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
 import { ClaudeEventProjector } from "./claude-code-events";
 import { ClaudeContextCache } from "./claude-context-cache";
+import { ClaudeInputLedger, type ClaudeInputKind } from "./claude-input-ledger";
+import { interruptClaude, supportsClaudeSteering } from "./claude-steering";
 import { claudeSlashCommands, claudeSlashCommandRestriction } from "./claude-code-commands";
 import { ClaudeWebTranscript } from "./claude-code-store";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
@@ -23,7 +25,8 @@ class PromptInput implements AsyncIterable<SDKUserMessage> {
     this.pending.push(value);
     this.wake?.();
   }
-  close(): void { this.closed = true; this.wake?.(); }
+  clear(): string[] { return this.pending.splice(0).flatMap((item) => item.uuid ? [item.uuid] : []); }
+  close(): void { this.clear(); this.closed = true; this.wake?.(); }
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
     while (!this.closed) {
       const next = this.pending.shift();
@@ -51,7 +54,12 @@ export class ClaudeCodeSession {
   private closed = false;
   private busy = false;
   private changingModel = false;
-  private activePrompt?: ReturnType<typeof randomUUID>;
+  private readonly inputs = new ClaudeInputLedger();
+  private steeringAvailable = false;
+  private steeredCycle = false;
+  private stopping = false;
+  private stopTimer?: ReturnType<typeof setTimeout>;
+  private resultUuids = new Set<string>();
   private interruptRequested = false;
   private loop?: Promise<void>;
   private idleTimer?: ReturnType<typeof setTimeout>;
@@ -84,6 +92,10 @@ export class ClaudeCodeSession {
   }
   onEvent(listener: (event: AgentFrame) => void): () => void {
     this.listeners.add(listener);
+    if (this.ready && this.steeringAvailable) {
+      listener({ type: "agent_capabilities", supportsSteering: true });
+      listener({ type: "queue_update", ...this.inputs.queued() });
+    }
     for (const { event } of this.dialogs.values()) listener(event);
     return () => { this.listeners.delete(listener); };
   }
@@ -149,7 +161,20 @@ export class ClaudeCodeSession {
       for await (const frame of this.query!) {
         if (this.closed) break;
         if (!this.options.catalogOnly && frame.session_id && frame.session_id !== this.nativeId) throw new Error("Claude Code returned a different session ID");
+        const raw = frame as unknown as Record<string, unknown>;
+        if (raw.parent_tool_use_id) continue;
+        if (raw.type === "command_lifecycle" && typeof raw.command_uuid === "string") {
+          if (raw.state === "started") this.deliver(this.inputs.started([raw.command_uuid]));
+          else if (raw.state === "cancelled") this.inputs.cancel([raw.command_uuid], true);
+          this.queueChanged();
+          if (!this.inputs.size && !this.stopping) this.finishTurn();
+          continue;
+        }
+        const consumed = [...(Array.isArray(raw.user_message_uuids) ? raw.user_message_uuids : []), raw.user_message_uuid].filter((id): id is string => typeof id === "string" && this.inputs.has(id));
+        if (consumed.length && frame.type !== "result") { this.deliver(this.inputs.started(consumed)); this.queueChanged(); }
         if (frame.type === "system" && frame.subtype === "init") {
+          this.steeringAvailable = supportsClaudeSteering(frame.capabilities ?? []);
+          this.emit({ type: "agent_capabilities", supportsSteering: this.steeringAvailable });
           this.context.invalidate();
           this.tools = frame.tools;
           this.terminalCommands = frame.terminal_slash_commands ?? [];
@@ -162,8 +187,18 @@ export class ClaudeCodeSession {
           this.emit(event);
         }
         if (frame.type === "result") {
-          // A late result for a previous send must not settle the current send.
-          if (frame.user_message_uuid && this.activePrompt && frame.user_message_uuid !== this.activePrompt) continue;
+          // One native result can consume several sends; another queued send can
+          // start a later turn even when queued_turn_count is zero (CLI 2.1.318).
+          if (frame.uuid && this.resultUuids.has(frame.uuid)) continue;
+          if (frame.uuid) { this.resultUuids.add(frame.uuid); if (this.resultUuids.size > 256) this.resultUuids.delete(this.resultUuids.values().next().value!); }
+          const ids = this.inputs.resultIds(frame);
+          if (!ids.length) {
+            if (!frame.user_message_uuid && !frame.user_message_uuids?.length && this.inputs.size) {
+              this.emit({ type: "prompt_error", errorMessage: "Claude did not identify the completed input; the native process was closed to avoid losing queued messages." });
+              this.destroy();
+            }
+            continue;
+          }
           // CC 2.1.318 reports an interrupted, unfinished turn as an execution
           // diagnostic. Suppress only that known cancellation shape, not auth or
           // tool failures that happen to race a user's stop request.
@@ -171,7 +206,10 @@ export class ClaudeCodeSession {
           const interruptedDiagnostic = this.interruptRequested && frame.subtype === "error_during_execution"
             && errors.length > 0 && errors.every((error) => error.startsWith("[ede_diagnostic] result_type=user "));
           if (frame.is_error && !interruptedDiagnostic) this.emit({ type: "prompt_error", errorMessage: errors.join("\n") || ("result" in frame && frame.result) || "Claude Code turn failed" });
-          this.finishTurn();
+          this.deliver(this.inputs.complete(ids));
+          this.context.invalidate();
+          this.queueChanged();
+          if (!this.inputs.size && !this.stopping) this.finishTurn();
         }
       }
       if (!this.closed) throw new Error("Claude Code stream closed; reopen the session to resume");
@@ -183,12 +221,24 @@ export class ClaudeCodeSession {
     } finally { this.destroy(); }
   }
 
+  private deliver(messages: UserMessage[]): void {
+    for (const message of messages) {
+      this.transcript?.append(message);
+      this.emit({ type: "message_end", message });
+    }
+  }
+
+  private queueChanged(): void { this.emit({ type: "queue_update", ...this.inputs.queued() }); this.changed(); }
+
   private finishTurn(): void {
     if (!this.busy) return;
+    this.inputs.clear();
+    this.steeredCycle = false;
+    clearTimeout(this.stopTimer);
+    this.queueChanged();
     this.cancelDialogs();
     this.busy = false;
     this.context.invalidate();
-    this.activePrompt = undefined;
     this.interruptRequested = false;
     this.emit({ type: "agent_end" });
     this.emit({ type: "prompt_done" });
@@ -254,8 +304,9 @@ export class ClaudeCodeSession {
           sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
           engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
           isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
-          isBashRunning: false, isCompacting: false, pendingMessageCount: 0,
-          queuedMessages: { steering: [], followUp: [] }, extensionStatuses: [], extensionWidgets: [],
+          isBashRunning: false, isCompacting: false, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
+          supportsSteering: this.steeringAvailable,
+          queuedMessages: this.inputs.queued(), extensionStatuses: [], extensionWidgets: [],
           systemPrompt: "", contextUsage,
         };
       }
@@ -275,12 +326,40 @@ export class ClaudeCodeSession {
         if (typeof command.id === "string") this.dialogs.get(command.id)?.finish(command);
         return null;
       }
-      case "abort":
-        this.interruptRequested = this.busy;
+      case "abort": {
+        if (!this.busy || this.stopping || this.interruptRequested) return null;
+        this.stopping = true;
+        this.interruptRequested = true;
         this.cancelDialogs();
-        if (this.busy) await this.query!.interrupt();
-        // Interrupt acknowledgement is not completion; wait for native result.
+        this.inputs.cancel(this.input.clear());
+        this.queueChanged();
+        const cancelQueued = this.steeringAvailable || this.steeredCycle;
+        this.stopTimer = setTimeout(() => {
+          this.emit({ type: "prompt_error", errorMessage: "Claude stop timed out; the native process was closed. Pending messages will not be resent." });
+          this.destroy();
+        }, 5000);
+        try {
+          // Let messages already yielded to the SDK reach its FIFO transport.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          const receipt = await interruptClaude(this.query!, cancelQueued);
+          if (this.closed) return null;
+          if (cancelQueued) {
+            if (!receipt || !Array.isArray(receipt.cancelled) || receipt.still_queued.length) throw new Error("Unconfirmed queue cancellation");
+            this.inputs.cancel(receipt.cancelled);
+            if (this.inputs.unstartedIds().length) throw new Error("An unsent input survived cancellation");
+          }
+        } catch {
+          if (!this.closed) {
+            this.emit({ type: "prompt_error", errorMessage: "Claude did not confirm stopping all pending input; the native process was closed. Pending messages will not be resent." });
+            this.destroy();
+          }
+        } finally {
+          this.stopping = false;
+          this.queueChanged();
+          if (!this.inputs.size) this.finishTurn();
+        }
         return null;
+      }
       case "set_session_name":
         if (typeof command.name !== "string") throw new Error("name must be a string");
         this.transcript!.rename(command.name.trim());
@@ -301,10 +380,19 @@ export class ClaudeCodeSession {
           return { id: this.model, provider: "claude-code" };
         } finally { this.changingModel = false; this.context.invalidate(); }
       }
+      case "steer":
+      case "follow_up":
       case "prompt": {
         if (this.options.catalogOnly) throw new Error("Catalog clients cannot submit model prompts");
-        if (this.busy || this.changingModel) throw new Error("Claude Code is busy; wait or stop before sending another message");
-        if (typeof command.message !== "string") throw new Error("message must be a string");
+        const kind: ClaudeInputKind = command.type === "steer" || command.streamingBehavior === "steer" ? "steer"
+          : command.type === "follow_up" || command.streamingBehavior === "followUp" ? "follow_up" : "prompt";
+        if (command.streamingBehavior !== undefined && !["steer", "followUp"].includes(String(command.streamingBehavior))) throw new Error("Invalid streaming behavior");
+        if (this.stopping || this.interruptRequested || this.changingModel) throw new Error("Claude is stopping or switching models; keep this message in the composer and retry later");
+        if (kind !== "prompt" && !this.steeringAvailable) throw new Error("This Claude CLI has not advertised safe streaming-input support yet");
+        if (this.busy && kind === "prompt") throw new Error("Claude Code is busy; use Steer or Follow-up");
+        if (typeof command.message !== "string" || !command.message.trim()) throw new Error("message must be a nonempty string");
+        if (this.busy && (command.message.trimStart().startsWith("/") || Array.isArray(command.images) && command.images.length)) throw new Error("Claude streaming input currently supports plain text only; send commands and attachments after the run");
+        if (this.inputs.size >= 32 || this.busy && Buffer.byteLength(command.message) > 64 * 1024) throw new Error("Claude pending input limit reached (32 messages / 64 KiB per message)");
         if (command.message.trimStart().startsWith("/")) {
           const name = command.message.trimStart().match(/^\/([^\s]+)/)?.[1] ?? "";
           const restriction = claudeSlashCommandRestriction(name);
@@ -325,17 +413,21 @@ export class ClaudeCodeSession {
           ...images.map((i) => ({ type: "image" as const, source: { type: "base64" as const, data: i.data, media_type: i.mimeType } })),
         ];
         const message: UserMessage = { role: "user", content, timestamp: Date.now() };
-        this.transcript!.append(message);
-        this.projector!.resetTurn();
-        this.permissionReplies.clear();
-        this.busy = true;
+        const queued = this.busy, id = randomUUID();
+        this.inputs.add(id, message, queued ? kind : "prompt");
+        if (!queued) {
+          this.projector!.resetTurn();
+          this.permissionReplies.clear();
+          this.busy = true;
+          this.interruptRequested = false;
+          this.emit({ type: "agent_start" });
+          this.deliver([message]);
+        } else this.steeredCycle = true;
         this.context.invalidate();
-        this.activePrompt = randomUUID();
-        this.interruptRequested = false;
-        this.changed();
-        this.emit({ type: "agent_start" });
-        this.emit({ type: "message_end", message });
-        this.input.push({ type: "user", session_id: this.nativeId, parent_tool_use_id: null, uuid: this.activePrompt, message: { role: "user", content: content as SDKUserMessage["message"]["content"] } });
+        this.queueChanged();
+        this.input.push({ type: "user", session_id: this.nativeId, parent_tool_use_id: null, uuid: id,
+          ...(queued ? { priority: kind === "steer" ? "next" as const : "later" as const } : {}),
+          message: { role: "user", content: content as SDKUserMessage["message"]["content"] } });
         return null;
       }
       default: throw new Error(`Claude Code web adapter does not support ${String(command.type)} yet`);
@@ -357,12 +449,15 @@ export class ClaudeCodeSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
+    this.stopping = false;
+    clearTimeout(this.stopTimer);
     this.context.invalidate();
     clearTimeout(this.idleTimer);
     this.cancelDialogs();
     this.finishTurn();
     this.input.close();
     this.query?.close();
+    this.emit({ type: "agent_closed" });
     this.onDestroyCallback?.();
     this.changed();
   }
