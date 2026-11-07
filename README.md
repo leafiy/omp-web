@@ -184,7 +184,7 @@ Detailed operational notes are currently mostly in Chinese:
 - [File browser and upload behavior](./docs/file-browser.zh-CN.md)
 - [Conversation history and display caching](./docs/history-cache.zh-CN.md)
 - [Native skills](./docs/native-skills.zh-CN.md) · [Subscription usage](./docs/subscription-usage.zh-CN.md)
-- [Claude Code commands](./docs/claude-code-commands.zh-CN.md) · [Steering and follow-ups](./docs/claude-code-steering.zh-CN.md) · [Queued-message editing](./docs/queued-message-editing.zh-CN.md)
+- [Claude Code commands](./docs/claude-code-commands.zh-CN.md) · [Steering and follow-ups](./docs/claude-code-steering.zh-CN.md) · [Four-engine follow-up queues and editing](./docs/queued-message-editing.zh-CN.md)
 - [Codex CLI](./docs/codex-cli.zh-CN.md)
 
 ## Origin and credits

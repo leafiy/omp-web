@@ -182,7 +182,7 @@ npm start
 - [文件浏览器与上传](./docs/file-browser.zh-CN.md)
 - [历史分页与显示缓存](./docs/history-cache.zh-CN.md)
 - [原生技能](./docs/native-skills.zh-CN.md) · [订阅用量](./docs/subscription-usage.zh-CN.md)
-- [Claude Code 命令](./docs/claude-code-commands.zh-CN.md) · [引导与后续消息](./docs/claude-code-steering.zh-CN.md) · [待处理消息取回编辑](./docs/queued-message-editing.zh-CN.md)
+- [Claude Code 命令](./docs/claude-code-commands.zh-CN.md) · [引导与后续消息](./docs/claude-code-steering.zh-CN.md) · [四引擎 Follow-up 队列与取回编辑](./docs/queued-message-editing.zh-CN.md)
 - [Codex CLI](./docs/codex-cli.zh-CN.md)
 
 ## 项目来源与致谢

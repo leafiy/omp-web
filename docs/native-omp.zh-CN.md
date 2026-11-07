@@ -96,7 +96,7 @@ PI_CODING_AGENT_DIR="${OMP_WEB_PI_AGENT_DIR:-$HOME/.pi/agent}" "${OMP_WEB_PI_EXE
 - Pi 的 `none/default/full` 工具预设已从聊天入口移除；旧浏览器发送的 `toolNames` 请求明确拒绝，不能悄悄把“关闭工具”变成“全工具”。
 - OMP 的 `set_tools`、原始 TUI 输入、`abort_compaction`，以及当前网页 Pi 适配未接入的导航、队列撤回、工具枚举/切换、资源重载和子代理控制等操作，明确禁用或报错，不伪装成功。Pi `/fork` 使用原生整段克隆，消息 Fork 使用原生 before-entry fork；本机新版 Pi 支持的额外操作不等于网页已接入。
 - 普通 shell 使用各自原生 `bash`。OMP RPC 不支持 `excludeFromContext`，因此拒绝 `!!`；Pi 使用其原生支持的字段。独立网页终端不受此差异影响。
-- OMP 队列召回仅移除仍待处理的文本消息，已开始投递的内容不会撤回；网页 Pi 适配尚未接入队列召回，控件隐藏。尚不提供完整的图片队列草稿恢复。
+- OMP 原生队列召回仅移除仍待处理的文本消息；Pi 原生单条召回仍不可用。后续网页 Follow-up 已改为四引擎共同的[服务端待发送队列](./queued-message-editing.zh-CN.md)，在交付前均可单条撤回和取回编辑；不通过清空、重建 Pi 原生队列来模拟。尚不提供图片队列草稿恢复。
 - 子代理可以由 OMP 的工具执行；本次没有实现完整 Agent Hub、专用子代理控制面板或所有 TUI-only 界面。
 - OMP 与 Pi 的项目资源和信任策略互不替代。模型目录查询也可能初始化资源；只使用可信项目、网络或 VPN。网页终端与 Agent 都有服务用户的权限。
 - 不保证历史展示层完整表达每个引擎的所有特有元数据。原始记录保留不动；Pi 包既提供只读历史投影，也提供 Pi 引擎的本地 CLI，但不会在 OMP 会话中执行 Pi。

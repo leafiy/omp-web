@@ -81,6 +81,7 @@ type AgentStateResponse = {
   thinkingLevel?: string;
   isStreaming?: boolean;
   supportsSteering?: boolean;
+  webFollowUpPending?: number;
   isPromptRunning?: boolean;
   isBashRunning?: boolean;
   isCompacting?: boolean;
@@ -90,15 +91,31 @@ type AgentStateResponse = {
   queuedItems?: QueuedMessageItem[];
 };
 
-export interface QueuedMessageItem { id: string; kind: "steer" | "follow_up"; text: string; }
+export interface QueuedMessageItem { id?: string; kind: "steer" | "follow_up"; text: string; state?: "queued" | "sending" | "unconfirmed"; source?: "web"; }
 export interface QueuedMessages {
+  queueEpoch?: string;
+  queueRevision?: number;
+  followUpPaused?: boolean;
   steering: string[];
   followUp: string[];
   items?: QueuedMessageItem[];
 }
 
-function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null, items?: QueuedMessageItem[]): QueuedMessages {
-  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [], items };
+function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[]; queueEpoch?: string; queueRevision?: number; followUpPaused?: boolean } | null, items?: QueuedMessageItem[]): QueuedMessages {
+  const steering = q?.steering ?? [], followUp = q?.followUp ?? [];
+  const identified = (items ?? []).filter(item => item.id && typeof item.text === "string" && ["steer", "follow_up"].includes(item.kind));
+  const remaining = new Map<string, number>();
+  for (const item of identified) { const key = `${item.kind}\0${item.text}`; remaining.set(key, (remaining.get(key) ?? 0) + 1); }
+  const missing: QueuedMessageItem[] = [];
+  for (const [kind, values] of [["steer", steering], ["follow_up", followUp]] as const) for (const text of values) {
+    const key = `${kind}\0${text}`, count = remaining.get(key) ?? 0;
+    if (count) remaining.set(key, count - 1); else missing.push({ kind, text });
+  }
+  const ordered = [...identified, ...missing].sort((a, b) => {
+    const priority = (item: QueuedMessageItem) => (item.kind === "steer" ? 0 : 2) + (item.source === "web" ? 1 : 0);
+    return priority(a) - priority(b);
+  });
+  return { steering, followUp, items: ordered, queueEpoch: q?.queueEpoch, queueRevision: q?.queueRevision, followUpPaused: q?.followUpPaused };
 }
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -382,6 +399,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const taskSnapshotRef = useRef<AgentTaskSnapshot | null>(null);
   const retiredTaskEpochsRef = useRef(new Set<string>());
   const completionDeferredRef = useRef(false);
+  const completionRevisionRef = useRef(0);
+  const notifiedCompletionRevisionRef = useRef(-1);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
@@ -413,7 +432,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  const [queuedMessages, setQueuedMessagesState] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  const queuedCountRef = useRef(0);
+  const queueStampRef = useRef<{ epoch?: string; revision: number }>({ revision: -1 });
+  const retiredQueueEpochsRef = useRef(new Set<string>());
+  const setQueuedMessages = useCallback((value: QueuedMessages, reset = false) => {
+    const normalized = normalizeQueuedMessages(value, value.items);
+    const epoch = normalized.queueEpoch, revision = normalized.queueRevision ?? -1, previous = queueStampRef.current;
+    if (!reset) {
+      if (epoch && retiredQueueEpochsRef.current.has(epoch)) return;
+      if (previous.epoch && !epoch) return;
+      if (epoch === previous.epoch && revision < previous.revision) return;
+      if (previous.epoch && epoch && epoch !== previous.epoch) retiredQueueEpochsRef.current.add(previous.epoch);
+    }
+    if (reset && previous.epoch) retiredQueueEpochsRef.current.add(previous.epoch);
+    queueStampRef.current = { epoch, revision };
+    queuedCountRef.current = normalized.steering.length + normalized.followUp.length;
+    setQueuedMessagesState(normalized);
+  }, []);
   const [nativeSteeringAvailable, setNativeSteeringAvailable] = useState(false);
   const [recallingQueue, setRecallingQueue] = useState(false);
   const recallingQueueRef = useRef(false);
@@ -920,19 +956,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const notifyCompletion = useCallback(() => {
-    if (taskStatusStaleRef.current || hasActiveTasks(taskSnapshotRef.current) || hasUnknownTasks(taskSnapshotRef.current)) {
+    if (taskStatusStaleRef.current || queuedCountRef.current > 0 || hasActiveTasks(taskSnapshotRef.current) || hasUnknownTasks(taskSnapshotRef.current)) {
       completionDeferredRef.current = true;
       return;
     }
     completionDeferredRef.current = false;
+    if (notifiedCompletionRevisionRef.current === completionRevisionRef.current) return;
+    notifiedCompletionRevisionRef.current = completionRevisionRef.current;
     onAgentEnd?.();
   }, [onAgentEnd]);
 
   useEffect(() => {
-    if (!completionDeferredRef.current || agentRunning || taskStatusStale || hasActiveTasks(taskSnapshot) || hasUnknownTasks(taskSnapshot)) return;
+    if (!completionDeferredRef.current || agentRunning || queuedCountRef.current > 0 || taskStatusStale || hasActiveTasks(taskSnapshot) || hasUnknownTasks(taskSnapshot)) return;
     const timer = setTimeout(() => { if (completionDeferredRef.current && !agentRunningRef.current) notifyCompletion(); }, 300);
     return () => clearTimeout(timer);
-  }, [taskSnapshot, taskStatusStale, agentRunning, notifyCompletion]);
+  }, [taskSnapshot, taskStatusStale, queuedMessages, agentRunning, notifyCompletion]);
 
   const notifyPromptStage = useCallback((runId: number) => {
     if (notifiedPromptRunIdRef.current === runId) return false;
@@ -965,6 +1003,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         const state = data.state;
         applyTaskSnapshot(state?.tasks);
+        setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages, state?.queuedItems));
         if (!data.running && hasActiveTasks(taskSnapshotRef.current)) {
           taskStatusStaleRef.current = true;
           setTaskStatusStale(true);
@@ -981,7 +1020,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return;
         }
 
-        if (data.running && hasActiveTasks(state?.tasks)) {
+        if (data.running && ((state?.webFollowUpPending ?? 0) > 0 || hasActiveTasks(state?.tasks))) {
           eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), PROMPT_SETTLE_POLL_MS);
           return;
         }
@@ -1088,7 +1127,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // If the server reports idle while we still think it's running, finish
   // through the same settlement path used by non-streaming prompts.
   const reconcileAgentState = useCallback(async (sid: string) => {
-    if (!agentRunningRef.current && !hasActiveTasks(taskSnapshotRef.current)) return;
+    if (!agentRunningRef.current && !queuedCountRef.current && !hasActiveTasks(taskSnapshotRef.current)) return;
     const runId = promptRunIdRef.current;
     try {
       const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
@@ -1132,7 +1171,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // against the server periodically and whenever the tab returns to the
   // foreground or the network comes back.
   useEffect(() => {
-    if (!agentRunning && !hasActiveTasks(taskSnapshot)) return;
+    if (!agentRunning && !queuedCountRef.current && !hasActiveTasks(taskSnapshot)) return;
     const reconcile = () => {
       // Read the ref on every tick: for brand-new sessions the id is
       // assigned only after ensure_session returns.
@@ -1150,7 +1189,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", reconcile);
     };
-  }, [agentRunning, taskSnapshot, reconcileAgentState]);
+  }, [agentRunning, taskSnapshot, queuedMessages, reconcileAgentState]);
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;
@@ -1162,6 +1201,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         applyTaskSnapshot(event.snapshot as AgentTaskSnapshot);
         break;
       case "agent_start":
+        completionRevisionRef.current++;
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
@@ -1314,7 +1354,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cancelEventStreamGrace();
         closeEvents();
         setNativeSteeringAvailable(false);
-        setQueuedMessages({ steering: [], followUp: [] });
+        setQueuedMessages({ steering: [], followUp: [] }, true);
         break;
       case "agent_capabilities":
         if (engine === "claude") setNativeSteeringAvailable(event.supportsSteering === true);
@@ -1324,6 +1364,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           steering: [...((event.steering as string[] | undefined) ?? [])],
           followUp: [...((event.followUp as string[] | undefined) ?? [])],
           items: event.items as QueuedMessageItem[] | undefined,
+          queueEpoch: event.queueEpoch as string | undefined,
+          queueRevision: event.queueRevision as number | undefined,
+          followUpPaused: event.followUpPaused === true,
         });
         break;
       case "auto_retry_start":
@@ -1371,6 +1414,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
 
     const promptRunId = promptRunIdRef.current + 1;
+    completionRevisionRef.current++;
     messageRevision.current++;
     if (sessionIdRef.current) historyClientCache.invalidate(sessionIdRef.current);
     cancelEventStreamGrace();
@@ -1916,7 +1960,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleRecallQueuedMessage = useCallback(async (item: QueuedMessageItem) => {
     const sid = sessionIdRef.current;
-    if (!sid || recallingQueueRef.current) return;
+    if (!sid || recallingQueueRef.current || (!item.id && engine !== "omp")) return;
     recallingQueueRef.current = true; setRecallingQueue(true);
     const restore = (text: string, notice?: string) => {
       if (mountedRef.current && sessionIdRef.current === sid) {
@@ -1928,22 +1972,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     };
     try {
-      const reply = await sendAgentCommand<{ removed: boolean; text?: string }>(sid, { type: "recall_queued_message", id: item.id });
-      if (reply.removed && typeof reply.text === "string") restore(reply.text);
+      const command = item.id ? { type: "recall_queued_message", id: item.id, recover: true }
+        : { type: "remove_queued_message", queue: item.kind === "steer" ? "steering" : "followUp", message: item.text };
+      const reply = await sendAgentCommand<{ removed: boolean; text?: string }>(sid, command);
+      if (reply.removed) restore(typeof reply.text === "string" ? reply.text : item.text);
       else restore(item.text, "消息已开始处理或未确认撤回。草稿只是副本，请检查队列/历史，勿直接重复发送。");
+      try {
+        const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
+        if (mountedRef.current && sessionIdRef.current === sid) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages, state.queuedItems));
+      } catch { /* Confirmed removals are already recovered above. */ }
     } catch {
       restore(item.text, "取回状态未确认，原文已保留为草稿副本；请先检查队列/历史，不要盲目重复发送。");
     } finally { recallingQueueRef.current = false; if (mountedRef.current) setRecallingQueue(false); }
-  }, [addNotice, opts.chatInputRef]);
+  }, [addNotice, opts.chatInputRef, engine]);
 
   const handleWithdrawQueuedMessage = useCallback(async (item: { id?: string; kind: "steer" | "follow_up"; text: string }) => {
     const sid = sessionIdRef.current;
-    if (!sid || recallingQueueRef.current || (engine !== "omp" && (engine !== "claude" || !item.id))) return;
+    if (!sid || recallingQueueRef.current || (!item.id && engine !== "omp")) return;
     recallingQueueRef.current = true; setRecallingQueue(true);
     try {
-      const command = engine === "omp"
-        ? { type: "remove_queued_message", queue: item.kind === "steer" ? "steering" : "followUp", message: item.text }
-        : { type: "recall_queued_message", id: item.id };
+      const command = item.id ? { type: "recall_queued_message", id: item.id }
+        : { type: "remove_queued_message", queue: item.kind === "steer" ? "steering" : "followUp", message: item.text };
       const reply = await sendAgentCommand<{ removed: boolean }>(sid, command);
       if (mountedRef.current && sessionIdRef.current === sid) addNotice({ type: reply.removed ? "success" : "warning", message: t(reply.removed ? "chat.withdrawn" : "chat.withdrawTooLate") });
       // The native acknowledgement decides success; state refresh failure cannot undo it.
@@ -1970,7 +2019,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         else { const old = getDraft(sid); setDraft(sid, { value: text + (old?.value ? `\n\n${old.value}` : ""), images: old?.images ?? [] }); }
       }
       const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
-      if (mountedRef.current && sessionIdRef.current === sid) setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+      if (mountedRef.current && sessionIdRef.current === sid) setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages, state?.queuedItems));
     } catch {
       if (mountedRef.current) addNotice({ type: "error", message: "Queue recall was not confirmed. Check the native queue before retrying." });
     } finally { recallingQueueRef.current = false; if (mountedRef.current) setRecallingQueue(false); }
@@ -2040,7 +2089,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadSession(session.id, true, true).then((agentState) => {
         if (!mountedRef.current || sessionIdRef.current !== session.id) return;
         applyTaskSnapshot(agentState?.state?.tasks);
-        if (hasActiveTasks(agentState?.state?.tasks)) {
+        if (hasActiveTasks(agentState?.state?.tasks) || (agentState?.state?.webFollowUpPending ?? 0) > 0) {
           void connectEvents(session.id);
           scheduleEventStreamClose(session.id);
         }
@@ -2196,6 +2245,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     canSendDuringRun: supportsExtendedChat(engine) || (engine === "claude" && nativeSteeringAvailable),
+    canQueueFollowUp: true,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

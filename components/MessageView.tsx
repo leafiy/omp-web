@@ -236,15 +236,16 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           gap: 6, marginTop: 3,
         }}>
-          {onEditContent && content.trim() && <button type="button" onClick={() => onEditContent(content)} title={t("chat.editMessageTitle")} aria-label={t("chat.editMessage")} style={{ padding: "3px 8px", minHeight: 26, background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
-            {t("chat.editMessage")}
-          </button>}
           <div style={{
             display: "flex", gap: 3,
             opacity: hovered ? 1 : 0,
             pointerEvents: hovered ? "auto" : "none",
             transition: "opacity 0.12s",
           }}>
+            {onEditContent && content.trim() && <button type="button" onClick={() => onEditContent(content)} title={t("chat.editMessageTitle")} aria-label={t("chat.editMessage")} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", height: 22, background: "none", border: "none", borderRadius: 5, color: "var(--text-dim)", cursor: "pointer", fontSize: 11, fontWeight: 400, whiteSpace: "nowrap", transition: "color 0.12s" }} onMouseEnter={event => { event.currentTarget.style.color = "var(--accent)"; }} onMouseLeave={event => { event.currentTarget.style.color = "var(--text-dim)"; }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z" /><path d="m14 5 5 5" /></svg>
+              {t("chat.editMessage")}
+            </button>}
             <button
               onClick={copyContent}
                title={t("i18n.copyMessage")}

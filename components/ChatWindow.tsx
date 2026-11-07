@@ -212,7 +212,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, canSendDuringRun,
+    slashCommands, slashCommandsLoading, queuedMessages, canSendDuringRun, canQueueFollowUp,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -358,7 +358,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       onSend={handleSend}
       onAbort={handleAbort}
       onSteer={agentRunning && canSendDuringRun ? handleSteer : undefined}
-      onFollowUp={agentRunning && canSendDuringRun ? handleFollowUp : undefined}
+      onFollowUp={agentRunning && canQueueFollowUp ? handleFollowUp : undefined}
       onPromptWithStreamingBehavior={agentRunning && canSendDuringRun ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={sessionBusy}
       model={displayModelValue}
@@ -381,8 +381,8 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       queuedMessages={queuedMessages}
       inputHistory={inputHistory}
       onRecallQueue={engine === "omp" ? handleRecallQueue : undefined}
-      onRecallQueuedMessage={engine === "claude" ? handleRecallQueuedMessage : undefined}
-      onWithdrawQueuedMessage={engine === "claude" || engine === "omp" ? handleWithdrawQueuedMessage : undefined}
+      onRecallQueuedMessage={handleRecallQueuedMessage}
+      onWithdrawQueuedMessage={handleWithdrawQueuedMessage}
       recallingQueue={recallingQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}

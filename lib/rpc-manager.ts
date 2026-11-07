@@ -8,6 +8,7 @@ import { AgentTasks } from "./agent-tasks";
 import { taskTranscript } from "./agent-task-messages";
 import { ClaudeCodeSession } from "./claude-code-session";
 import { CodexSession } from "./codex-session";
+import { FollowUpSession } from "./follow-up-session";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { cacheSessionPath, invalidateSessionListCache, readSessionHeader } from "./session-reader";
@@ -486,7 +487,7 @@ export class AgentSessionWrapper {
   }
 }
 
-type WebAgentSession = AgentSessionWrapper | ClaudeCodeSession | CodexSession;
+type WebAgentSession = FollowUpSession;
 type StartedSession = { session: WebAgentSession; realSessionId: string };
 declare global {
   var __ompWebSessions: Map<string, WebAgentSession> | undefined;
@@ -577,11 +578,12 @@ export async function startRpcSession(
   const starting = (async () => {
     const processOptions = { engine, cwd: sessionCwd, sessionFile: sessionFile || undefined, initialModel: options.initialModel, thinkingLevel: options.thinkingLevel };
     const changed = () => { invalidateSessionListCache(); notifyRunningChange(); };
-    const session = engine === "codex"
+    const native = engine === "codex"
       ? new CodexSession({ ...processOptions, nativeId: header?.id }, changed)
       : engine === "claude"
         ? new ClaudeCodeSession({ ...processOptions, nativeId: header?.id }, changed)
         : new AgentSessionWrapper(processOptions);
+    const session = new FollowUpSession(native, changed);
     await session.start();
     const realSessionId = session.sessionId;
     if (sessionFile && realSessionId !== sessionId) {

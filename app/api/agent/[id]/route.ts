@@ -23,6 +23,11 @@ export async function POST(
       return NextResponse.json({ success: true, data: result });
     }
 
+    // A stale queue action must not start a new agent or pretend it cancelled
+    // work that belonged to a previous process.
+    if (body.type === "recall_queued_message" && typeof body.id === "string" && body.id.startsWith("web-follow-up:")) {
+      return NextResponse.json({ success: true, data: { removed: false, uncertain: true } });
+    }
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });

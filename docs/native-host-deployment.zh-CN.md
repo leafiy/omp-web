@@ -55,7 +55,7 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - URL：`http://192.168.52.3:2225`，只监听该 tun0 地址，没有监听公网网卡或公网 IPv6。
 - SSH/服务用户：root。网页和终端具有该用户权限，不是额外的沙箱。
 - 服务：`omp-web.service`，已启用开机启动；隧道地址暂不可用时重试，不回退到公网监听。
-- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-file-browser-rOtJCdMH`。此前的 Steer 版及前一发布目录保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
+- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-followup-eNobApPg`。此前 UI/子 agent 版及更早发布目录保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
 - 访问密码：远端 `/etc/omp-web/access-password`，0600，未输出到聊天。
 - 网站运行环境：`/etc/omp-web/web.env`，仅网站运行与认证字段，没有 Agent 模型配置或密钥。
 - 原生路径均自动选择 `/root/.local/bin/` 下的四个工具，未选到旧 `.bun/bin/omp` 或网页依赖里的旧 Pi。
@@ -88,5 +88,13 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 105 项相关回归、类型检查、构建、桌面／390px 浏览器，以及隔离网络中的真实 Claude CLI 子任务与子对话读取测试通过。全量 451 项中 435 项通过，剩余 16 项与未修改 HEAD 相同。本轮整批复验使用假模型，没有增加真实模型请求。
 
 用户已授权本机、GitHub 和远端更新。本机以新候选目录 `local-status.json` 的 `phase: active` 为准；远端候选目录为 `/opt/omp-web-releases/20261107-agent-ui-WcNACZgQ`，以其 `status.json` 的 `phase: active` 为准。远端切换前发现一个新运行的 Claude 会话，已改为等待原生进程与运行队列空闲后切换（`waiting-status.json`），没有强制中断旧任务。两处均保留旧发布供失败回滚；不把已构建、等待或已排定切换等同于已上线。
+
+### Follow-up 与 hover 操作后续发布
+
+上一批 `Db0AnIx9G3pSXJmX-CBZ4` 已由本机和远端状态文件确认 `active`。后续增加四引擎统一的服务端 Follow-up 待发送队列，以及编辑／复制同组 hover 显示，详见 [队列与编辑](./queued-message-editing.zh-CN.md)。
+
+本轮 Build ID：`uaWjyBpy8MMW18C0YzE9g`。发布目录：本机 `/opt/omp-web-followup-stage-eNobApPg`，远端 `/opt/omp-web-releases/20261107-followup-eNobApPg`。远端已切换并通过认证、跨源保护、监听地址和新接口检查，`status.json` 为 `active`，密码保持不变。119 项针对性回归通过；全量 465 项测试中 449 项通过，剩余 16 项与上一版相同；类型检查、生产构建、四引擎真实队列模块的浏览器测试、既有 UI／子任务浏览器测试和隔离的真实 Claude 子任务 + Follow-up 测试通过。新增浏览器用例也覆盖入队回执延迟时提前取回编辑，防止重复拼接或被晚到回执清空。
+
+本机切换由独立任务等待本对话真正空闲后执行，避免中断新输入；最终仍以各发布目录的 `local-status.json` / `status.json` 中 `phase: active` 为准。待发送队列不承诺跨服务重启恢复，因此发布前检查运行会话与原生进程，不能在还有其他任务时强行切换。
 
 配置/接口能被检测到，不代表每个模型账号都已登录或有使用额度。真实聊天和技能目录内容由用户验收；登录仍通过各机器上 CLI 的官方流程完成。

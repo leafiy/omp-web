@@ -261,7 +261,7 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; onWithdraw?: () => void; disabled?: boolean }) {
+function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled, state }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; onWithdraw?: () => void; disabled?: boolean; state?: QueuedMessageItem["state"] }) {
   const { locale } = useI18n();
   return (
     <div
@@ -290,8 +290,10 @@ function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled }: { kind: 
         {kind}
       </span>
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
-      {(onWithdraw || kind === "steer") && <button type="button" disabled={disabled || !onWithdraw} onClick={onWithdraw} title={!onWithdraw ? (locale === "zh-CN" ? "原生引擎未提供撤回接口" : "Native recall unavailable") : undefined} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onWithdraw ? .5 : 1 }}>{locale === "zh-CN" ? "撤回" : "Withdraw"}</button>}
-      {onEdit && <button type="button" disabled={disabled} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)" }}>{locale === "zh-CN" ? "取回编辑" : "Recall to edit"}</button>}
+      {state === "unconfirmed" && <span>{locale === "zh-CN" ? "发送未确认" : "Delivery unconfirmed"}</span>}
+      {state === "sending" && <span>{locale === "zh-CN" ? "发送中" : "Sending"}</span>}
+      <button type="button" disabled={disabled || !onWithdraw} onClick={onWithdraw} title={state === "unconfirmed" ? (locale === "zh-CN" ? "交付结果未确认，不能确认撤回" : "Delivery is uncertain; withdrawal cannot be confirmed") : !onWithdraw ? (locale === "zh-CN" ? "原生引擎未提供撤回接口" : "Native recall unavailable") : undefined} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onWithdraw ? .5 : 1 }}>{locale === "zh-CN" ? "撤回" : "Withdraw"}</button>
+      <button type="button" disabled={disabled || !onEdit} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onEdit ? .5 : 1 }}>{state === "unconfirmed" ? (locale === "zh-CN" ? "取回副本" : "Recover copy") : (locale === "zh-CN" ? "取回编辑" : "Recall to edit")}</button>
     </div>
   );
 }
@@ -436,12 +438,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const fileIndexFetchingRef = useRef<string | null>(null);
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
+  const editRevisionRef = useRef(0);
   const attachedImagesRef = useRef(attachedImages);
   const attachmentJobRef = useRef<AbortController | null>(null);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
   const replaceDraftText = useCallback((text: string) => {
+    editRevisionRef.current++;
     valueRef.current = text;
     setValue(text); setDraftNotice(undefined); setHistoryMenuOpen(false); setAtQuery(null);
     if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage) });
@@ -461,6 +465,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
       if (current.trim()) return;
+      editRevisionRef.current++;
       setValue(text);
       setAtQuery(null);
       requestAnimationFrame(() => {
@@ -477,7 +482,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const current = ta ? ta.value : value;
       // Mirrors the TUI's queue restore: queued text first, then whatever
       // the user already typed, separated by a blank line.
-      const combined = [text, current].filter((t) => t.trim()).join("\n\n");
+      const combined = text === current ? current : [text, current].filter((t) => t.trim()).join("\n\n");
+      editRevisionRef.current++;
       valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
@@ -490,6 +496,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     },
     insertText(text: string) {
+      editRevisionRef.current++;
       const ta = textareaRef.current;
       if (!ta) {
         setValue((v) => v + (v ? " " : "") + text);
@@ -572,6 +579,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         })
       )));
       if (job.signal.aborted) return;
+      if (newImages.length) editRevisionRef.current++;
       setAttachedImages((prev) => [...prev, ...newImages]);
 
       if (uploadFiles.length && cwd) {
@@ -597,6 +605,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           // Prepend references so an existing /command or !shell draft cannot
           // accidentally execute instead of sending the uploaded file context.
           const references = result.uploaded.map((name) => `@${JSON.stringify(name)}`).join(" ");
+          editRevisionRef.current++;
           setValue((current) => `${references}\n${current}`);
           setAtQuery(null);
           setFileIndex(null);
@@ -626,6 +635,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [isStreaming, cwd, t]);
 
   const removeImage = useCallback((index: number) => {
+    editRevisionRef.current++;
     setAttachedImages((prev) => {
       const next = [...prev];
       const [removed] = next.splice(index, 1);
@@ -715,8 +725,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     onAudioUnlock?.();
     normalSendRef.current = true;
     const sentKey = draftKeyRef.current;
+    const sentRevision = editRevisionRef.current;
     const sentDraft = { value, images: attachedImages.map(imageToDraftImage) };
     const clearAccepted = () => {
+      if (editRevisionRef.current !== sentRevision) return;
       if (sentKey) clearDraftIfUnchanged(sentKey, sentDraft);
       const currentKey = draftKeyRef.current;
       const sameComposer = currentKey === sentKey || (sentKey?.startsWith("new:") && currentKey && !currentKey.startsWith("new:"));
@@ -778,6 +790,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const hasInputText = Boolean(value.trim());
   const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy && !queuedSendBusy
     && !(engine === "claude" && value.trimStart().startsWith("/"));
+  const canQueueFollowUpMessage = canQueueStreamingMessage && !value.trimStart().startsWith("/");
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -872,6 +885,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [atTokenActive, cwd]);
 
   const applyAtCompletion = useCallback((entry: FileIndexEntry) => {
+    editRevisionRef.current++;
     if (!atQuery) return;
     const ta = textareaRef.current;
     const cursor = ta?.selectionStart ?? value.length;
@@ -932,6 +946,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [historyActiveIndex, historyMenuOpen]);
 
   const applyHistoryInput = useCallback((text: string) => {
+    editRevisionRef.current++;
     setValue(text);
     setHistoryMenuOpen(false);
     setHistoryActiveIndex(0);
@@ -947,6 +962,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
+    editRevisionRef.current++;
     const nextValue = command.completion?.text ?? `/${command.name} `;
     pendingSlashCompletionRef.current = nextValue;
     setValue(nextValue);
@@ -971,16 +987,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = value.trim();
     if (!msg || normalSendRef.current || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
-    if (engine === "claude" && msg.startsWith("/")) return;
+    if ((engine === "claude" || mode === "followup") && msg.startsWith("/")) return;
     onAudioUnlock?.();
     queuedSendRef.current = true; setQueuedSendBusy(true);
+    const sentRevision = editRevisionRef.current;
     let accepted: void | boolean = false;
     try {
       if (msg.startsWith("/") && onPromptWithStreamingBehavior) accepted = await onPromptWithStreamingBehavior(msg, mode === "steer" ? "steer" : "followUp");
       else if (mode === "steer" && onSteer) accepted = await onSteer(msg);
       else if (mode === "followup" && onFollowUp) accepted = await onFollowUp(msg);
       // A failed/ambiguous POST keeps the draft; a newer edit is never cleared.
-      if (accepted !== false && valueRef.current === value) clearInput();
+      if (accepted !== false && editRevisionRef.current === sentRevision && valueRef.current === value) clearInput();
     } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
     finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
   }, [value, attachedImages, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
@@ -1346,6 +1363,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 letterSpacing: 0.4,
               }}>
                 {t("chat.queued", { count: (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0) })}
+                {queuedMessages?.followUpPaused && <span style={{ marginLeft: 8 }} title={t("chat.followUpPausedHint")}>{t("chat.followUpPaused")}</span>}
               </span>
               {onRecallQueue && (
                 <button
@@ -1383,9 +1401,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
               )}
             </div>
-            {queuedMessages?.items?.length ? queuedMessages.items.map((item) => <QueuedMessageRow key={item.id} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} disabled={recallingQueue} onEdit={onRecallQueuedMessage ? () => { void onRecallQueuedMessage(item); } : undefined} onWithdraw={onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage(item); } : undefined} />) : <>
-              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} disabled={recallingQueue} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "steer", text }); } : undefined} />)}
-              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} disabled={recallingQueue} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "follow_up", text }); } : undefined} />)}
+            {queuedMessages?.items?.length ? queuedMessages.items.map((item, index) => <QueuedMessageRow key={item.id ?? `${item.kind}-${index}`} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} state={item.state} disabled={recallingQueue || item.state === "sending"} onEdit={onRecallQueuedMessage && (item.id || engine === "omp") ? () => { void onRecallQueuedMessage(item); } : undefined} onWithdraw={onWithdrawQueuedMessage && item.state !== "unconfirmed" && (item.id || engine === "omp") ? () => { void onWithdrawQueuedMessage(item); } : undefined} />) : <>
+              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "steer", text }); } : undefined} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "steer", text }); } : undefined} />)}
+              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "follow_up", text }); } : undefined} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "follow_up", text }); } : undefined} />)}
             </>}
           </div>
         )}
@@ -1819,6 +1837,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ref={textareaRef}
             value={value}
             onChange={(e) => {
+              editRevisionRef.current++;
               valueRef.current = e.target.value;
               setValue(e.target.value);
               if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: e.target.value, images: attachedImagesRef.current.map(imageToDraftImage), notice: draftNotice });
@@ -1896,16 +1915,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onFollowUp && (
                 <button
                   onClick={() => sendQueued("followup")}
-                  disabled={!canQueueStreamingMessage}
-                  title={engine === "claude" ? t("chat.claudeFollowUpHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
+                  disabled={!canQueueFollowUpMessage}
+                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : t("chat.followUpQueueHint")}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
+                    background: canQueueFollowUpMessage ? "rgba(129,140,248,0.12)" : "none",
                     border: "1px solid rgba(129,140,248,0.35)",
                     borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
-                    cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
+                    color: canQueueFollowUpMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
+                    cursor: canQueueFollowUpMessage ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background 0.12s",
                   }}
