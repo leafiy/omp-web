@@ -852,15 +852,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     && worktreeState
     && selectedProject === worktreeState.projectRoot
     && !showWorktreeSwitcher
-    ? (worktreeState.isGit
-        ? {
-             label: t("sidebar.openRepoRoot"),
-             title: t("sidebar.openRepoRootTitle"),
-          }
-        : {
-             label: t("sidebar.gitRepoRootOnly"),
-             title: t("sidebar.gitRepoRootOnlyTitle"),
-          })
+    && worktreeState.isGit
+    ? {
+        label: t("sidebar.openRepoRoot"),
+        title: t("sidebar.openRepoRootTitle"),
+      }
     : null;
   const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
   const inactiveWorktreeSelector = worktreeGuide

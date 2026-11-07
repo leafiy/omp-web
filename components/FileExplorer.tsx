@@ -834,7 +834,6 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           <span title={activeDirectory} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>{activeDirectory}</span>
           <button type="button" className={actionStyles.rowMore} aria-label={t("files.directoryActions")} onClick={event => handleMenu(event, { fullPath: activeDirectory, isDir: true, isRoot: activeDirectory === cwd })}>⋮</button>
         </div>
-        <div style={{ color: "var(--text-dim)" }}>{t("files.activeUploadTarget")}</div>
       </div>
       <FileActions ref={actionsRef} cwd={cwd} onUpload={openPicker} onRefresh={refreshTree} onComplete={handleOperationComplete} onBusyChange={setOperationBusy} />
       {showUploadFeedback && (

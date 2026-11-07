@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import { AgentRpcClient, type AgentFrame, type AgentProcessOptions } from "./agent-rpc-client";
 import { engineForSession, nativeSessionId, parseEngine, sessionKey, type AgentEngine } from "./engine";
 import { piWebEvent, piWireCommand } from "./pi-rpc-adapter";
+import { AgentTasks } from "./agent-tasks";
+import { taskTranscript } from "./agent-task-messages";
 import { ClaudeCodeSession } from "./claude-code-session";
 import { CodexSession } from "./codex-session";
 import { validateAgentImages } from "./image-attachments";
@@ -71,14 +73,18 @@ export class AgentSessionWrapper {
   private startupNotices: AgentEvent[] = [];
   private activeLeafId: string | null | undefined;
   private activityRevision = 0;
+  private readonly tasks: AgentTasks;
+  private tasksSupported = false;
 
   constructor(private readonly options: AgentProcessOptions, client: AgentRpcClient = new AgentRpcClient(options)) {
     this.engine = parseEngine(options.engine);
+    this.tasks = new AgentTasks(this.engine, event => { this.emit(event); notifyRunningChange(); });
     this.client = client;
     this.client.onFrame((frame) => this.handleFrame(frame));
     this.client.onClose((error) => {
       clearTimeout(this.idleTimer);
       if (!this.shuttingDown) this.emit({ type: "prompt_error", errorMessage: error.message });
+      this.tasks.disconnected();
       this.prompts.clear();
       this.acceptedPiPrompts.clear();
       this.busy = false;
@@ -97,7 +103,7 @@ export class AgentSessionWrapper {
   getActiveLeafId(): string | null | undefined { return this.activeLeafId; }
   isAlive(): boolean { return this.client.isAlive() && !this.shuttingDown; }
   isRunning(): boolean {
-    return this.isAlive() && (this.busy || this.bashRunning || this.compactionRunning || this.prompts.size > 0 || this.transitioning);
+    return this.isAlive() && (this.busy || this.tasks.active || this.bashRunning || this.compactionRunning || this.prompts.size > 0 || this.transitioning);
   }
 
   async start(): Promise<void> {
@@ -105,6 +111,13 @@ export class AgentSessionWrapper {
       await this.client.start();
       await this.refreshState();
       if (!this.sessionId || !this.sessionFile || !this.isAlive()) throw new Error(`${this.label} did not return a live persistent session identity`);
+      if (this.engine === "omp") {
+        try {
+          await this.client.request({ type: "set_subagent_subscription", level: "progress" }, 10_000);
+          this.tasksSupported = true;
+          await this.refreshTasks();
+        } catch { this.tasks.unavailable(); }
+      }
       this.initializing = false;
       this.resetIdleTimer();
     } catch (error) {
@@ -121,6 +134,7 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.add(listener);
+    listener({ type: "task_snapshot", snapshot: this.tasks.snapshot() });
     for (const event of this.pendingUi.values()) listener(event);
     for (const event of this.startupNotices.splice(0)) listener(event);
     return () => { this.listeners.delete(listener); };
@@ -153,6 +167,8 @@ export class AgentSessionWrapper {
       return;
     }
     this.activityRevision++;
+    if (this.engine === "omp") this.tasks.omp(frame);
+    else this.tasks.pi(frame);
     if (this.engine === "omp" && frame.type === "prompt_result") {
       // Late completion of an older prompt must not settle a newer prompt.
       if (typeof frame.id !== "string" || !this.prompts.has(frame.id)) return;
@@ -278,10 +294,18 @@ export class AgentSessionWrapper {
     return state;
   }
 
+  private async refreshTasks(): Promise<void> {
+    if (!this.tasksSupported) return;
+    const revision = this.tasks.version;
+    const result = await this.client.request<{ subagents: unknown[] }>({ type: "get_subagents" }, 10_000);
+    this.tasks.ompSnapshot(result.subagents, revision);
+  }
+
   private webState(): Record<string, unknown> {
     return {
       ...this.state,
       engine: this.engine,
+      tasks: this.tasks.snapshot(),
       model: this.state.model ? { id: this.state.model.id, provider: this.state.model.provider } : undefined,
       isPromptRunning: this.busy || this.prompts.size > 0,
       isBashRunning: this.bashRunning,
@@ -311,11 +335,21 @@ export class AgentSessionWrapper {
       if (imageError) throw new Error(imageError);
       if (typeof command.message !== "string") throw new Error("message must be a string");
     }
+    if (type === "get_task_detail") {
+      const id = String(command.taskId ?? "");
+      const detail = this.tasks.detail(id);
+      if (this.engine === "pi") return detail;
+      const result = await this.client.request<{ messages: unknown[] }>({ type: "get_subagent_messages", subagentId: id }, 10_000);
+      return this.tasks.detail(id, taskTranscript(result.messages));
+    }
     // Reject absent Pi capabilities before an OMP-only branch can translate them.
     const piCommand = this.engine === "pi" ? piWireCommand(command) : undefined;
     if (type === "get_state") {
       // A compact command holds OMP's serial command queue until completion.
-      if (!this.compactionRunning) await this.refreshState();
+      if (!this.compactionRunning) {
+        await this.refreshState();
+        try { await this.refreshTasks(); } catch { /* Keep last known tasks; query failure is not completion. */ }
+      }
       return this.webState();
     }
     if (type === "get_tools") {

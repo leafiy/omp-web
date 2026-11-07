@@ -81,4 +81,12 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - 本机回滚产物：同目录 `backup.next`；不替换 Node 依赖，不修改原生 Agent 配置、登录或历史。
 - 本机既有访问方式和服务环境保持不变；它仍是原先的可信内网部署，不因为远端有密码就自动获得同样的访问保护。
 
+### 本机子 agent 状态发布
+
+后续新增四引擎[子 agent / 后台任务状态](./subagent-status.zh-CN.md)，并合入[顶栏、子对话、草稿与消息操作](./ui-refinements.zh-CN.md)。最初候选 `/opt/omp-web-tasks-stage-Knhh0eP5` 已暂停，替换为整批候选 `/opt/omp-web-ui-stage-WcNACZgQ`，Build ID `Db0AnIx9G3pSXJmX-CBZ4`。
+
+105 项相关回归、类型检查、构建、桌面／390px 浏览器，以及隔离网络中的真实 Claude CLI 子任务与子对话读取测试通过。全量 451 项中 435 项通过，剩余 16 项与未修改 HEAD 相同。本轮整批复验使用假模型，没有增加真实模型请求。
+
+用户已授权本机、GitHub 和远端更新。本机以新候选目录 `local-status.json` 的 `phase: active` 为准；远端候选目录为 `/opt/omp-web-releases/20261107-agent-ui-WcNACZgQ`，以其 `status.json` 的 `phase: active` 为准。远端切换前发现一个新运行的 Claude 会话，已改为等待原生进程与运行队列空闲后切换（`waiting-status.json`），没有强制中断旧任务。两处均保留旧发布供失败回滚；不把已构建、等待或已排定切换等同于已上线。
+
 配置/接口能被检测到，不代表每个模型账号都已登录或有使用额度。真实聊天和技能目录内容由用户验收；登录仍通过各机器上 CLI 的官方流程完成。

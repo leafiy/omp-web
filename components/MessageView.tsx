@@ -236,6 +236,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           gap: 6, marginTop: 3,
         }}>
+          {onEditContent && content.trim() && <button type="button" onClick={() => onEditContent(content)} title={t("chat.editMessageTitle")} aria-label={t("chat.editMessage")} style={{ padding: "3px 8px", minHeight: 26, background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
+            {t("chat.editMessage")}
+          </button>}
           <div style={{
             display: "flex", gap: 3,
             opacity: hovered ? 1 : 0,

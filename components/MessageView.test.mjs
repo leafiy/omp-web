@@ -11,15 +11,22 @@ const jiti = createJiti(import.meta.url, {
 const { MessageView } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
-function renderMessage(message) {
+function renderMessage(message, props = {}) {
   return renderToStaticMarkup(
     React.createElement(
       I18nProvider,
       null,
-      React.createElement(MessageView, { message }),
+      React.createElement(MessageView, { message, ...props }),
     ),
   );
 }
+
+test("sent text has a quick edit action without native history navigation", () => {
+  const html = renderMessage({ role: "user", content: "original input", timestamp: 1 }, { onEditContent() {} });
+  assert.match(html, /aria-label="Edit"/);
+  assert.match(html, /without rewriting history/);
+  assert.doesNotMatch(html, /Edit from here/);
+});
 
 test("renders a provider error when the assistant message has no content", () => {
   const html = renderMessage({

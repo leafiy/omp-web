@@ -8,6 +8,8 @@ import { ChatWindow } from "./ChatWindow";
 import { TerminalPanel } from "./TerminalPanel";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { AgentTaskDetail } from "./AgentTaskDetail";
+import type { AgentTask } from "@/lib/agent-task-types";
 import { OmpNativeSettings } from "./OmpNativeSettings";
 import { NativeSkillsPanel } from "./NativeSkillsPanel";
 import { SubscriptionUsage } from "./SubscriptionUsage";
@@ -27,7 +29,6 @@ import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
 import { engineForSession, engineLabel, parseEngine, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
-import { clearDraft } from "@/lib/draft-store";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -87,12 +88,20 @@ export function AppShell() {
     const controller = new AbortController();
     void fetch("/api/engines", { signal: controller.signal, cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((data) => {
       if (!Array.isArray(data?.engines) || controller.signal.aborted) return;
-      const found: Partial<Record<AgentEngine, boolean>> = {};
+      const found: Partial<Record<AgentEngine, boolean>> = { omp: false, pi: false, claude: false, codex: false };
       for (const item of data.engines) { try { found[parseEngine(item.engine)] = item.installed === true; } catch { /* Unknown future engine. */ } }
       setInstalledEngines(found);
     }).catch(() => { /* Runtime startup still validates the executable. */ });
     return () => controller.abort();
   }, [modelsRefreshKey]);
+  useEffect(() => {
+    if (selectedSession || installedEngines[newSessionEngine] !== false) return;
+    const available = (["omp", "pi", "claude", "codex"] as const).find(engine => installedEngines[engine] === true);
+    if (available) {
+      setNewSessionEngine(available);
+      try { localStorage.setItem("omp-web:new-chat-engine", available); } catch {}
+    }
+  }, [installedEngines, selectedSession, newSessionEngine]);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
@@ -391,22 +400,20 @@ export function AppShell() {
     setSystemPrompt(null);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-    router.replace("/", { scroll: false });
+    router.replace(`?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
   }, [router, isMobile]);
 
   const handleEngineChange = useCallback((engine: AgentEngine) => {
-    if (engine === activeEngine) return;
+    if (engine === activeEngine || installedEngines[engine] !== true) return;
     setNewSessionEngine(engine);
     try { localStorage.setItem("omp-web:new-chat-engine", engine); } catch {}
     const cwd = selectedSession?.cwd ?? newSessionCwd ?? activeCwd;
     if (cwd) {
-      clearDraft(`new:${engine}:${cwd}`);
       handleNewSession("", cwd, engine);
     }
-  }, [activeEngine, selectedSession?.cwd, newSessionCwd, activeCwd, handleNewSession]);
+  }, [activeEngine, installedEngines, selectedSession?.cwd, newSessionCwd, activeCwd, handleNewSession]);
 
   const handleNewChat = useCallback((cwd: string, engine: AgentEngine) => {
-    clearDraft(`new:${engine}:${cwd}`);
     handleNewSession("", cwd, engine);
   }, [handleNewSession]);
 
@@ -515,6 +522,16 @@ export function AppShell() {
     setActiveFileTabId(tabId);
     setRightPanelOpen(true);
     // On mobile the file panel is full-screen; close the drawer so it shows.
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
+  const handleOpenTask = useCallback((sessionId: string, task: AgentTask) => {
+    const tabId = `task:${sessionId}:${task.id}`;
+    setFileTabs(previous => previous.some(tab => tab.id === tabId) ? previous : [...previous, {
+      id: tabId, label: task.title, task: { sessionId, taskId: task.id },
+    }]);
+    setActiveFileTabId(tabId);
+    setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
 
@@ -825,7 +842,7 @@ export function AppShell() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
+        <div ref={topBarRef} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", minHeight: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", paddingRight: rightPanelOpen ? 0 : 36, background: "var(--bg-panel)" }}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -849,6 +866,17 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          <select
+            aria-label={locale === "zh-CN" ? "聊天引擎" : "Chat engine"}
+            title={locale === "zh-CN" ? "切换引擎会新建聊天" : "Switching engine starts a new chat"}
+            value={activeEngine}
+            onChange={(event) => handleEngineChange(parseEngine(event.target.value))}
+            style={{ flexShrink: 1, minWidth: 70, maxWidth: isMobile ? 120 : 190, height: 28, margin: "0 6px", padding: "0 4px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12 }}
+          >
+            {(["omp", "pi", "claude", "codex"] as AgentEngine[]).map(value => <option key={value} value={value} disabled={installedEngines[value] !== true}>
+              {engineLabel(value)}{installedEngines[value] === false ? (locale === "zh-CN" ? "（未安装）" : " (not installed)") : installedEngines[value] !== true ? (locale === "zh-CN" ? "（检测中）" : " (checking)") : ""}
+            </option>)}
+          </select>
           <ThemePicker />
           <LanguagePicker />
           {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
@@ -864,7 +892,7 @@ export function AppShell() {
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                height: "100%",
+                height: 36,
                 padding: isMobile ? "0 10px" : "0 12px",
                 background: "none",
                 border: "none",
@@ -895,7 +923,7 @@ export function AppShell() {
             </button>
           )}
           {showChat && (
-            <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+            <div style={{ display: "flex", alignItems: "stretch", height: 36 }}>
               <button
                 onClick={handleViewFullHistory}
                 disabled={!selectedSession || !supportsExtendedChat(activeEngine)}
@@ -1034,8 +1062,8 @@ export function AppShell() {
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
-                  paddingRight: rightPanelOpen ? 12 : 48,
-                  height: "100%",
+                  paddingRight: 12,
+                  height: 36,
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   border: "none",
                   borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
@@ -1290,23 +1318,6 @@ export function AppShell() {
           )}
 
         </div>
-        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 12px", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5, flexShrink: 0 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, color: "var(--text-muted)" }}>
-            <span>{locale === "zh-CN" ? "引擎" : "Engine"}</span>
-            <select
-              aria-label={locale === "zh-CN" ? "新聊天引擎。切换会新建聊天，保留旧聊天。" : "New-chat engine. Switching starts a new chat; old chats are retained."}
-              aria-describedby="engine-switch-help"
-              value={activeEngine}
-              onChange={(event) => handleEngineChange(parseEngine(event.target.value))}
-              style={{ maxWidth: 150, height: 26, padding: "0 4px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", cursor: "pointer" }}
-            >
-              {(["omp", "pi", "claude", "codex"] as AgentEngine[]).map((value) => <option key={value} value={value} disabled={installedEngines[value] === false}>
-                {engineLabel(value)}{installedEngines[value] === false ? (locale === "zh-CN" ? "（未检测到）" : " (not found)") : ""}
-              </option>)}
-            </select>
-          </label>
-          <span id="engine-switch-help" style={{ flex: "1 1 220px" }}>{locale === "zh-CN" ? "切换引擎会在同一目录新建聊天；旧聊天和后台任务会保留。" : "Switching engine starts a new chat in the same directory. Old chats and background tasks are retained."}</span>
-        </div>
         {projectTrustSaved && activeEngine === "pi" && projectTrustCwd && (
           <div role="status" style={{ padding: "6px 12px", fontSize: 12, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             {locale === "zh-CN" ? "已为 Pi 信任此项目。已有聊天不会重载；请新建 Pi 聊天以加载项目资源。" : "Project trusted for Pi. Existing chats are not reloaded; start a new Pi chat to load project resources."}
@@ -1334,6 +1345,7 @@ export function AppShell() {
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onContextUsageChange={handleContextUsageChange}
               onOpenFile={handleOpenLinkedFile}
+              onOpenTask={handleOpenTask}
             />
           ) : initialCwdStatus === "validating" ? (
             <div
@@ -1457,7 +1469,9 @@ export function AppShell() {
 
         {/* File content */}
         <div style={{ flex: 1, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
+          {activeFileTab?.task ? (
+            rightPanelOpen && <AgentTaskDetail key={activeFileTab.id} sessionId={activeFileTab.task.sessionId} taskId={activeFileTab.task.taskId} />
+          ) : activeFileTab?.filePath ? (
             <FileViewer
               filePath={activeFileTab.filePath}
               cwd={activeCwd ?? undefined}
@@ -1514,7 +1528,7 @@ export function AppShell() {
       />
     )}
     {skillsConfigOpen && (
-      <NativeSkillsPanel key={`${activeEngine}:${projectTrustCwd ?? ""}`} engine={activeEngine} cwd={projectTrustCwd} onClose={() => setSkillsConfigOpen(false)} />
+      <NativeSkillsPanel key={`${activeEngine}:${projectTrustCwd ?? ""}`} engine={activeEngine} cwd={projectTrustCwd} installedEngines={installedEngines} onClose={() => setSkillsConfigOpen(false)} />
     )}
     {usageOpen && <SubscriptionUsage sessionId={selectedSession?.id} onClose={() => setUsageOpen(false)} />}
     </>

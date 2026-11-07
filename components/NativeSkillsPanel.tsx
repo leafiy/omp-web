@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { engineLabel, parseEngine, type AgentEngine } from "@/lib/engine";
 import type { NativeSkillsReport } from "@/lib/native-skills-types";
 
-export function NativeSkillsPanel({ engine, cwd, onClose }: { engine: AgentEngine; cwd: string | null; onClose: () => void }) {
+export function NativeSkillsPanel({ engine, cwd, onClose, installedEngines }: { engine: AgentEngine; cwd: string | null; onClose: () => void; installedEngines: Partial<Record<AgentEngine, boolean>> }) {
   const { locale } = useI18n(), zh = locale === "zh-CN";
   const [selected, setSelected] = useState(engine);
   const [data, setData] = useState<{ key: string; report: NativeSkillsReport } | null>(null);
@@ -59,33 +59,27 @@ export function NativeSkillsPanel({ engine, cwd, onClose }: { engine: AgentEngin
           <button type="button" autoFocus onClick={onClose} style={controls}>{zh ? "关闭" : "Close"}</button>
         </div>
       </header>
-      <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>{zh ? "查看本机原生技能；不会安装、启用或修改任何技能。" : "Browse native skills on this machine. This panel never installs, enables or edits skills."}</p>
       <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13 }}>{zh ? "Agent" : "Agent"}
-        <select aria-label={zh ? "技能所属 Agent" : "Skills agent"} value={selected} onChange={(event) => { setSelected(parseEngine(event.target.value)); setFilter(""); }} style={controls}>
-          {(["omp", "pi", "claude", "codex"] as const).map((item) => <option key={item} value={item}>{engineLabel(item)}</option>)}
+        <select aria-label={zh ? "技能所属 Agent" : "Skills agent"} value={selected} onChange={(event) => { const next = parseEngine(event.target.value); if (installedEngines[next] === true) { setSelected(next); setFilter(""); } }} style={controls}>
+          {(["omp", "pi", "claude", "codex"] as const).map((item) => <option key={item} value={item} disabled={installedEngines[item] !== true}>{engineLabel(item)}{installedEngines[item] === false ? (zh ? "（未安装）" : " (not installed)") : installedEngines[item] !== true ? (zh ? "（检测中）" : " (checking)") : ""}</option>)}
         </select>
       </label>
-      {!cwd ? <p role="status">{zh ? "请先选择项目，再读取该项目的原生技能。" : "Select a project to read its native skills."}</p> : <>
+      {!cwd ? <p role="status">{zh ? "请选择项目" : "Select a project"}</p> : <>
         <details style={{ margin: "10px 0", fontSize: 12, color: "var(--text-muted)", overflowWrap: "anywhere" }}><summary>{zh ? "当前项目" : "Current project"}</summary><code>{cwd}</code></details>
         {busy && <p role="status">{zh ? "正在读取原生目录…" : "Reading native catalog…"}</p>}
-        {failed && <p role="alert">{zh ? "读取失败，请检查原生工具或稍后刷新。" : "Could not read skills. Check the native tool or refresh later."}</p>}
+        {failed && <p role="alert">{zh ? "技能读取失败" : "Could not load skills"}</p>}
         {report && <>
-          <p role={report.status === "error" ? "alert" : "status"} style={{ fontSize: 12, lineHeight: 1.6, color: "var(--text-muted)" }}>{zh ? report.note : report.status === "error" || report.status === "unavailable" ? "Native skills could not be read. Check the selected tool and project trust, then refresh. No other agent is substituted." : selected === "claude" ? "Claude combines skills and custom commands; explicitly marked built-ins are excluded." : selected === "codex" ? "Reported by Codex skills/list, including native enabled/disabled states." : "Only callable commands marked as skills are listed; this is not a full inventory of files on disk."}</p>
-          {report.items.length > 0 && <input aria-label={zh ? "筛选技能" : "Filter skills"} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={zh ? "搜索技能名称或说明" : "Search name or description"} style={{ ...controls, width: "100%", marginBottom: 10 }} />}
+          {["error", "unavailable"].includes(report.status) && <p role="alert">{zh ? "技能不可用" : "Skills unavailable"}</p>}
+          {report.items.length > 0 && <input aria-label={zh ? "筛选技能" : "Filter skills"} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={zh ? "搜索技能" : "Search skills"} style={{ ...controls, width: "100%", marginBottom: 10 }} />}
           {items.map((item, index) => <article key={`${item.name}:${item.path ?? index}`} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginBottom: 8, overflowWrap: "anywhere" }}>
             <strong style={{ fontSize: 14 }}>{item.name}</strong>
             <span style={{ marginLeft: 8, color: "var(--text-dim)", fontSize: 11 }}>{item.kind === "command" ? (zh ? "技能 / 自定义命令" : "Skill / custom command") : (zh ? "技能" : "Skill")}{item.enabled === false ? (zh ? " · 已禁用" : " · Disabled") : item.enabled === true ? (zh ? " · 已启用" : " · Enabled") : ""}</span>
-            {item.description && <p style={{ margin: "6px 0", fontSize: 12, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{item.description}</p>}
             {item.invocation && <code style={{ fontSize: 12 }}>{item.invocation}</code>}
             {item.path && <details style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}><summary>{zh ? "原生路径" : "Native path"}</summary><code>{item.path}</code></details>}
           </article>)}
-          {!items.length && ["ok", "partial"].includes(report.status) && <p style={{ fontSize: 13 }}>{filter ? (zh ? "没有匹配的技能。" : "No matching skills.") : (zh ? "原生接口没有返回技能条目；不代表磁盘上没有技能。" : "The native API returned no skills. This does not mean no skill files exist on disk.")}</p>}
+          {!items.length && ["ok", "partial"].includes(report.status) && <p style={{ fontSize: 13 }}>{filter ? (zh ? "没有匹配的技能。" : "No matching skills.") : (zh ? "暂无技能" : "No skills")}</p>}
         </>}
       </>}
-      <details style={{ marginTop: 14, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        <summary>{zh ? "管理方式与限制" : "Management and limitations"}</summary>
-        <p>{zh ? "安装、启用、禁用和编辑请使用所选 Agent 的原生流程。网页不扫描技能正文，不读取登录文件，不复制其他 Agent 的技能。原生初始化可能加载该工具允许的项目资源；只选择可信项目。目录读取可能缓存约一分钟。" : "Use the selected agent’s native workflow to install, enable, disable or edit skills. The web does not scan skill bodies, read login files or copy skills across agents. Native initialization may load permitted project resources; choose trusted projects. Catalogs may be cached for about a minute."}</p>
-      </details>
     </section>
   </div>;
 }

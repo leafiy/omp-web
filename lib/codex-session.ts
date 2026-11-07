@@ -6,6 +6,8 @@ import { sessionKey } from "./engine";
 import { getCodexHome, getCodexWebDir } from "./codex-config";
 import { CodexRpcClient, denyCodexRequest, listCodexModels, object, type CodexFrame, type CodexObject, type CodexTransport } from "./codex-rpc-client";
 import { CodexEventProjector } from "./codex-events";
+import { AgentTasks } from "./agent-tasks";
+import { codexTaskTranscript } from "./agent-task-messages";
 import { WebSessionTranscript } from "./web-session-transcript";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
@@ -23,6 +25,9 @@ export class CodexSession {
   private transcript?: WebSessionTranscript;
   private projector = new CodexEventProjector("");
   private model = "";
+  private readonly tasks = new AgentTasks("codex", event => { this.emit(event); this.changed(); });
+  private taskPoll?: ReturnType<typeof setInterval>;
+  private taskPolling = false;
   private ready = false;
   private closed = false;
   private busy = false;
@@ -50,11 +55,12 @@ export class CodexSession {
   get sessionFile(): string { return this.transcript?.path || ""; }
   getActiveLeafId(): undefined { return undefined; }
   isAlive(): boolean { return this.ready && !this.closed; }
-  isRunning(): boolean { return this.isAlive() && this.busy; }
+  isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active); }
   onDestroy(callback: () => void): void { this.destroyed = callback; }
   async waitUntilReady(): Promise<void> { if (!this.isAlive()) throw new Error(this.lastError || "Codex CLI is not ready"); }
   onEvent(listener: (event: AgentFrame) => void): () => void {
     this.listeners.add(listener);
+    listener({ type: "task_snapshot", snapshot: this.tasks.snapshot() });
     for (const { event } of this.dialogs.values()) listener(event);
     return () => { this.listeners.delete(listener); };
   }
@@ -89,6 +95,8 @@ export class CodexSession {
       this.transcript ??= new WebSessionTranscript(this.nativeId, this.cwd, getCodexWebDir(), "codex-cli");
       this.transcript.setModel(this.model);
       this.ready = true; this.resetIdle();
+      this.taskPoll = setInterval(() => void this.refreshTasks(), 5000);
+      this.taskPoll.unref();
     } catch (error) { this.destroy(); throw error; }
   }
 
@@ -111,8 +119,33 @@ export class CodexSession {
     }
   }
 
+  private async refreshTasks(): Promise<void> {
+    if (this.closed || this.taskPolling || !this.tasks.active) return;
+    this.taskPolling = true;
+    try {
+      for (const id of this.tasks.ids()) {
+        const revision = this.tasks.version;
+        try {
+          const reply = await this.client.request("thread/read", { threadId: id, includeTurns: false });
+          if (this.closed) return;
+          const thread = object(reply.thread);
+          if (thread.id === id && revision === this.tasks.version) this.tasks.codexStatus(id, thread.status);
+        } catch {
+          // Retain monitoring, but never present an unverified stale status as current.
+          if (!this.closed && revision === this.tasks.version) this.tasks.codexUnavailable(id);
+        }
+      }
+    } finally { this.taskPolling = false; }
+  }
+
   private receive(frame: CodexFrame): void {
     const params = object(frame.params);
+    // Read-only child activity has a separate route. Never feed child messages or approvals to the parent projector.
+    if (!this.closed && this.ready && typeof params.threadId === "string" && this.tasks.has(params.threadId)
+      && frame.id === undefined && frame.method === "thread/status/changed") {
+      this.tasks.codexStatus(params.threadId, params.status);
+      return;
+    }
     if (frame.method === "serverRequest/resolved" && params.threadId === this.nativeId) {
       const key = JSON.stringify(params.requestId);
       this.resolvedRequests.add(key);
@@ -140,10 +173,14 @@ export class CodexSession {
       else void this.handleRequest(frame).catch((error) => this.fail(error));
       return;
     }
+    if (frame.method === "item/started" || frame.method === "item/completed") this.tasks.codexItem(params.item, this.nativeId);
     this.forward(this.projector.consume(frame.method || "", params));
     if (frame.method === "turn/completed") {
       const turn = object(params.turn);
-      if (Array.isArray(turn.items)) for (const item of turn.items) this.forward(this.projector.consume("item/completed", { item }));
+      if (Array.isArray(turn.items)) for (const item of turn.items) {
+        this.tasks.codexItem(item, this.nativeId);
+        this.forward(this.projector.consume("item/completed", { item }));
+      }
       if (turn.status === "failed") this.emit({ type: "prompt_error", errorMessage: String(object(turn.error).message || "Codex turn failed") });
       this.finishTurn();
     }
@@ -239,9 +276,17 @@ export class CodexSession {
     await this.waitUntilReady(); this.resetIdle();
     switch (command.type) {
       case "get_state": return { sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript!.name, engine: this.engine,
-        model: { id: this.model, provider: "codex-cli" }, isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
+        model: { id: this.model, provider: "codex-cli" }, isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active, tasks: this.tasks.snapshot(),
         isBashRunning: false, isCompacting: false, pendingMessageCount: 0, queuedMessages: { steering: [], followUp: [] },
         extensionStatuses: [], extensionWidgets: [], systemPrompt: "", contextUsage: null };
+      case "get_task_detail": {
+        const id = String(command.taskId ?? "");
+        this.tasks.detail(id); // Never read an arbitrary or unrelated thread.
+        const result = await this.client.request("thread/read", { threadId: id, includeTurns: true });
+        const thread = object(result.thread);
+        if (thread.id !== id) throw new Error("Codex returned a different child thread");
+        return this.tasks.detail(id, codexTaskTranscript(thread));
+      }
       case "get_commands": return { commands: [] };
       case "get_tools": return []; // Do not invent a native tool inventory.
       case "get_available_thinking_levels": return { levels: [] };
@@ -302,12 +347,13 @@ export class CodexSession {
   }
   private resetIdle(): void {
     clearTimeout(this.idleTimer); if (this.closed) return;
-    this.idleTimer = setTimeout(() => { if (this.busy || this.changingModel || this.dialogs.size) this.resetIdle(); else this.destroy(); }, 10 * 60_000);
+    this.idleTimer = setTimeout(() => { if (this.busy || this.tasks.active || this.changingModel || this.dialogs.size) this.resetIdle(); else this.destroy(); }, 10 * 60_000);
     this.idleTimer.unref();
   }
   destroy(): void {
     if (this.closed) return;
-    this.closed = true; clearTimeout(this.idleTimer); this.cancelDialogs(); this.finishTurn();
+    this.closed = true; clearTimeout(this.idleTimer); clearInterval(this.taskPoll);
+    this.tasks.disconnected(); this.cancelDialogs(); this.finishTurn();
     this.client.destroy(); this.destroyed?.(); this.changed();
   }
   async shutdown(): Promise<void> { this.destroy(); }

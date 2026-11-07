@@ -44,11 +44,16 @@ test("keeps the session event stream open through the idle grace window", () => 
   assert.doesNotMatch(agentEndSource, /closeEvents\(\)/);
   assert.match(agentStartSource, /cancelEventStreamGrace\(\)/);
   assert.match(agentSettledSource, /scheduleEventStreamClose\(sid\)/);
-  assert.match(agentSettledSource, /onAgentEnd\?\.\(\)/);
+  assert.match(agentSettledSource, /notifyCompletion\(\)/);
+  assert.doesNotMatch(agentSettledSource, /onAgentEnd\?\.\(\)/);
+  const completionSource = source.slice(source.indexOf("const notifyCompletion"), source.indexOf("const notifyPromptStage"));
+  assert.match(completionSource, /hasActiveTasks\(taskSnapshotRef\.current\)/);
+  assert.match(completionSource, /hasUnknownTasks\(taskSnapshotRef\.current\)/);
+  assert.match(completionSource, /onAgentEnd\?\.\(\)/);
   assert.match(promptDoneSource, /notifyPromptStage\(runId\)/);
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
   assert.match(sendSource, /if \(promptRequestStarted && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /if \(promptRequestStarted && sentSessionId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
+  assert.match(sendSource, /if \(promptRequestStarted && sentSessionId\) \{[\s\S]*?return false;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
 });
 
 test("reuses an open event stream and hides an empty agent phase", () => {

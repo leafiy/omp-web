@@ -4,6 +4,8 @@ import type { AgentFrame, AgentProcessOptions } from "./agent-rpc-client";
 import { sessionKey } from "./engine";
 import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
 import { ClaudeEventProjector } from "./claude-code-events";
+import { AgentTasks } from "./agent-tasks";
+import { taskTranscript } from "./agent-task-messages";
 import { ClaudeContextCache } from "./claude-context-cache";
 import { ClaudeInputLedger, type ClaudeInputKind } from "./claude-input-ledger";
 import { interruptClaude, supportsClaudeSteering, canRecallClaudeInput, recallClaudeInput } from "./claude-steering";
@@ -13,8 +15,13 @@ import { validateAgentImages, type Base64ImageAttachment } from "./image-attachm
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
 
 type QueryFactory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => Query;
+type ChildMessagesReader = (parentId: string, taskId: string, cwd: string) => Promise<unknown[]>;
+const readNativeChildMessages: ChildMessagesReader = async (parentId, taskId, cwd) => {
+  const { getSubagentMessages } = await import("@anthropic-ai/claude-agent-sdk");
+  return getSubagentMessages(parentId, taskId, { dir: cwd });
+};
 type Dialog = Extract<ExtensionUiRequest, { method: "select" | "input" }>;
-type PendingDialog = { event: Dialog; finish: (response: Record<string, unknown>) => void };
+type PendingDialog = { event: Dialog; background: boolean; finish: (response: Record<string, unknown>) => void };
 
 class PromptInput implements AsyncIterable<SDKUserMessage> {
   private pending: SDKUserMessage[] = [];
@@ -48,6 +55,7 @@ export class ClaudeCodeSession {
   private transcript?: ClaudeWebTranscript;
   private projector?: ClaudeEventProjector;
   private model = "";
+  private readonly tasks = new AgentTasks("claude", event => { this.emit(event); this.changed(); this.resetIdle(); });
   private listeners = new Set<(event: AgentFrame) => void>();
   private dialogs = new Map<string, PendingDialog>();
   private permissionReplies = new Map<string, Promise<PermissionResult>>();
@@ -78,6 +86,7 @@ export class ClaudeCodeSession {
     private readonly options: AgentProcessOptions & { nativeId?: string },
     private readonly changed: () => void,
     private readonly createQuery?: QueryFactory,
+    private readonly readChildMessages: ChildMessagesReader = readNativeChildMessages,
   ) {
     this.nativeId = options.nativeId ?? randomUUID();
     this.sessionId = sessionKey("claude", this.nativeId);
@@ -87,13 +96,14 @@ export class ClaudeCodeSession {
   get sessionFile(): string { return this.transcript?.path ?? ""; }
   getActiveLeafId(): undefined { return undefined; }
   isAlive(): boolean { return this.ready && !this.closed; }
-  isRunning(): boolean { return this.isAlive() && this.busy; }
+  isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active); }
   onDestroy(callback: () => void): void { this.onDestroyCallback = callback; }
   async waitUntilReady(): Promise<void> {
     if (!this.isAlive()) throw new Error(this.lastError || "Claude Code is not ready");
   }
   onEvent(listener: (event: AgentFrame) => void): () => void {
     this.listeners.add(listener);
+    listener({ type: "task_snapshot", snapshot: this.tasks.snapshot() });
     if (this.ready && this.steeringAvailable) {
       listener({ type: "agent_capabilities", supportsSteering: true });
       listener({ type: "queue_update", ...this.inputs.queued(), items: this.recallItems() });
@@ -129,7 +139,7 @@ export class ClaudeCodeSession {
             const id = context.requestId || context.toolUseID;
             let reply = this.permissionReplies.get(id);
             if (!reply) {
-              reply = this.permission(tool, input, context.signal);
+              reply = this.permission(tool, input, context.signal, Boolean(context.agentID));
               this.permissionReplies.set(id, reply);
             }
             return reply;
@@ -164,7 +174,15 @@ export class ClaudeCodeSession {
         if (this.closed) break;
         if (!this.options.catalogOnly && frame.session_id && frame.session_id !== this.nativeId) throw new Error("Claude Code returned a different session ID");
         const raw = frame as unknown as Record<string, unknown>;
+        this.tasks.claude(raw);
         if (raw.parent_tool_use_id) continue;
+        // A background task can wake the main agent without a new browser send.
+        // Keep that continuation separate from child transcripts and input UUIDs.
+        if (this.ready && !this.busy && !this.stopping && (raw.type === "assistant" || raw.type === "stream_event")) {
+          this.busy = true;
+          this.emit({ type: "agent_start" });
+          this.changed();
+        }
         if (raw.type === "command_lifecycle" && typeof raw.command_uuid === "string") {
           if (raw.state === "started") this.deliver(this.inputs.started([raw.command_uuid]));
           else if (raw.state === "cancelled") this.inputs.cancel([raw.command_uuid], true);
@@ -195,6 +213,10 @@ export class ClaudeCodeSession {
           if (frame.uuid) { this.resultUuids.add(frame.uuid); if (this.resultUuids.size > 256) this.resultUuids.delete(this.resultUuids.values().next().value!); }
           const ids = this.inputs.resultIds(frame);
           if (!ids.length) {
+            if (!this.inputs.size && !this.stopping) {
+              if (frame.is_error) this.emit({ type: "prompt_error", errorMessage: "errors" in frame ? frame.errors.join("\n") : "Claude Code continuation failed" });
+              this.finishTurn();
+            }
             if (!frame.user_message_uuid && !frame.user_message_uuids?.length && this.inputs.size) {
               this.emit({ type: "prompt_error", errorMessage: "Claude did not identify the completed input; the native process was closed to avoid losing queued messages." });
               this.destroy();
@@ -239,7 +261,7 @@ export class ClaudeCodeSession {
     this.steeredCycle = false;
     clearTimeout(this.stopTimer);
     this.queueChanged();
-    this.cancelDialogs();
+    this.cancelDialogs(false);
     this.busy = false;
     this.context.invalidate();
     this.interruptRequested = false;
@@ -250,7 +272,7 @@ export class ClaudeCodeSession {
     this.resetIdle();
   }
 
-  private ask(event: Dialog, signal: AbortSignal): Promise<Record<string, unknown>> {
+  private ask(event: Dialog, signal: AbortSignal, background = false): Promise<Record<string, unknown>> {
     if (!this.ready || this.closed || signal.aborted) return Promise.resolve({ cancelled: true });
     return new Promise((resolve) => {
       let done = false;
@@ -267,14 +289,14 @@ export class ClaudeCodeSession {
       const timer = setTimeout(abort, 5 * 60_000);
       timer.unref();
       event = { ...event, timeout: 5 * 60_000, expiresAt: Date.now() + 5 * 60_000 };
-      this.dialogs.set(event.id, { event, finish });
+      this.dialogs.set(event.id, { event, finish, background });
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
       else this.emit(event);
     });
   }
 
-  private async permission(tool: string, input: Record<string, unknown>, signal: AbortSignal): Promise<PermissionResult> {
+  private async permission(tool: string, input: Record<string, unknown>, signal: AbortSignal, background = false): Promise<PermissionResult> {
     const deny: PermissionResult = { behavior: "deny", message: "Not approved in the web UI (denied, cancelled or timed out)." };
     if (this.options.catalogOnly) return deny;
     if (tool === "AskUserQuestion") {
@@ -283,7 +305,7 @@ export class ClaudeCodeSession {
       for (const raw of input.questions) {
         if (!raw || typeof raw !== "object" || typeof raw.question !== "string") return deny;
         const choices = Array.isArray(raw.options) ? raw.options.filter((o: unknown) => o && typeof o === "object").map((o: { label?: string; description?: string }) => `${o.label ?? ""}: ${o.description ?? ""}`).join("\n") : "";
-        const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: `${raw.question}\n${choices}`, placeholder: raw.multiSelect ? "Enter one or more answers" : "Enter your answer" }, signal);
+        const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: `${raw.question}\n${choices}`, placeholder: raw.multiSelect ? "Enter one or more answers" : "Enter your answer" }, signal, background);
         if (answer.cancelled || typeof answer.value !== "string" || !answer.value.trim()) return deny;
         answers[raw.question] = answer.value;
       }
@@ -292,7 +314,7 @@ export class ClaudeCodeSession {
     const details = JSON.stringify(input, null, 2);
     if (details.length > 24_000) return { behavior: "deny", message: "Tool input is too large to review safely in the web approval dialog" };
     // First choice is denial; no permission persistence and no bypassPermissions.
-    const response = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `Claude Code: ${tool}\n${details}`, options: ["Deny", "Allow once"] }, signal);
+    const response = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `Claude Code: ${tool}\n${details}`, options: ["Deny", "Allow once"] }, signal, background);
     return response.value === "Allow once" && !response.cancelled && !signal.aborted
       ? { behavior: "allow", updatedInput: input } : deny;
   }
@@ -306,12 +328,20 @@ export class ClaudeCodeSession {
         return {
           sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
           engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
-          isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
+          isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active,
+          tasks: this.tasks.snapshot(),
           isBashRunning: false, isCompacting: false, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
           supportsSteering: this.steeringAvailable,
           queuedMessages: this.inputs.queued(), queuedItems: this.recallItems(), extensionStatuses: [], extensionWidgets: [],
           systemPrompt: "", contextUsage,
         };
+      }
+      case "get_task_detail": {
+        const id = String(command.taskId ?? "");
+        const detail = this.tasks.detail(id); // Ownership check before any native read.
+        if (!["local_agent", "subagent", "task"].includes(detail.task.kind)) return detail;
+        const messages = await this.readChildMessages(this.nativeId, id, this.cwd);
+        return this.tasks.detail(id, taskTranscript(messages));
       }
       case "get_available_models": return { models: await this.query!.supportedModels() };
       case "get_native_usage": return this.query!.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
@@ -456,14 +486,16 @@ export class ClaudeCodeSession {
     }
   }
 
-  private cancelDialogs(): void {
-    for (const dialog of [...this.dialogs.values()]) dialog.finish({ cancelled: true });
+  private cancelDialogs(includeBackground = true): void {
+    for (const dialog of [...this.dialogs.values()]) {
+      if (includeBackground || !dialog.background) dialog.finish({ cancelled: true });
+    }
   }
   private resetIdle(): void {
     clearTimeout(this.idleTimer);
     if (this.closed) return;
     this.idleTimer = setTimeout(() => {
-      if (this.busy || this.changingModel || this.dialogs.size) this.resetIdle();
+      if (this.busy || this.tasks.active || this.changingModel || this.dialogs.size) this.resetIdle();
       else this.destroy();
     }, 10 * 60_000);
     this.idleTimer.unref();
@@ -471,6 +503,7 @@ export class ClaudeCodeSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
+    this.tasks.disconnected();
     this.stopping = false;
     clearTimeout(this.stopTimer);
     this.context.invalidate();

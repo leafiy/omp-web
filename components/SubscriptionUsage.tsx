@@ -59,14 +59,13 @@ export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; 
           <div style={{ height: 5, background: "var(--bg-hover)", borderRadius: 3, margin: "5px 0" }}><div style={{ height: "100%", width: `${w.remainingPercent}%`, borderRadius: 3, background: "var(--accent)" }} /></div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{w.resetsAt ? `${zh ? "重置：" : "Resets: "}${new Date(w.resetsAt).toLocaleString(locale)}` : (zh ? "未提供重置时间" : "Reset time not provided")}</div>
         </div>) : <div style={{ fontSize: 20, marginBottom: 10 }}>{zh ? "未提供" : "Not provided"}</div>}
-        {report.ordinaryUsageAllowed === false && <p style={{ fontSize: 12 }}>{zh ? "原生服务报告：当前普通额度暂不可用。" : "Native service reports ordinary included usage is currently unavailable."}</p>}
+        {report.ordinaryUsageAllowed === false && <p style={{ fontSize: 12 }}>{zh ? "普通额度不可用" : "Included quota unavailable"}</p>}
       </>}
       <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{report.tokenScope === "session" ? (zh ? "本会话总 Token" : "Session total tokens") : (zh ? "总 Token" : "Total tokens")}</div>
         <div style={{ fontSize: 24, fontWeight: 600, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>{count(report.totalTokens)}</div>
-        {report.tokenScope === "account" && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{zh ? "账号累计 · 原生接口返回" : "Account lifetime · reported by the native CLI"}</div>}
+        {report.tokenScope === "account" && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{zh ? "账号累计" : "Account lifetime"}</div>}
       </div>
-      <p style={{ margin: "10px 0 4px", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>{zh ? report.note : report.noteEn || report.note}</p>
       <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{zh ? "读取于 " : "Read at "}{new Date(report.checkedAt).toLocaleTimeString(locale)}</span>
     </section>;
   }
@@ -76,15 +75,10 @@ export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; 
         <h2 id="subscription-usage-title" style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>{zh ? "订阅用量" : "Subscription usage"}</h2>
         <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={() => refresh.current()} style={buttonStyle}>{busy ? (zh ? "读取中…" : "Loading…") : (zh ? "刷新" : "Refresh")}</button><button type="button" autoFocus onClick={onClose} style={buttonStyle}>{zh ? "关闭" : "Close"}</button></div>
       </header>
-      <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>{zh ? "读取本机已登录订阅，不保存登录凭据。" : "Reads this machine’s native subscriptions without storing credentials."}</p>
-      {error && <p role="alert" style={{ fontSize: 13 }}>{zh ? "暂时无法读取用量，请稍后刷新；没有把未知数据当成 0。" : "Usage could not be read. Refresh later; unknown usage is not treated as zero."}</p>}
+      {error && <p role="alert" style={{ fontSize: 13 }}>{zh ? "用量读取失败" : "Could not load usage"}</p>}
       {!data && busy && <p role="status">{zh ? "正在向原生工具查询…" : "Querying native tools…"}</p>}
       {data?.subscriptions.map(r => card(r))}
       {data?.session && card(data.session, true)}
-      <details style={{ marginTop: 14, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        <summary style={{ cursor: "pointer" }}>{zh ? "统计范围与说明" : "Scope and details"}</summary>
-        <p>{zh ? "OMP/Pi 未提供订阅周额度接口，不能用另一工具的登录代替。当前对话可用时，另列会话 Token。周额度按服务商周期重置，不一定是自然周，也不能直接换算成 Token。数据最多缓存约一分钟，实际可用状态以原生工具提示为准。" : "OMP/Pi expose no subscription-quota RPC; another tool’s login is not substituted. Session tokens appear separately when available. Provider reset windows are not necessarily calendar weeks and cannot be converted into a fixed token allowance. Results are cached for about a minute; native tools determine actual availability."}</p>
-      </details>
     </section>
   </div>;
 }

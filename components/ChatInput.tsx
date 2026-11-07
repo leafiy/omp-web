@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, QueuedMessageItem, SlashCommandInfo } from "@/hooks/useAgentSession";
-import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
+import { clearDraft, clearDraftIfUnchanged, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
 import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { slashArgumentCompletions, type SlashArgumentCompletion } from "@/lib/slash-command-arguments";
 import {
@@ -19,6 +19,7 @@ import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
+import { InlineConfirmation } from "./InlineConfirmation";
 
 export interface AttachedImage {
   data: string;   // base64, no prefix
@@ -34,7 +35,7 @@ interface ModelOption {
 
 interface Props {
   engine?: AgentEngine;
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  onSend: (message: string, images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
   onAbort: () => void;
   onSteer?: (message: string, images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
   onFollowUp?: (message: string, images?: AttachedImage[]) => void | boolean | Promise<void | boolean>;
@@ -64,6 +65,7 @@ interface Props {
   inputHistory?: string[];
   onRecallQueue?: () => void;
   onRecallQueuedMessage?: (item: QueuedMessageItem) => Promise<void>;
+  onWithdrawQueuedMessage?: (item: { id?: string; kind: "steer" | "follow_up"; text: string }) => Promise<void>;
   recallingQueue?: boolean;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
@@ -80,6 +82,7 @@ interface Props {
 export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
+  editText: (text: string) => void;
   prependText: (text: string, notice?: string) => void;
   addFiles: (files: File[]) => void;
 }
@@ -258,7 +261,7 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, onEdit, disabled }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; disabled?: boolean }) {
+function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; onWithdraw?: () => void; disabled?: boolean }) {
   const { locale } = useI18n();
   return (
     <div
@@ -287,6 +290,7 @@ function QueuedMessageRow({ kind, text, onEdit, disabled }: { kind: "steer" | "f
         {kind}
       </span>
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
+      {(onWithdraw || kind === "steer") && <button type="button" disabled={disabled || !onWithdraw} onClick={onWithdraw} title={!onWithdraw ? (locale === "zh-CN" ? "原生引擎未提供撤回接口" : "Native recall unavailable") : undefined} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onWithdraw ? .5 : 1 }}>{locale === "zh-CN" ? "撤回" : "Withdraw"}</button>}
       {onEdit && <button type="button" disabled={disabled} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)" }}>{locale === "zh-CN" ? "取回编辑" : "Recall to edit"}</button>}
     </div>
   );
@@ -359,7 +363,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], onRecallQueue, onRecallQueuedMessage, recallingQueue,
+  retryInfo, queuedMessages, inputHistory = [], onRecallQueue, onRecallQueuedMessage, onWithdrawQueuedMessage, recallingQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
@@ -371,6 +375,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [draftNotice, setDraftNotice] = useState(() => draftKey ? getDraft(draftKey)?.notice : undefined);
+  const [pendingEdit, setPendingEdit] = useState<{ text: string; expected: string } | null>(null);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [modelFilter, setModelFilter] = useState("");
@@ -383,6 +388,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [queuedSendBusy, setQueuedSendBusy] = useState(false);
   const queuedSendRef = useRef(false);
+  const normalSendRef = useRef(false);
+  const composerMountedRef = useRef(true);
+  useEffect(() => {
+    composerMountedRef.current = true;
+    return () => { composerMountedRef.current = false; };
+  }, []);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
@@ -430,7 +441,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
+  const replaceDraftText = useCallback((text: string) => {
+    valueRef.current = text;
+    setValue(text); setDraftNotice(undefined); setHistoryMenuOpen(false); setAtQuery(null);
+    if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage) });
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) { ta.focus(); ta.setSelectionRange(text.length, text.length); ta.scrollIntoView({ block: "nearest" }); }
+    });
+  }, []);
+
   useImperativeHandle(ref, () => ({
+    editText(text: string) {
+      const current = valueRef.current;
+      if (current.trim() && current !== text) setPendingEdit({ text, expected: current });
+      else replaceDraftText(text);
+    },
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
@@ -650,8 +676,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     }
 
+    // Promotion of a new chat must carry a newer unsent edit to its real session ID.
+    if (previousDraftKey?.startsWith("new:") && draftKey && !draftKey.startsWith("new:")) {
+      const previous = getDraft(previousDraftKey);
+      if (previous && !getDraft(draftKey)) setDraft(draftKey, previous);
+      clearDraft(previousDraftKey);
+    }
     const draft = draftKey ? getDraft(draftKey) : null;
     draftKeyRef.current = draftKey;
+    setPendingEdit(null);
     setValue(draft?.value ?? "");
     setDraftNotice(draft?.notice);
     setAtQuery(null);
@@ -678,17 +711,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
-    if (isStreaming || attachmentJobRef.current) return;
+    if (isStreaming || attachmentJobRef.current || normalSendRef.current) return;
     onAudioUnlock?.();
-    if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
-      const result = await onBuiltinCommand(msg);
-      if (result.handled) {
-        if (!result.error) clearInput();
-        return;
+    normalSendRef.current = true;
+    const sentKey = draftKeyRef.current;
+    const sentDraft = { value, images: attachedImages.map(imageToDraftImage) };
+    const clearAccepted = () => {
+      if (sentKey) clearDraftIfUnchanged(sentKey, sentDraft);
+      const currentKey = draftKeyRef.current;
+      const sameComposer = currentKey === sentKey || (sentKey?.startsWith("new:") && currentKey && !currentKey.startsWith("new:"));
+      const sameImages = attachedImagesRef.current.length === attachedImages.length
+        && attachedImagesRef.current.every((image, i) => image.data === attachedImages[i].data && image.mimeType === attachedImages[i].mimeType);
+      if (composerMountedRef.current && sameComposer && valueRef.current === value && sameImages) clearInput();
+    };
+    try {
+      if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
+        const result = await onBuiltinCommand(msg);
+        if (result.handled) {
+          if (!result.error) clearAccepted();
+          return;
+        }
       }
-    }
-    onSend(msg, attachedImages.length ? attachedImages : undefined);
-    clearInput();
+      const accepted = await onSend(msg, attachedImages.length ? attachedImages : undefined);
+      if (accepted !== false) clearAccepted();
+    } catch { /* A failed or ambiguous send retains the draft. */ }
+    finally { normalSendRef.current = false; }
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/[\r\n]/.test(value)
@@ -923,7 +970,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = value.trim();
-    if (!msg || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
+    if (!msg || normalSendRef.current || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
     if (engine === "claude" && msg.startsWith("/")) return;
     onAudioUnlock?.();
     queuedSendRef.current = true; setQueuedSendBusy(true);
@@ -1260,6 +1307,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }}
       />
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        {pendingEdit && <InlineConfirmation key={pendingEdit.text} title={t("chat.replaceDraft")} message={t("chat.replaceDraftMessage")} confirmLabel={t("chat.replaceDraft")} cancelLabel={t("i18n.cancel")} onCancel={() => setPendingEdit(null)} onConfirm={() => {
+          const edit = pendingEdit; setPendingEdit(null);
+          if (valueRef.current !== edit.expected) { setDraftNotice(t("chat.draftChanged")); return; }
+          replaceDraftText(edit.text);
+        }} />}
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {attachmentBusy && (
@@ -1331,9 +1383,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
               )}
             </div>
-            {queuedMessages?.items?.length ? queuedMessages.items.map((item) => <QueuedMessageRow key={item.id} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} disabled={recallingQueue} onEdit={onRecallQueuedMessage ? () => { void onRecallQueuedMessage(item); } : undefined} />) : <>
-              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} />)}
-              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} />)}
+            {queuedMessages?.items?.length ? queuedMessages.items.map((item) => <QueuedMessageRow key={item.id} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} disabled={recallingQueue} onEdit={onRecallQueuedMessage ? () => { void onRecallQueuedMessage(item); } : undefined} onWithdraw={onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage(item); } : undefined} />) : <>
+              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} disabled={recallingQueue} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "steer", text }); } : undefined} />)}
+              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} disabled={recallingQueue} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "follow_up", text }); } : undefined} />)}
             </>}
           </div>
         )}
@@ -1767,7 +1819,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ref={textareaRef}
             value={value}
             onChange={(e) => {
+              valueRef.current = e.target.value;
               setValue(e.target.value);
+              if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: e.target.value, images: attachedImagesRef.current.map(imageToDraftImage), notice: draftNotice });
               setSlashCursorAtEnd(e.target.selectionStart === e.target.value.length && e.target.selectionEnd === e.target.value.length);
               setHistoryMenuOpen(false);
               updateAtQuery(e.target.value, e.target.selectionStart);

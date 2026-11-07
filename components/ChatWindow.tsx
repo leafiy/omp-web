@@ -11,6 +11,8 @@ import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
+import { AgentTasksPanel } from "./AgentTasksPanel";
+import type { AgentTask } from "@/lib/agent-task-types";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -40,6 +42,7 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
+  onOpenTask?: (sessionId: string, task: AgentTask) => void;
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, string | number>) => string): string | null {
@@ -173,7 +176,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNewSession, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef: externalChatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNewSession, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef: externalChatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenTask }: Props) {
   const { t, locale } = useI18n();
   const engine = session ? session.engine ?? engineForSession(session.id) : newChatEngine;
   const engineLabel = getEngineLabel(engine);
@@ -200,11 +203,11 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
 
   // 稳定化 onEditContent 引用，配合 React.memo 防止历史消息重渲染
   const handleEditContent = useCallback((content: string) => {
-    chatInputRef?.current?.insertIfEmpty(content);
+    chatInputRef?.current?.editText(content);
   }, [chatInputRef]);
 
   const {
-    loading, error, messages, entryIds, streamState,
+    loading, error, messages, entryIds, streamState, taskSnapshot, taskStatusStale,
     hasEarlierHistory, loadingEarlier, historyPageError, loadEarlierHistory,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
@@ -218,7 +221,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue, handleRecallQueuedMessage, recallingQueue,
+    handleRecallQueue, handleRecallQueuedMessage, handleWithdrawQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
     handleThinkingLevelChange, loadSlashCommands,
   } = useAgentSession({
@@ -379,6 +382,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       inputHistory={inputHistory}
       onRecallQueue={engine === "omp" ? handleRecallQueue : undefined}
       onRecallQueuedMessage={engine === "claude" ? handleRecallQueuedMessage : undefined}
+      onWithdrawQueuedMessage={engine === "claude" || engine === "omp" ? handleWithdrawQueuedMessage : undefined}
       recallingQueue={recallingQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
@@ -484,7 +488,6 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
             {engine === "claude" && <p style={{ margin: "0 16px 10px", fontSize: 12, lineHeight: 1.5, color: "var(--text-dim)" }}>{locale === "zh-CN" ? "直接使用本机 Claude Code 的登录和配置。需要你授权时会弹出确认。" : "Uses this machine's native Claude Code login and configuration. Approval prompts appear when needed."}</p>}
             {engine === "codex" && <p style={{ margin: "0 16px 10px", fontSize: 12, lineHeight: 1.5, color: "var(--text-dim)" }}>{locale === "zh-CN" ? "直接使用本机 Codex CLI。需要你授权时会弹出确认。" : "Runs your local Codex CLI directly. Approval prompts appear when needed."}</p>}
             <NoticeShelf notices={notices} align="right" />
-            {chatInputElement}
           </div>
         </div>
       ) : (
@@ -748,6 +751,9 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
         )}
       </div>
 
+      </>
+      )}
+      {/* Keep one composer mounted across the empty -> active -> persisted session transition. */}
       <div className="relative">
         <div
           style={{
@@ -756,14 +762,13 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <AgentTasksPanel snapshot={taskSnapshot} mainRunning={sessionBusy} stale={taskStatusStale} onOpen={onOpenTask ? task => { if (sessionIdRef.current) onOpenTask(sessionIdRef.current, task); } : undefined} />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
         {chatInputElement}
         <ExtensionStatusBar statuses={extensionStatuses} />
       </div>
-      </>
-      )}
     </div>
   );
 }

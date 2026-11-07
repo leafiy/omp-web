@@ -139,15 +139,12 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
   const busy = active(job);
   const blocked = checking || submitting !== null || busy || reconnecting || reloading;
   const buttonStyle = { padding: "7px 14px", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-panel)", color: "var(--text)", fontSize: 13 };
-  const hint: Record<UpdatableTool, string> = zh
-    ? { pi: "Pi 聊天工具", omp: "OMP 聊天工具", claude: "Claude Code 聊天工具", codex: "Codex CLI 聊天工具" }
-    : { pi: "Pi chat tool", omp: "OMP chat tool", claude: "Claude Code chat tool", codex: "Codex CLI chat tool" };
 
   function confirmationMessage(tool: UpdatableTool) {
     const label = TOOL_LABELS[tool];
     return zh
-      ? `更新 ${label}？\n\n只更新这一个软件，不更新其他软件或 omp-web。\n更新完成后网页会重启，所有正在运行的聊天和终端都会中断，请先保存工作。\n不会清空已保存的聊天记录；失败时不自动重试。`
-      : `Update ${label}?\n\nOnly this software will be updated, not the other tools or omp-web.\nAfter updating, the web service restarts and ALL running chats and terminals are interrupted. Save your work first.\nSaved chat history is not cleared. Failed updates are not retried automatically.`;
+      ? `更新 ${label} 后将重启网页，中断所有运行中的聊天和终端。`
+      : `Updating ${label} restarts the web service and interrupts all running chats and terminals.`;
   }
 
   function confirmUpdate(tool: UpdatableTool) {
@@ -157,7 +154,6 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
   return (
     <section aria-labelledby="software-updates-title" aria-busy={checking || submitting !== null || busy}>
       <h3 id="software-updates-title" style={{ margin: "18px 0 6px", fontSize: 15, fontWeight: 600 }}>{zh ? "软件更新" : "Software updates"}</h3>
-      <p style={{ margin: "0 0 12px", color: "var(--text-muted)", fontSize: 13 }}>{zh ? "点哪个，只更新哪个。更新后网页会重启，请先结束正在运行的任务。" : "Update one tool at a time. The web service restarts afterward; finish running tasks first."}</p>
       {confirmationTool && <InlineConfirmation key={confirmationTool}
         title={zh ? `确认更新 ${TOOL_LABELS[confirmationTool]}` : `Confirm ${TOOL_LABELS[confirmationTool]} update`}
         message={confirmationMessage(confirmationTool)} confirmLabel={zh ? "确认更新并重启" : "Confirm update and restart"} cancelLabel={zh ? "取消" : "Cancel"}
@@ -177,7 +173,7 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{TOOL_LABELS[tool]}</div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)", overflowWrap: "anywhere" }}>{version || (status?.versionError ? (zh ? "版本读取失败" : "Version unavailable") : hint[tool])}</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", overflowWrap: "anywhere" }}>{version || (status?.versionError ? (zh ? "版本读取失败" : "Version unavailable") : "—")}</div>
               </div>
               <button type="button" aria-label={zh ? `更新 ${TOOL_LABELS[tool]}` : `Update ${TOOL_LABELS[tool]}`} disabled={disabled} onClick={() => confirmUpdate(tool)} style={{ ...buttonStyle, flexShrink: 0, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? .5 : 1 }}>
                 {submitting === tool ? (zh ? "提交中…" : "Starting…") : running ? (zh ? "更新中…" : "Updating…") : (zh ? "更新" : "Update")}
@@ -189,19 +185,18 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
       </div>
       <div role="status" aria-live="polite" style={{ fontSize: 13, marginTop: 12, color: "var(--text-muted)" }}>
         {reloading ? (zh ? "更新完成，正在刷新网页…" : "Update complete. Reloading…")
-          : reconnecting ? (zh ? "正在重新连接，尚未确认更新完成。不会重复发送更新请求。" : "Reconnecting; completion is not confirmed. The update request will not be resent.")
+          : reconnecting ? (zh ? "正在重新连接…" : "Reconnecting…")
           : !snapshot ? (zh ? "正在读取软件信息…" : "Reading software information…")
           : job?.phase === "updating" ? (zh ? `正在更新 ${TOOL_LABELS[job.tool]}…` : `Updating ${TOOL_LABELS[job.tool]}…`)
           : job?.phase === "restarting" ? (zh ? "软件已更新，等待网页重启…" : "Software updated. Waiting for the web service to restart…")
           : job?.phase === "succeeded" ? (zh ? `${TOOL_LABELS[job.tool]} 上次更新已完成。` : `${TOOL_LABELS[job.tool]} was updated successfully.`)
-          : job?.phase === "failed" ? (zh ? "更新未完成，请展开详细信息查看原因。" : "Update did not complete. See details below.")
-          : (zh ? "只有点击“更新”并确认后，网页才会开始更新。" : "No update starts until you click Update and confirm.")}
+          : job?.phase === "failed" ? (zh ? "更新失败" : "Update failed")
+          : null}
       </div>
       {(waitingLong || reconnecting) && <button type="button" disabled={checking || submitting !== null || reloading} onClick={() => actions.current?.check()} style={{ ...buttonStyle, marginTop: 8, cursor: "pointer" }}>{zh ? "重新连接" : "Reconnect"}</button>}
-      {submissionError && !reconnecting && <p role="alert" style={{ fontSize: 13 }}>{zh ? "更新请求未确认，已重新读取状态。请展开详细信息查看原因。" : "Update request was not confirmed. Status was checked again; see details below."}</p>}
+      {submissionError && !reconnecting && <p role="alert" style={{ fontSize: 13 }}>{zh ? "更新请求未确认" : "Update request not confirmed"}</p>}
       <details style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
         <summary style={{ cursor: "pointer" }}>{zh ? "详细信息和更新日志" : "Details and update log"}</summary>
-        <p>{zh ? "关闭设置不会停止已开始的更新。这里不更新网页本身，也不更新订阅或聊天模型。" : "Closing Settings does not cancel an update. These buttons do not update the website, subscriptions or chat models."}</p>
         {snapshot?.tools.map((tool) => <div key={tool.tool} style={{ overflowWrap: "anywhere" }}>{TOOL_LABELS[tool.tool]}: {tool.executable || "—"}</div>)}
         {snapshot?.tools.filter((tool) => tool.versionError).map((tool) => <p key={tool.tool}>{TOOL_LABELS[tool.tool]}: {tool.versionError}</p>)}
         {job?.previousVersion && <p>{job.previousVersion}{job.currentVersion ? ` → ${job.currentVersion}` : ""}</p>}

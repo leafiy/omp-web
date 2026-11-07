@@ -7,7 +7,8 @@ import { useI18n } from "@/hooks/useI18n";
 export interface Tab {
   id: string;
   label: string;
-  filePath: string;
+  filePath?: string;
+  task?: { sessionId: string; taskId: string };
   sourceSessionId?: string | null;
   initialDisplayMode?: "source" | "preview" | "diff";
 }
@@ -70,7 +71,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
-              {getFileIcon(tab.label, 13)}
+              {tab.task ? <span aria-hidden="true">◉</span> : getFileIcon(tab.label, 13)}
             </span>
             <span
               style={{
@@ -79,7 +80,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 flex: 1,
                 fontWeight: isActive ? 500 : 400,
               }}
-              title={tab.filePath}
+              title={tab.filePath ?? tab.label}
             >
               {tab.label}
             </span>
