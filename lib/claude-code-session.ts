@@ -4,6 +4,7 @@ import type { AgentFrame, AgentProcessOptions } from "./agent-rpc-client";
 import { sessionKey } from "./engine";
 import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
 import { ClaudeEventProjector } from "./claude-code-events";
+import { ClaudeContextCache } from "./claude-context-cache";
 import { claudeSlashCommands, claudeSlashCommandRestriction } from "./claude-code-commands";
 import { ClaudeWebTranscript } from "./claude-code-store";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
@@ -58,6 +59,10 @@ export class ClaudeCodeSession {
   private tools: string[] = [];
   private terminalCommands: string[] = [];
   private lastError?: string;
+  private readonly context = new ClaudeContextCache(() => {
+    if (this.closed || this.busy || this.changingModel) throw new Error("Context summary is unavailable during a transition");
+    return this.query!.getContextUsage({ detail: "summary" });
+  });
 
   constructor(
     private readonly options: AgentProcessOptions & { nativeId?: string },
@@ -145,6 +150,7 @@ export class ClaudeCodeSession {
         if (this.closed) break;
         if (!this.options.catalogOnly && frame.session_id && frame.session_id !== this.nativeId) throw new Error("Claude Code returned a different session ID");
         if (frame.type === "system" && frame.subtype === "init") {
+          this.context.invalidate();
           this.tools = frame.tools;
           this.terminalCommands = frame.terminal_slash_commands ?? [];
           this.model = frame.model;
@@ -181,6 +187,7 @@ export class ClaudeCodeSession {
     if (!this.busy) return;
     this.cancelDialogs();
     this.busy = false;
+    this.context.invalidate();
     this.activePrompt = undefined;
     this.interruptRequested = false;
     this.emit({ type: "agent_end" });
@@ -241,14 +248,17 @@ export class ClaudeCodeSession {
     await this.waitUntilReady();
     this.resetIdle();
     switch (command.type) {
-      case "get_state": return {
-        sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
-        engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
-        isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
-        isBashRunning: false, isCompacting: false, pendingMessageCount: 0,
-        queuedMessages: { steering: [], followUp: [] }, extensionStatuses: [], extensionWidgets: [],
-        systemPrompt: "", contextUsage: null,
-      };
+      case "get_state": {
+        const contextUsage = await this.context.get(this.busy || this.changingModel);
+        return {
+          sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
+          engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
+          isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
+          isBashRunning: false, isCompacting: false, pendingMessageCount: 0,
+          queuedMessages: { steering: [], followUp: [] }, extensionStatuses: [], extensionWidgets: [],
+          systemPrompt: "", contextUsage,
+        };
+      }
       case "get_available_models": return { models: await this.query!.supportedModels() };
       case "get_native_usage": return this.query!.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
       case "get_commands": return { commands: claudeSlashCommands(await this.query!.supportedCommands(), this.terminalCommands) };
@@ -260,7 +270,7 @@ export class ClaudeCodeSession {
         const last = this.transcript!.getMessages().findLast((m) => m.role === "assistant");
         return { text: last?.role === "assistant" ? last.content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "" };
       }
-      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.transcript?.name, contextUsage: null };
+      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.transcript?.name, contextUsage: await this.context.get(this.busy || this.changingModel) };
       case "extension_ui_response": {
         if (typeof command.id === "string") this.dialogs.get(command.id)?.finish(command);
         return null;
@@ -280,6 +290,7 @@ export class ClaudeCodeSession {
         if (this.busy || this.changingModel) throw new Error("Wait for Claude Code to finish before switching models");
         if (command.provider !== "claude-code" || typeof command.modelId !== "string") throw new Error("Select a native Claude Code model");
         this.changingModel = true;
+        this.context.invalidate();
         try {
           const models = await this.query!.supportedModels();
           if (!models.some((model) => model.value === command.modelId || model.resolvedModel === command.modelId)) throw new Error("Model is not in the native Claude Code catalog");
@@ -288,7 +299,7 @@ export class ClaudeCodeSession {
           this.projector!.setModel(this.model);
           this.transcript?.setModel(this.model);
           return { id: this.model, provider: "claude-code" };
-        } finally { this.changingModel = false; }
+        } finally { this.changingModel = false; this.context.invalidate(); }
       }
       case "prompt": {
         if (this.options.catalogOnly) throw new Error("Catalog clients cannot submit model prompts");
@@ -318,6 +329,7 @@ export class ClaudeCodeSession {
         this.projector!.resetTurn();
         this.permissionReplies.clear();
         this.busy = true;
+        this.context.invalidate();
         this.activePrompt = randomUUID();
         this.interruptRequested = false;
         this.changed();
@@ -345,6 +357,7 @@ export class ClaudeCodeSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
+    this.context.invalidate();
     clearTimeout(this.idleTimer);
     this.cancelDialogs();
     this.finishTurn();

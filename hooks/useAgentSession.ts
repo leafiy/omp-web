@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { createAgentSession, sendAgentCommand } from "@/lib/agent-client";
+import { resolveContextUsage } from "@/lib/context-usage";
 import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -418,6 +419,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const newSessionModelOverrideRef = useRef<SelectedModel | null>(null);
   const thinkingLevelOverrideRef = useRef<Exclude<ThinkingLevelOption, "auto"> | null>(null);
   const promptRunIdRef = useRef(0);
+  const contextRevisionRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
@@ -451,39 +453,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (tokens.total === 0 && messages.length === 0) return null;
 
     const matchedModel = displayModel
-      ? modelList.find((m) => m.provider === displayModel.provider && (m.id === displayModel.modelId || displayModel.modelId.includes(m.id)))
+      ? modelList.find((m) => m.provider === displayModel.provider && m.id === displayModel.modelId)
       : null;
-    const modelCw = matchedModel?.contextWindow ?? 0;
-
-    let cw = contextUsage?.contextWindow ?? 0;
-    if (cw <= 0 || (modelCw > 0 && (cw === 128000 || cw < modelCw))) {
-      cw = modelCw > 0 ? modelCw : (cw > 0 ? cw : 128000);
-    }
-
-    let currentTokens = contextUsage?.tokens ?? null;
-    if (currentTokens === null && messages.length > 0) {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.role === "assistant") {
-          const u = (msg as import("@/lib/types").AssistantMessage).usage;
-          if (u) {
-            currentTokens = (u.input ?? 0) + (u.cacheRead ?? 0);
-            break;
-          }
-        }
-      }
-    }
-
-    let percent = contextUsage?.percent ?? null;
-    if (currentTokens !== null && cw > 0) {
-      percent = (currentTokens / cw) * 100;
-    }
-
-    const effectiveContextUsage = {
-      percent,
-      contextWindow: cw,
-      tokens: currentTokens,
-    };
+    // A native effective window may be smaller than the catalog. Never replace
+    // it with a larger advertised value, or invent capacity from token usage.
+    const effectiveContextUsage = resolveContextUsage(contextUsage,
+      engine === "claude" || engine === "codex" ? undefined : matchedModel?.contextWindow);
 
     return {
       sessionFile: data?.filePath || undefined,
@@ -498,7 +473,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       cost,
       contextUsage: effectiveContextUsage,
     } satisfies SessionStatsInfo;
-  }, [messages, sessionStatsOverride, contextUsage, displayModel, modelList, data?.filePath, session?.id, session?.name]);
+  }, [messages, sessionStatsOverride, contextUsage, displayModel, modelList, data?.filePath, session?.id, session?.name, engine]);
 
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
     let messagesLoaded = false;
@@ -533,6 +508,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!includeState) return null;
 
       try {
+        const contextRevision = contextRevisionRef.current;
         const stateRes = await fetch(`/api/sessions/${encodeURIComponent(sid)}/state`);
         if (!stateRes.ok) throw new Error(`HTTP ${stateRes.status}`);
         const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse };
@@ -540,7 +516,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         const liveState = agentState.state;
         if (liveState) {
-          if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
+          if (contextRevision === contextRevisionRef.current && liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
@@ -1105,10 +1081,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setRetryInfo(null);
         dispatch({ type: "end" });
         if (sessionIdRef.current) {
-          loadSession(sessionIdRef.current);
-          fetch(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`)
+          const sid = sessionIdRef.current, run = promptRunIdRef.current, revision = contextRevisionRef.current;
+          loadSession(sid);
+          fetch(`/api/agent/${encodeURIComponent(sid)}`)
             .then((r) => r.json())
             .then((d: { state?: AgentStateResponse }) => {
+              if (sessionIdRef.current !== sid || promptRunIdRef.current !== run || contextRevisionRef.current !== revision) return;
               if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
               if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
@@ -1476,6 +1454,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [loadContext]);
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
+    const revision = ++contextRevisionRef.current;
+    setContextUsage(null);
+    setSessionStatsOverride(null);
+    const refreshContext = async (sid: string) => {
+      if (engine !== "claude") return;
+      const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
+      if (sessionIdRef.current === sid && contextRevisionRef.current === revision) setContextUsage(state?.contextUsage ?? null);
+    };
     if (isNew) {
       const selectedModel = { provider, modelId };
       newSessionModelOverrideRef.current = selectedModel;
@@ -1485,6 +1471,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!sid) return;
       try {
         await sendAgentCommand(sid, { type: "set_model", provider, modelId });
+        await refreshContext(sid);
       } catch (e) {
         console.error("Failed to set model:", e);
       }
@@ -1495,10 +1482,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       await sendAgentCommand(sid, { type: "set_model", provider, modelId });
       setCurrentModelOverride({ provider, modelId });
+      await refreshContext(sid);
     } catch (e) {
       console.error("Failed to set model:", e);
     }
-  }, [isNew, setNewSessionModel]);
+  }, [isNew, setNewSessionModel, engine]);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -1652,8 +1640,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               provider = modelList[0].provider;
             }
             if (sidToUse && provider) {
+              const revision = ++contextRevisionRef.current;
+              setContextUsage(null);
+              setSessionStatsOverride(null);
               await sendAgentCommand(sidToUse, { type: "set_model", provider, modelId });
               setCurrentModelOverride({ provider, modelId });
+              if (engine === "claude") {
+                const state = await sendAgentCommand<AgentStateResponse>(sidToUse, { type: "get_state" });
+                if (sessionIdRef.current === sidToUse && contextRevisionRef.current === revision) setContextUsage(state?.contextUsage ?? null);
+              }
               return complete({ handled: true, message: `Switched model to ${provider}/${modelId}` });
             }
           }

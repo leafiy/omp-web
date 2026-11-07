@@ -55,7 +55,7 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - URL：`http://192.168.52.3:2225`，只监听该 tun0 地址，没有监听公网网卡或公网 IPv6。
 - SSH/服务用户：root。网页和终端具有该用户权限，不是额外的沙箱。
 - 服务：`omp-web.service`，已启用开机启动；隧道地址暂不可用时重试，不回退到公网监听。
-- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261106-native-skills-Yb4Aqztc`。上一版 `/opt/omp-web-releases/20261106-cc-arguments-UuIjtZhW` 保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
+- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-cc-context-escoyYpD`。上一版 `/opt/omp-web-releases/20261106-native-skills-Yb4Aqztc` 保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
 - 访问密码：远端 `/etc/omp-web/access-password`，0600，未输出到聊天。
 - 网站运行环境：`/etc/omp-web/web.env`，仅网站运行与认证字段，没有 Agent 模型配置或密钥。
 - 原生路径均自动选择 `/root/.local/bin/` 下的四个工具，未选到旧 `.bun/bin/omp` 或网页依赖里的旧 Pi。
@@ -64,16 +64,17 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - 122 项本地测试、类型检查和隔离构建通过。远端首页、API、三个 SSE、错误密码、跨源请求和编码路径认证检查通过。测试没有发送模型消息，也没有读取/复制 Agent 登录文件。
 - 已补充独立的[订阅用量](./subscription-usage.zh-CN.md)面板，替换左下角重复的“插件”入口；130 项测试和远端原生额度读取验证通过，密码保持不变。
 - CC [斜杠命令菜单和参数补全](./claude-code-commands.zh-CN.md)已上线：148 项隔离回归、类型检查、构建通过，桌面/390px 浏览器模拟连续三轮通过，覆盖 `/effort` 参数筛选、嵌套选项、键盘/点击/手机触摸、光标编辑及不自动发送。Build ID `kdrlpM32fT98MdosaHh89`，状态为 `active`（2026-11-06）。本次部署检查仅验证网页认证、原生可执行文件发现和私有地址监听，没有启动 Agent 或发送模型提示；真实账号命令行为仍由用户验收。
-- 独立[技能面板](./native-skills.zh-CN.md)已修复并部署：157 项回归、类型检查、隔离构建通过；浏览器复现了旧入口打开设置的问题，修复后桌面/390px 手机、四引擎切换、搜索、失败提示和无项目提示均通过，并复查了命令参数补全。当前 Build ID 为 `ae4k6_mlEXRlINVFfAu8C`，远端 `status.json` 已记录 `active`（2026-11-06）。本次没有真实模型请求或 Agent 升级。
+- 独立[技能面板](./native-skills.zh-CN.md)已修复并部署：157 项回归、类型检查、隔离构建通过；浏览器复现了旧入口打开设置的问题，修复后桌面/390px 手机、四引擎切换、搜索、失败提示和无项目提示均通过，并复查了命令参数补全。该轮 Build ID 为 `ae4k6_mlEXRlINVFfAu8C`，远端 `status.json` 记录 `active`（2026-11-06）。该轮没有真实模型请求或 Agent 升级。
+- [CC 上下文容量修复](./claude-code-context.zh-CN.md)已部署：166 项回归、类型检查、构建与桌面/手机浏览器检查通过，移除硬编码 128K。两台机器各一次服务用户 HOME 下的只读原生摘要均返回 1M；不代表所有项目统一配置，也未发送模型提示或调用额外 Token 计数 API。当前 Build ID `ejxoSY5wdXZGc2SoXQs-f`，远端状态 `active`（2026-11-07）。
 - 实际远端状态：当前远端发布目录中的 `status.json`。本机同步见下节，不再把远端发布当作本机已更新。
 
 ## 本机同步：pc:2225
 
-本机此前仍是 `uneDzdJLBVayGPG0ld9Jk`，未包含远端后续功能。本次已获用户授权同步到同一技能面板构建 `ae4k6_mlEXRlINVFfAu8C`，包括用量、四原生工具发现、CC 命令与参数补全。
+本机上一轮已成功从 `uneDzdJLBVayGPG0ld9Jk` 更新到技能面板构建 `ae4k6_mlEXRlINVFfAu8C`（旧任务 `local-status.json` 已确认 `active`）。本次再次获授权同步上下文容量修复构建 `ejxoSY5wdXZGc2SoXQs-f`，保留此前的用量、技能、四原生工具、CC 命令及参数补全。
 
 当前对话本身运行在本机 `omp-web.service` 下，因此使用独立 systemd 延迟任务切换 `.next`；不会在对话尚未回复时重启自己的宿主。任务停止服务后保留旧 `.next`，切换产物、重启并检查首页、静态资源、技能接口边界、四工具发现及 Host/Origin 保护。失败自动恢复旧产物。
 
-- 本机状态：`/opt/omp-web-skills-stage-Yb4Aqztc/local-status.json`，只有 `phase: active` 表示本机切换和检查成功。
+- 本机状态：`/opt/omp-web-context-stage-escoyYpD/local-status.json`，只有 `phase: active` 表示本机切换和检查成功。
 - 本机回滚产物：同目录 `backup.next`；不替换 Node 依赖，不修改原生 Agent 配置、登录或历史。
 - 本机既有访问方式和服务环境保持不变；它仍是原先的可信内网部署，不因为远端有密码就自动获得同样的访问保护。
 

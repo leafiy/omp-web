@@ -67,6 +67,8 @@ export const enLocale: LocalePlugin = {
     "session.cacheWrite": "Cache Write",
     "session.cost": "Cost",
     "session.context": "Context",
+    "session.contextUnknown": "Context unknown",
+    "session.contextUnknownShort": "Unknown",
     "session.copy": "Copy {value}",
     "session.copied": "Copied",
     "session.title": "Session info",
