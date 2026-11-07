@@ -10,6 +10,9 @@ Your agents do the work. The browser makes them easier to use.
 
 Instead of juggling terminal windows, repeatedly reconnecting over SSH, or rebuilding your agent setup for another chat frontend, open a link, choose a project and an agent, and get to work—from your desktop or your phone.
 
+<img width="3494" height="2168" alt="image" src="https://github.com/user-attachments/assets/24ab39dc-6b54-45d2-80f6-e723466eaa4b" />
+
+
 **Connect through Tailscale, EasyTier, or another trusted private network. Once connected, a browser is enough to get to work.**
 
 ## Your agents, not another agent platform
