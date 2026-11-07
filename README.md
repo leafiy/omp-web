@@ -12,6 +12,20 @@ Instead of juggling terminal windows, repeatedly reconnecting over SSH, or rebui
 
 **Connect through Tailscale, EasyTier, or another trusted private network. Once connected, a browser is enough to get to work.**
 
+## The real use case: a small computer for the agent, a browser for you
+
+**This is already how I use omp-web—not a hypothetical deployment.**
+
+I keep Claude Code on a low-spec computer at a remote home, with omp-web deployed alongside it. That machine is the dedicated agent host; I access it from whichever computer or phone I have with me. The agent, its configuration, and the projects stay in one place.
+
+SSH got me connected, but it did not make the everyday work comfortable. Copying and pasting, scrolling through long output, reviewing diffs, and moving files around were cumbersome—especially from a phone. The hard part was no longer reaching Claude Code; it was working with the results.
+
+With omp-web, I open the page, read and copy responses, review changes, upload files, and manage the project without doing all of that inside a remote terminal. When I need a shell, it is already beside the conversation.
+
+**For this workflow, the browser is not an extra dashboard. It is what makes a dedicated remote agent machine practical to use every day.**
+
+A modest host can be useful here because cloud-hosted models do not require it to run a large model locally. It still needs enough resources for the CLI, web service, and your actual builds and tools; this is a personal setup, not a minimum-hardware or performance guarantee.
+
 ## Your agents, not another agent platform
 
 omp-web is a convenient way to operate the agents already installed on your machine. It is **not a replacement agent, a model gateway, or a separate AI tool system**.
@@ -65,10 +79,14 @@ The host must stay online and the private connection must be reachable. A browse
 
 Remote coding is not just about sending a prompt. It is also about getting information and files into and out of the session:
 
-- **Copy replies and code** from a normal browser view instead of fighting terminal selection and scrollback, especially on a phone.
-- **Upload screenshots and files** through the browser instead of opening a separate file-transfer tool for every attachment.
-- **Browse, preview, and manage project files** without typing a path for every copy, move, rename, or download. Touch devices get a “More” menu.
-- **Use a shell when you actually need one**, alongside the conversation. The embedded terminal remains independent of the agent's chat.
+| Everyday friction in a remote terminal | The browser workflow |
+| --- | --- |
+| Selecting and copying long replies or code; pasting text back into a TUI | Read rendered messages, use copy controls, and compose text in a normal browser input. |
+| Searching through terminal scrollback | Browse conversation history with pagination and display caching, rather than relying only on a terminal's scroll buffer. |
+| Reviewing changes in a narrow terminal viewport | Open changed files and inspect their Git diffs alongside the conversation. |
+| Sending screenshots or project files to the remote machine | Upload through the browser instead of opening a separate transfer tool for each attachment. |
+| Repeatedly typing paths to inspect, copy, move, rename, or download files | Use the file browser, previews, and context menus; touch devices get a “More” menu. |
+| Needing an occasional command while the agent is working | Open the independent embedded terminal without leaving the page. |
 
 This makes remote Claude Code—and the other supported agents—more comfortable to use without replacing the agent underneath. Browser clipboard permissions and agent attachment support still apply; ordinary uploaded files are stored on the host and passed as file references.
 
@@ -152,6 +170,7 @@ The web login username is **`pi`**. This password protects the website; it is se
 - **No credential migration.** Installing omp-web on another host does not copy agent logins, model configuration, or native histories from the first host.
 - **Display is not model context.** Web history views and caches help navigation; they do not replace the context managed by the native agent.
 - **A browser is not process supervision.** Restarting the web service can interrupt active agents and embedded terminals. It is not a promise of uninterrupted execution across server restarts.
+- **Remote access does not change provider rules.** Account eligibility, regional availability, and usage terms still apply. This project improves how you operate your machine; it makes no guarantees about provider account decisions.
 
 ## More documentation
 
