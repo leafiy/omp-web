@@ -7,6 +7,7 @@ interface ViewportHeightState {
   innerHeight: number;
   viewportHeight: number;
   viewportScale: number;
+  wasUsingVisualViewport?: boolean;
 }
 
 export function shouldUseVisualViewportHeight({
@@ -14,9 +15,12 @@ export function shouldUseVisualViewportHeight({
   innerHeight,
   viewportHeight,
   viewportScale,
+  wasUsingVisualViewport = false,
 }: ViewportHeightState): boolean {
   const isUnscaled = Math.abs(viewportScale - 1) < 0.01;
-  return hasFocusedEditable && isUnscaled && innerHeight - viewportHeight > 1;
+  // Focus can move to Stop/a menu before the keyboard finishes closing. Do
+  // not move the composer behind that still-visible keyboard during the blur.
+  return (hasFocusedEditable || wasUsingVisualViewport) && isUnscaled && innerHeight - viewportHeight > 1;
 }
 
 function hasFocusedEditableElement(): boolean {
@@ -40,6 +44,7 @@ export function useViewportHeight(): void {
     if (!viewport) return;
 
     const root = document.documentElement;
+    let usingVisualViewport = false;
 
     const update = () => {
       const keyboardOpen = shouldUseVisualViewportHeight({
@@ -47,7 +52,9 @@ export function useViewportHeight(): void {
         innerHeight: window.innerHeight,
         viewportHeight: viewport.height,
         viewportScale: viewport.scale,
+        wasUsingVisualViewport: usingVisualViewport,
       });
+      usingVisualViewport = keyboardOpen;
       if (keyboardOpen) {
         root.style.setProperty("--app-viewport-height", `${viewport.height}px`);
         if (window.scrollX !== 0 || window.scrollY !== 0) {

@@ -34,6 +34,7 @@ export const zhCNLocale: LocalePlugin = {
     "terminal.outputOverflow": "输出超过显示缓冲区，请重新连接以查看最近输出。",
     "terminal.replayTruncated": "较早的输出已丢弃，仅显示最近输出。",
     "sidebar.hide": "隐藏侧边栏",
+    "toolbar.more": "更多操作",
     "sidebar.show": "显示侧边栏",
     "theme.light": "切换到浅色模式",
     "theme.dark": "切换到深色模式",

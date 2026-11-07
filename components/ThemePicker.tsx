@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme, type Theme } from "@/hooks/useTheme";
 import { useCodeTheme, type CodeTheme } from "@/hooks/useCodeTheme";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -54,8 +54,8 @@ interface ThemeOption {
   swatch: string;
 }
 
-const SunIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+const SunIcon = ({ size = 13 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="5" />
     <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
@@ -65,14 +65,14 @@ const SunIcon = () => (
   </svg>
 );
 
-const MoonIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+const MoonIcon = ({ size = 13 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
   </svg>
 );
 
-const StarIcon = () => <StarfieldEmblem size={15} />;
+const StarIcon = ({ size = 15 }: { size?: number }) => <StarfieldEmblem size={size} />;
 
 const THEMES: ThemeOption[] = [
   {
@@ -110,18 +110,32 @@ const CURRENT_COLOR: Record<Theme, string> = {
   starfield: "#d99b26",
 };
 
-export function ThemePicker() {
+export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; onOpen?: () => void } = {}) {
   const { theme, setTheme } = useTheme();
   const { codeTheme, setCodeTheme } = useCodeTheme();
   const { t, lang } = useLanguage();
   const isZh = lang === "zh";
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const positionPanel = useCallback(() => {
+    const button = buttonRef.current, parent = rootRef.current?.parentElement;
+    if (!button || !parent) return;
+    const anchor = button.getBoundingClientRect(), bounds = parent.getBoundingClientRect();
+    const width = Math.min(240, bounds.width - 16);
+    setPanelPos({ top: anchor.bottom + 4, left: Math.max(bounds.left + 8, Math.min(anchor.left, bounds.right - width - 8)), width });
+  }, []);
+  useEffect(() => {
+    if (!open || !compact) return;
+    window.addEventListener("resize", positionPanel);
+    return () => window.removeEventListener("resize", positionPanel);
+  }, [open, compact, positionPanel]);
 
   /* Close on outside click or Escape */
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setOpen(false); } };
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -137,8 +151,12 @@ export function ThemePicker() {
     <div ref={rootRef} style={{ position: "relative", flexShrink: 0 }}>
       {/* Trigger button */}
       <button
+        ref={buttonRef}
         onClick={(e) => {
           e.stopPropagation();
+          if (!open) onOpen?.();
+          buttonRef.current?.focus();
+          if (compact) positionPanel();
           setOpen((v) => !v);
         }}
         title="Choose theme"
@@ -147,9 +165,9 @@ export function ThemePicker() {
         aria-expanded={open}
         style={{
           display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-          height: 36, padding: "0 10px",
+          height: compact ? 44 : 36, width: compact ? 44 : undefined, padding: compact ? 0 : "0 10px",
           background: "none", border: "none",
-          borderRight: "1px solid var(--border)",
+          borderRight: compact ? "none" : "1px solid var(--border)",
           color: CURRENT_COLOR[theme],
           cursor: "pointer", fontSize: 11, whiteSpace: "nowrap",
           transition: "color 0.12s, background 0.12s",
@@ -158,8 +176,9 @@ export function ThemePicker() {
         onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
       >
         {/* icon for current theme */}
-        {theme === "starfield" ? <StarIcon /> : theme === "dark" ? <MoonIcon /> : <SunIcon />}
+        {theme === "starfield" ? <StarIcon size={compact ? 18 : 15} /> : theme === "dark" ? <MoonIcon size={compact ? 18 : 13} /> : <SunIcon size={compact ? 18 : 13} />}
         <span style={{
+          display: compact ? "none" : undefined,
           fontFamily: "var(--font-mono, monospace)",
           letterSpacing: "0.04em",
           fontSize: 10,
@@ -171,7 +190,7 @@ export function ThemePicker() {
         <svg
           width="8" height="8" viewBox="0 0 10 10" fill="none"
           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
+          style={{ display: compact ? "none" : undefined, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
           aria-hidden="true"
         >
           <polyline points="2 3.5 5 6.5 8 3.5" />
@@ -184,16 +203,19 @@ export function ThemePicker() {
           role="listbox"
           aria-label="Select theme"
           style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
+            position: compact ? "fixed" : "absolute",
+            top: compact ? panelPos?.top : "calc(100% + 4px)",
+            left: compact ? panelPos?.left : 0,
+            width: compact ? panelPos?.width : undefined,
+            maxHeight: compact && panelPos ? `calc(var(--app-viewport-height, 100dvh) - ${panelPos.top + 8}px)` : undefined,
             zIndex: 9000,
-            minWidth: 220,
+            minWidth: compact ? 0 : 220,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             boxShadow: "0 8px 32px rgba(0,0,0,0.28)",
             borderRadius: theme === "starfield" ? 0 : 8,
             overflow: "hidden",
+            overflowY: compact ? "auto" : undefined,
             /* Starfield: top gold bar */
             borderTop: theme === "starfield"
               ? "2px solid #d99b26"

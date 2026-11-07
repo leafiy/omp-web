@@ -17,6 +17,7 @@ import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { ThemePicker } from "./ThemePicker";
 import { LanguagePicker } from "./LanguagePicker";
+import { MobileToolbarMenu } from "./MobileToolbarMenu";
 import { useTheme } from "@/hooks/useTheme";
 import { useLanguage } from "@/hooks/useLanguage";
 import { StarfieldEmblem } from "./StarfieldEmblem";
@@ -179,6 +180,17 @@ export function AppShell() {
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
+  const [narrowTopBar, setNarrowTopBar] = useState(false);
+  const compactTopBar = isMobile || narrowTopBar;
+  useEffect(() => {
+    const bar = topBarRef.current;
+    if (!bar) return;
+    const measure = () => setNarrowTopBar(bar.getBoundingClientRect().width < 850);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -257,7 +269,9 @@ export function AppShell() {
     update();
     const ro = new ResizeObserver(update);
     ro.observe(topBarRef.current);
-    return () => ro.disconnect();
+    const outside = (event: PointerEvent) => { if (!topBarRef.current?.contains(event.target as Node)) setActiveTopPanel(null); };
+    document.addEventListener("pointerdown", outside);
+    return () => { ro.disconnect(); document.removeEventListener("pointerdown", outside); };
   }, [activeTopPanel, isMobile]);
 
   // Right panel — file tabs only
@@ -822,7 +836,7 @@ export function AppShell() {
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
-          paddingTop: "env(safe-area-inset-top)",
+          paddingTop: "var(--app-top-inset, 0px)",
           paddingBottom: "env(safe-area-inset-bottom)",
           zIndex: 200,
         } as React.CSSProperties}
@@ -842,15 +856,15 @@ export function AppShell() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", minHeight: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", paddingRight: rightPanelOpen ? 0 : 36, background: "var(--bg-panel)" }}>
+        <div ref={topBarRef} data-chat-topbar onKeyDown={event => { if (activeTopPanel && event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); setActiveTopPanel(null); } }} style={{ position: "relative", display: "flex", flexWrap: "nowrap", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: `calc(${compactTopBar ? 45 : 37}px + var(--app-top-inset, 0px))`, paddingTop: "var(--app-top-inset, 0px)", paddingRight: rightPanelOpen ? 0 : compactTopBar ? 44 : 36, background: "var(--bg-panel)" }}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
+              width: compactTopBar ? 44 : TOP_BAR_ICON_BUTTON_SIZE, height: compactTopBar ? 44 : TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              background: "none", border: "none", borderRight: compactTopBar ? "none" : "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
@@ -867,19 +881,28 @@ export function AppShell() {
             )}
           </button>
           <select
+            data-chat-engine
             aria-label={locale === "zh-CN" ? "聊天引擎" : "Chat engine"}
             title={locale === "zh-CN" ? "切换引擎会新建聊天" : "Switching engine starts a new chat"}
             value={activeEngine}
             onChange={(event) => handleEngineChange(parseEngine(event.target.value))}
-            style={{ flexShrink: 1, minWidth: 70, maxWidth: isMobile ? 120 : 190, height: 28, margin: "0 6px", padding: "0 4px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12 }}
+            style={{ flex: compactTopBar ? "1 1 0" : undefined, flexShrink: 1, minWidth: compactTopBar ? 0 : 70, maxWidth: compactTopBar ? 160 : 190, height: compactTopBar ? 32 : 28, margin: "0 6px", padding: "0 4px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12 }}
           >
             {(["omp", "pi", "claude", "codex"] as AgentEngine[]).map(value => <option key={value} value={value} disabled={installedEngines[value] !== true}>
               {engineLabel(value)}{installedEngines[value] === false ? (locale === "zh-CN" ? "（未安装）" : " (not installed)") : installedEngines[value] !== true ? (locale === "zh-CN" ? "（检测中）" : " (checking)") : ""}
             </option>)}
           </select>
-          <ThemePicker />
-          <LanguagePicker />
-          {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
+          <ThemePicker compact={compactTopBar} onOpen={() => setActiveTopPanel(null)} />
+          <LanguagePicker compact={compactTopBar} onOpen={() => setActiveTopPanel(null)} />
+          {compactTopBar && showChat && <MobileToolbarMenu label={translate("toolbar.more")} onOpen={() => setActiveTopPanel(null)} items={[
+            { key: "history", label: translate("history.full"), disabled: !selectedSession || !supportsExtendedChat(activeEngine), onSelect: handleViewFullHistory },
+            { key: "system", label: translate("system.prompt"), onSelect: () => toggleTopPanel("system") },
+            ...(sessionStats || contextUsage ? [{ key: "session", label: `${translate("session.title")}${contextUsage?.contextWindow ? ` · ${Math.round(contextUsage.contextWindow / 1000)}k` : ""}`, onSelect: () => toggleTopPanel("session") }] : []),
+            ...(activeEngine === "omp" ? [{ key: "branches", label: translate("i18n.branches"), onSelect: () => toggleTopPanel("branches") }] : []),
+            ...(projectTrust?.requiresTrust && !projectTrust.trusted ? [{ key: "trust", label: translate("trust.resourcesNotLoaded"), onSelect: () => { setProjectTrustError(null); setProjectTrustDialogOpen(true); } }] : []),
+          ]} />}
+          {compactTopBar && showChat && activeEngine === "omp" && <BranchNavigator tree={branchTree} activeLeafId={branchActiveLeafId} onLeafChange={handleBranchLeafChange} inline hideTrigger containerRef={topBarRef} open={activeTopPanel === "branches"} onToggle={() => toggleTopPanel("branches")} hasSession />}
+          {!compactTopBar && showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
             <button
               type="button"
               onClick={() => {
@@ -922,7 +945,7 @@ export function AppShell() {
               {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
             </button>
           )}
-          {showChat && (
+          {!compactTopBar && showChat && (
             <div style={{ display: "flex", alignItems: "stretch", height: 36 }}>
               <button
                 onClick={handleViewFullHistory}
@@ -1021,7 +1044,7 @@ export function AppShell() {
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
-          {showChat && (sessionStats || contextUsage) && (() => {
+          {!compactTopBar && showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
             const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
@@ -1122,12 +1145,12 @@ export function AppShell() {
           })()}
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
-            <div style={{
+            <div data-top-panel style={{
               position: "fixed",
               top: topPanelPos.top,
               left: topPanelPos.left,
               width: topPanelPos.width,
-              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
+              maxHeight: `calc(var(--app-viewport-height, 100dvh) - ${topPanelPos.top}px)`,
               overflowY: "auto",
               zIndex: 500,
             }}>
@@ -1451,8 +1474,8 @@ export function AppShell() {
           display: "flex",
           alignItems: "center",
           flexShrink: 0,
-          height: "calc(36px + env(safe-area-inset-top))",
-          paddingTop: "env(safe-area-inset-top)",
+          height: `calc(${compactTopBar ? 45 : 37}px + var(--app-top-inset, 0px))`,
+          paddingTop: "var(--app-top-inset, 0px)",
           background: "var(--bg-panel)",
           borderBottom: "1px solid var(--border)",
         }}>
@@ -1495,23 +1518,23 @@ export function AppShell() {
     </div>
     {/* File panel toggle — always visible at top-right */}
     <button
-      onClick={() => setRightPanelOpen((v) => !v)}
+      onClick={() => { setActiveTopPanel(null); setRightPanelOpen((v) => !v); }}
        aria-controls="file-panel"
        aria-expanded={rightPanelOpen}
        title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
        aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
       style={{
-        position: "fixed", top: "env(safe-area-inset-top)", right: "env(safe-area-inset-right)", zIndex: 300,
+        position: "fixed", top: "var(--app-top-inset, 0px)", right: "env(safe-area-inset-right)", zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
-        width: 36, height: 36, padding: 0,
-        background: "var(--bg-panel)", border: "none", borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
+        width: compactTopBar ? 44 : 36, height: compactTopBar ? 44 : 36, padding: 0,
+        background: "var(--bg-panel)", border: "none", borderLeft: compactTopBar ? "none" : "1px solid var(--border)",
         color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
         cursor: "pointer", transition: "color 0.12s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width={compactTopBar ? 18 : 16} height={compactTopBar ? 18 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
       </svg>
     </button>

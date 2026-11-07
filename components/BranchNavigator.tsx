@@ -20,6 +20,8 @@ interface Props {
   hasSession?: boolean;
   /** When inline, render icon-only (no text label) to save horizontal space */
   compact?: boolean;
+  /** Let a compact toolbar's overflow menu own the trigger. */
+  hideTrigger?: boolean;
 }
 
 // Find the visible entry IDs on the path from root to activeLeafId.
@@ -217,7 +219,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   );
 }
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact }: Props) {
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, hideTrigger }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -276,7 +278,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
   if (inline) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
-        <button
+        {!hideTrigger && <button
           ref={btnRef}
           onClick={() => onToggle ? onToggle() : setOpenInternal((v) => !v)}
           style={{
@@ -303,7 +305,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
         >
           {branchIcon}
            {!compact && <span>{t("i18n.branches")}</span>}
-        </button>
+        </button>}
         {open && dropdownPos && (
           <div style={{
             position: "fixed",
@@ -315,7 +317,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             zIndex: 500,
           }}>
             {hasContent && firstNode ? (
-              <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
+              <div style={{ padding: "4px 12px 8px 12px", maxHeight: `min(260px, calc(var(--app-viewport-height, 100dvh) - ${dropdownPos.top + 8}px))`, overflowY: "auto" }}>
                 {firstNode.children.map((child, idx) => (
                   <TreeNodeView
                     key={child.entry.id}

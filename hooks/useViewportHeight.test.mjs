@@ -14,6 +14,15 @@ test("uses the visual viewport for a focused editor when the keyboard shrinks it
   }), true);
 });
 
+test("keeps the composer visible while focus leaves the editor and the keyboard is still closing", () => {
+  assert.equal(shouldUseVisualViewportHeight({ hasFocusedEditable: false, innerHeight: 844, viewportHeight: 420, viewportScale: 1, wasUsingVisualViewport: true }), true);
+  assert.equal(shouldUseVisualViewportHeight({ hasFocusedEditable: false, innerHeight: 844, viewportHeight: 844, viewportScale: 1, wasUsingVisualViewport: true }), false);
+});
+
+test("a previous keyboard measurement never turns pinch zoom into a height override", () => {
+  assert.equal(shouldUseVisualViewportHeight({ hasFocusedEditable: false, innerHeight: 844, viewportHeight: 420, viewportScale: 2, wasUsingVisualViewport: true }), false);
+});
+
 test("keeps the dynamic viewport height when no editor is focused", () => {
   assert.equal(shouldUseVisualViewportHeight({
     hasFocusedEditable: false,

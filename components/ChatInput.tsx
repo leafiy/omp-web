@@ -20,6 +20,7 @@ import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { InlineConfirmation } from "./InlineConfirmation";
+import { ComposerActions } from "./ComposerActions";
 
 export interface AttachedImage {
   data: string;   // base64, no prefix
@@ -710,7 +711,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!ta) return;
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-  }, [value]);
+  }, [value, isMobile]);
 
   useEffect(() => {
     return () => {
@@ -1299,6 +1300,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!isMobile) setControlsMenuOpen(false);
   }, [isMobile]);
 
+  const composerActions = <ComposerActions
+    mobile={isMobile} streaming={isStreaming}
+    sendEnabled={Boolean(value.trim() || attachedImages.length)}
+    steerEnabled={canQueueStreamingMessage} followUpEnabled={canQueueFollowUpMessage}
+    attachmentBusy={attachmentBusy}
+    steerHint={engine === "claude" ? t("chat.claudeSteerHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
+    followUpHint={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : t("chat.followUpQueueHint")}
+    onSend={handleSend} onAbort={onAbort}
+    onSteer={onSteer ? () => { void sendQueued("steer"); } : undefined}
+    onFollowUp={onFollowUp ? () => { void sendQueued("followup"); } : undefined}
+  />;
 
   return (
     <div
@@ -1306,8 +1318,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       style={{
         flexShrink: 0,
         background: "transparent",
-        padding: "0 16px 8px",
-        paddingRight: isMobile ? 16 : 52,
+        padding: isMobile ? "0 12px 6px" : "0 16px 8px",
+        paddingRight: isMobile ? 12 : 52,
       }}
     >
       {/* Hidden file input */}
@@ -1828,7 +1840,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 ? "rgba(234,179,8,0.4)"
                 : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
-              padding: "10px 10px 10px 14px",
+              padding: isMobile ? "8px 10px" : "10px 10px 10px 14px",
               boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
@@ -1878,95 +1890,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               outline: "none",
               resize: "none",
               color: "var(--text)",
-              fontSize: 14,
+              fontSize: isMobile ? 16 : 14,
               lineHeight: 1.6,
               fontFamily: "inherit",
               minHeight: 24,
-              maxHeight: 200,
+              maxHeight: `min(${isMobile ? 160 : 200}px, calc(var(--app-viewport-height, 100dvh) * 0.35))`,
               overflow: "auto",
             }}
           />
 
-          {isStreaming ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end" }}>
-              {onSteer && (
-                <button
-                  onClick={() => sendQueued("steer")}
-                  disabled={!canQueueStreamingMessage}
-                  title={engine === "claude" ? t("chat.claudeSteerHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(234,179,8,0.12)" : "none",
-                    border: "1px solid rgba(234,179,8,0.35)",
-                    borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(180,130,0,1)" : "var(--text-dim)",
-                    cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" />
-                  </svg>
-                  {t("chat.steer")}
-                </button>
-              )}
-              {onFollowUp && (
-                <button
-                  onClick={() => sendQueued("followup")}
-                  disabled={!canQueueFollowUpMessage}
-                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : t("chat.followUpQueueHint")}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: canQueueFollowUpMessage ? "rgba(129,140,248,0.12)" : "none",
-                    border: "1px solid rgba(129,140,248,0.35)",
-                    borderRadius: 8,
-                    color: canQueueFollowUpMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
-                    cursor: canQueueFollowUpMessage ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
-                    <line x1="2" y1="9" x2="8" y2="9" />
-                  </svg>
-                  {t("chat.followUp")}
-                </button>
-              )}
-            </div>
-          ) : (
-            <button
-              className="sf-send-btn"
-              onClick={handleSend}
-              disabled={attachmentBusy || (!value.trim() && !attachedImages.length)}
-              style={{
-                opacity: attachmentBusy ? 0.5 : 1,
-                flexShrink: 0,
-                alignSelf: "flex-end",
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "7px 14px",
-                background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
-                border: "none",
-                borderRadius: 8,
-                color: (value.trim() || attachedImages.length) ? "#fff" : "var(--text-dim)",
-                cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
-                transition: "background 0.15s, box-shadow 0.15s",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="2" y1="7" x2="11" y2="7" />
-                <polyline points="7.5 3 12 7 7.5 11" />
-              </svg>
-              {t("chat.send")}
-            </button>
-          )}
+          {!isMobile && composerActions}
           </div>
         </div>
 
@@ -1978,24 +1911,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         )}
 
         {/* Bottom bar: left | center (context) | right */}
-        <div style={{
-          marginTop: 8,
+        <div data-composer-controls style={{
+          position: "relative",
+          marginTop: isMobile ? 4 : 8,
           display: isMobile ? "grid" : "flex",
-          gridTemplateColumns: isMobile ? "minmax(0, 1fr) auto" : undefined,
+          gridTemplateColumns: isMobile ? "minmax(0, 1fr) auto auto" : undefined,
           alignItems: "center",
-          gap: 6,
+          gap: isMobile ? 4 : 6,
         }}>
 
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
           <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
             <button
+              data-composer-attach
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming || attachmentBusy}
               title={t("chat.attachFiles")}
               aria-label={t("chat.attachFiles")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, padding: 0,
+                width: isMobile ? 44 : 32, height: isMobile ? 44 : 32, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
@@ -2033,8 +1968,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       justifyContent: isMobile ? "flex-start" : undefined,
-                      padding: isMobile ? "8px 10px" : "8px 12px",
-                      height: 32,
+                      padding: isMobile ? "0 4px" : "8px 12px",
+                      height: isMobile ? 44 : 32,
                       width: isMobile ? "100%" : undefined,
                       maxWidth: isMobile ? "100%" : 220,
                       overflow: "hidden",
@@ -2058,7 +1993,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     }}
                     title={modelOptions.length > 0 ? "Change model" : "No available models"}
                   >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: isMobile ? "none" : undefined, flexShrink: 0 }}>
                       <rect x="4" y="4" width="16" height="16" rx="2" />
                       <rect x="9" y="9" width="6" height="6" />
                       <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
@@ -2186,7 +2121,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             display: "flex",
             alignItems: "center",
             justifyContent: "flex-end",
-            position: "relative",
+            position: isMobile ? "static" : "relative",
             marginLeft: isMobile ? 0 : "auto",
           }}>
             {isMobile && (
@@ -2206,9 +2141,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: "100%",
-                  height: 32,
-                  padding: "8px 10px",
+                  width: 44,
+                  height: 44,
+                  padding: 0,
                   background: "none",
                   border: "none",
                   borderRadius: 9,
@@ -2231,21 +2166,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   e.currentTarget.style.color = "var(--text-muted)";
                 }}
               >
-                {t("chat.moreControls")}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
               </button>
             )}
-            <div style={{
+            <div data-composer-menu style={{
               display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
               alignItems: "center",
               gap: isMobile ? 1 : 2,
               ...(isMobile ? {
                 position: "absolute",
                 right: 0,
-                bottom: 0,
+                bottom: "calc(100% + 6px)",
                 zIndex: 60,
                 padding: 1,
                 width: "max-content",
-                maxWidth: "calc(100vw - 32px)",
+                maxWidth: "100%",
                 flexWrap: "nowrap",
                 justifyContent: "flex-end",
                 border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
@@ -2461,7 +2396,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             )}
 
-            {isStreaming && (
+            {!isMobile && isStreaming && (
               <button
                 onClick={onAbort}
                  title={t("chat.stopAgent")}
@@ -2574,7 +2509,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
             </div>
           </div>
-
+          {isMobile && composerActions}
         </div>
       </div>
     </div>

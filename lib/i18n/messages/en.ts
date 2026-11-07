@@ -34,6 +34,7 @@ export const enLocale: LocalePlugin = {
     "terminal.outputOverflow": "Output exceeded the display buffer. Reconnect to resume with recent output.",
     "terminal.replayTruncated": "Older output was discarded; showing recent output only.",
     "sidebar.hide": "Hide sidebar",
+    "toolbar.more": "More actions",
     "sidebar.show": "Show sidebar",
     "theme.light": "Switch to light mode",
     "theme.dark": "Switch to dark mode",
