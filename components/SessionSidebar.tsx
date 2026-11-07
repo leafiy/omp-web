@@ -8,6 +8,7 @@ import { engineForSession, engineLabel, supportsExtendedChat } from "@/lib/engin
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+import { FileSpinner } from "./FileSpinner";
 import { StarfieldEmblem } from "./StarfieldEmblem";
 import { FolderPickerModal } from "./FolderPickerModal";
 import { useTheme } from "@/hooks/useTheme";
@@ -1628,6 +1629,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <polyline points="3 2 7 5 3 8" />
               </svg>
               {t("files.explorer")}
+              {explorerUploadBusy && <span role="status" aria-label={t("files.uploadBusy")}><FileSpinner size={12} /></span>}
             </button>
             {explorerOpen && changesCount > 0 && (
               <ToolbarIconButton
@@ -1684,8 +1686,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               )}
             </ToolbarIconButton>
           </div>
-          {explorerOpen && (
-            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+            <div style={{ display: explorerOpen ? "block" : "none", flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <FileExplorer
                 ref={fileExplorerRef}
                 cwd={selectedCwd ?? selectedCwdProp!}
@@ -1698,7 +1699,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 onChangesCountChange={setChangesCount}
               />
             </div>
-          )}
         </div>
       )}
       <FolderPickerModal

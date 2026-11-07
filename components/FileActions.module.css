@@ -1,0 +1,20 @@
+.menu {
+  position: fixed; z-index: 1500; width: 230px; max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px); overflow-y: auto; padding: 5px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel);
+  box-shadow: 0 8px 30px #0005; color: var(--text); font-size: 12px;
+}
+.menu button, .menu a { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; text-align: left; background: transparent; color: var(--text); font-size: 12px; text-decoration: none; cursor: pointer; }
+.menu button:hover, .menu a:hover, .menu button:focus-visible, .menu a:focus-visible { background: var(--bg-selected); outline: 1px solid var(--accent); }
+.menu button:disabled { opacity: .45; cursor: not-allowed; }
+.menu .danger { color: #f87171; }
+.menuTitle { padding: 5px 10px; color: var(--text-dim); overflow-wrap: anywhere; border-bottom: 1px solid var(--border); }
+.panel { margin: 6px 8px; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
+.panel p { margin: 4px 0 8px; color: var(--text-muted); white-space: pre-wrap; }
+.panel input { width: 100%; min-width: 0; padding: 6px; margin: 4px 0; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: var(--font-mono); }
+.buttons { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-top: 8px; }
+.buttons button { border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); padding: 5px 9px; cursor: pointer; }
+.buttons button:disabled { opacity: .5; cursor: not-allowed; }
+.status { display: flex; gap: 6px; align-items: center; }
+.rowMore { flex-shrink: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; padding: 2px 5px; min-width: 24px; min-height: 22px; }
+.rowMore:hover, .rowMore:focus-visible { background: var(--bg-selected); color: var(--text); }

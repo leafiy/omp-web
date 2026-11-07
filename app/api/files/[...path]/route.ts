@@ -20,9 +20,12 @@ import {
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
-import { isApiRequestAllowed } from "@/lib/request-security";
+import { guardFileMutation } from "@/lib/file-operation-http";
+import { fileEntryVersion } from "@/lib/file-operations";
 import {
   inspectUploadTargets,
+  pinUploadDirectory,
+  writeUploadFile,
   parseUploadConflictStrategy,
   validateUploadFileNames,
 } from "@/lib/file-upload";
@@ -37,7 +40,7 @@ const IGNORED_NAMES = new Set([
 
 const IGNORED_SUFFIXES = [".pyc"];
 
-const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
+const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch", "entry"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
 
@@ -123,15 +126,16 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  if (!isApiRequestAllowed(request)) {
-    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
-  }
+  const denied = guardFileMutation(request);
+  if (denied) return denied;
+  let pinned: ReturnType<typeof pinUploadDirectory> | undefined;
 
   try {
     const { path: segments } = await params;
     const uploadDirectory = await getUploadDirectory(segments);
     if ("response" in uploadDirectory) return uploadDirectory.response;
-    const { directory } = uploadDirectory;
+    pinned = pinUploadDirectory(uploadDirectory.directory);
+    const { directory } = pinned;
     const type = request.nextUrl.searchParams.get("type") ?? "upload";
 
     if (type === "upload-check") {
@@ -144,6 +148,7 @@ export async function POST(
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
+      pinned.assertCurrent();
       return NextResponse.json(inspectUploadTargets(directory, fileNames));
     }
 
@@ -178,6 +183,7 @@ export async function POST(
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
+    pinned.assertCurrent();
     const inspection = inspectUploadTargets(directory, fileNames);
     if (strategy === "error" && inspection.conflicts.length > 0) {
       return NextResponse.json({
@@ -194,7 +200,6 @@ export async function POST(
     const errors: Array<{ name: string; error: string }> = [];
 
     for (const file of files) {
-      const destination = path.join(directory, file.name);
       if (conflictSet.has(file.name) && strategy === "skip") {
         skipped.push(file.name);
         continue;
@@ -212,18 +217,11 @@ export async function POST(
         continue;
       }
 
-      if (conflictSet.has(file.name)) {
-        try {
-          fs.unlinkSync(destination);
-        } catch (error) {
-          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-          continue;
-        }
-      }
-
       try {
-        fs.writeFileSync(destination, bytes, { flag: "wx" });
-        uploaded.push(file.name);
+        pinned.assertCurrent();
+        const allowedStrategy = conflictSet.has(file.name) ? strategy : strategy === "skip" ? "skip" : "error";
+        const result = writeUploadFile(directory, file.name, bytes, allowedStrategy);
+        (result === "uploaded" ? uploaded : skipped).push(file.name);
       } catch (error) {
         errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
       }
@@ -235,6 +233,8 @@ export async function POST(
     );
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  } finally {
+    pinned?.close();
   }
 }
 
@@ -412,6 +412,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  const denied = guardFileMutation(request);
+  if (denied) return denied;
   try {
     const { path: segments } = await params;
     const filePath = filePathFromSegments(segments);
@@ -424,6 +426,13 @@ export async function GET(
 
     const allowedRoots = await getAllowedFileRoots();
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);
+    if (type === "entry") {
+      // Inspect the entry itself, including a dangling/outside link; never its target.
+      if (!allowedByRoot || !isExistingFilePathAllowed(path.dirname(filePath), allowedRoots)) return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      let entry: fs.Stats;
+      try { entry = fs.lstatSync(filePath); } catch { return NextResponse.json({ error: "Not found" }, { status: 404 }); }
+      return NextResponse.json({ version: fileEntryVersion(entry), isDir: entry.isDirectory(), isSymlink: entry.isSymbolicLink() }, { headers: { "Cache-Control": "private, no-store" } });
+    }
     const allowedBySessionReference =
       !allowedByRoot &&
       type !== "list" &&

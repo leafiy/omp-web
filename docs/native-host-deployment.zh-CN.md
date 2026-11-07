@@ -55,7 +55,7 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - URL：`http://192.168.52.3:2225`，只监听该 tun0 地址，没有监听公网网卡或公网 IPv6。
 - SSH/服务用户：root。网页和终端具有该用户权限，不是额外的沙箱。
 - 服务：`omp-web.service`，已启用开机启动；隧道地址暂不可用时重试，不回退到公网监听。
-- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-ux-cache-9Lm2HvJA-r2`。此前的 Steer 版及前一发布目录保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
+- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-file-browser-rOtJCdMH`。此前的 Steer 版及前一发布目录保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
 - 访问密码：远端 `/etc/omp-web/access-password`，0600，未输出到聊天。
 - 网站运行环境：`/etc/omp-web/web.env`，仅网站运行与认证字段，没有 Agent 模型配置或密钥。
 - 原生路径均自动选择 `/root/.local/bin/` 下的四个工具，未选到旧 `.bun/bin/omp` 或网页依赖里的旧 Pi。
@@ -67,16 +67,17 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 - 独立[技能面板](./native-skills.zh-CN.md)已修复并部署：157 项回归、类型检查、隔离构建通过；浏览器复现了旧入口打开设置的问题，修复后桌面/390px 手机、四引擎切换、搜索、失败提示和无项目提示均通过，并复查了命令参数补全。该轮 Build ID 为 `ae4k6_mlEXRlINVFfAu8C`，远端 `status.json` 记录 `active`（2026-11-06）。该轮没有真实模型请求或 Agent 升级。
 - [CC 上下文容量修复](./claude-code-context.zh-CN.md)已部署：166 项回归、类型检查、构建与桌面/手机浏览器检查通过，移除硬编码 128K。两台机器各一次服务用户 HOME 下的只读原生摘要均返回 1M；不代表所有项目统一配置，也未发送模型提示或调用额外 Token 计数 API。该轮 Build ID `ejxoSY5wdXZGc2SoXQs-f`，远端状态 `active`（2026-11-07）。
 - [CC 运行中引导与后续消息](./claude-code-steering.zh-CN.md)已部署：176 项回归、类型检查、构建和桌面/手机浏览器通过，另用真实 CC 2.1.318 对接隔离的本地假模型服务验证 `next`、`later` 和停止清队列。无真实模型调用、无订阅消耗。该轮 Build ID 为 `ejTdkhVL7q0-HLCSj1agU`，远端状态 `active`。
-- [长对话分页/缓存](./history-cache.zh-CN.md)、[队列取回编辑](./queued-message-editing.zh-CN.md)与[非阻塞确认](./nonblocking-ui.zh-CN.md)已统一发布：199 项测试、类型检查和隔离构建通过；合成 3000 条消息的首屏由约 9.8 MB 降至 234 KB，150 ms 延迟/128 KiB/s 限速浏览器中回切缓存约 75 ms。没有读取真实聊天正文或调用真实模型。当前 Build ID `l7alXce6gBI9LH9GvqWip`，远端状态 `active`。
+- [长对话分页/缓存](./history-cache.zh-CN.md)、[队列取回编辑](./queued-message-editing.zh-CN.md)与[非阻塞确认](./nonblocking-ui.zh-CN.md)已统一发布：199 项测试、类型检查和隔离构建通过；合成 3000 条消息的首屏由约 9.8 MB 降至 234 KB，150 ms 延迟/128 KiB/s 限速浏览器中回切缓存约 75 ms。没有读取真实聊天正文或调用真实模型。该轮 Build ID `l7alXce6gBI9LH9GvqWip`，远端状态 `active`。
+- [文件浏览器](./file-browser.zh-CN.md)已发布：当前目录上传、持续 spinner、右键/手机菜单、复制/剪切/粘贴、移动/重命名、新建及确认删除。225 项测试、类型检查和隔离构建通过；浏览器在临时目录实际执行文件操作，并验证过期确认、取消/防重复、手机触摸，以及确认期间聊天持续流式输出。当前 Build ID `6h8QCoi0ebFkSby4NpXqV`，远端状态 `active`。新接口鉴权、跨源与无副作用的参数边界检查通过；没有操作用户文件或读取真实聊天正文，也没有启动真实 Agent 测试。
 - 实际远端状态：当前远端发布目录中的 `status.json`。本机同步见下节，不再把远端发布当作本机已更新。
 
 ## 本机同步：pc:2225
 
-本机上一轮已成功更新到 CC Steer 构建 `ejTdkhVL7q0-HLCSj1agU`。本次再次获授权同步分页/缓存、取回编辑与非阻塞确认构建 `l7alXce6gBI9LH9GvqWip`，保留此前所有原生工具接入与上下文显示。
+本机上一轮分页/缓存、取回编辑与非阻塞确认构建 `l7alXce6gBI9LH9GvqWip` 已由状态文件确认 `active`。本次再次获授权同步文件浏览器构建 `6h8QCoi0ebFkSby4NpXqV`，保留此前所有原生工具接入与聊天改进。
 
-当前对话本身运行在本机 `omp-web.service` 下，因此使用独立 systemd 延迟任务切换 `.next`；不会在对话尚未回复时重启自己的宿主。任务停止服务后保留旧 `.next`，切换产物、重启并检查首页、静态资源、技能接口边界、四工具发现及 Host/Origin 保护。失败自动恢复旧产物。
+当前对话本身运行在本机 `omp-web.service` 下，因此使用独立 systemd 延迟任务切换 `.next`；不会在对话尚未回复时重启自己的宿主。任务停止服务后保留旧 `.next`，切换产物、重启并检查首页、静态资源、技能/文件操作接口边界、四工具发现及 Host/Origin 保护。失败自动恢复旧产物。
 
-- 本机状态：`/opt/omp-web-ux-stage-9Lm2HvJA/local-status.json`，只有 `phase: active` 表示本机切换和检查成功。
+- 本机状态：`/opt/omp-web-files-stage-rOtJCdMH/local-status.json`，只有 `phase: active` 表示本机切换和检查成功。
 - 本机回滚产物：同目录 `backup.next`；不替换 Node 依赖，不修改原生 Agent 配置、登录或历史。
 - 本机既有访问方式和服务环境保持不变；它仍是原先的可信内网部署，不因为远端有密码就自动获得同样的访问保护。
 
