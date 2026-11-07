@@ -12,11 +12,15 @@ import type {
 import { normalizeToolCalls } from "@/lib/normalize";
 import { createAgentSession, sendAgentCommand } from "@/lib/agent-client";
 import { resolveContextUsage } from "@/lib/context-usage";
+import { historyClientCache, historyUrl, HistoryRequestError } from "@/lib/history-client-cache";
+import type { HistoryPage } from "@/lib/history-page";
+import { getDraft, setDraft } from "@/lib/draft-store";
 import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
 export interface SessionData {
+  page?: HistoryPage;
   sessionId: string;
   filePath: string;
   tree: SessionTreeNode[];
@@ -80,15 +84,18 @@ type AgentStateResponse = {
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  queuedItems?: QueuedMessageItem[];
 };
 
+export interface QueuedMessageItem { id: string; kind: "steer" | "follow_up"; text: string; }
 export interface QueuedMessages {
   steering: string[];
   followUp: string[];
+  items?: QueuedMessageItem[];
 }
 
-function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
-  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null, items?: QueuedMessageItem[]): QueuedMessages {
+  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [], items };
 }
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -309,7 +316,7 @@ function readCompactResult(result: unknown, reason: string): CompactResultInfo |
 export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (content: string) => void;
-  prependText: (text: string) => void;
+  prependText: (text: string, notice?: string) => void;
   addFiles: (files: File[]) => void;
 }
 
@@ -352,6 +359,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const mountedRef = useRef(true);
 
   const [data, setData] = useState<SessionData | null>(null);
+  const [historyPage, setHistoryPage] = useState<(HistoryPage & { leafId: string | null }) | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [historyPageError, setHistoryPageError] = useState<string | null>(null);
+  const historyLoadRevision = useRef(0), messageRevision = useRef(0), earlierPending = useRef(false);
+  const historyPrepending = useRef(false);
   const [loading, setLoading] = useState(!isNew);
   const [error, setError] = useState<string | null>(null);
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
@@ -392,6 +404,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   const [nativeSteeringAvailable, setNativeSteeringAvailable] = useState(false);
+  const [recallingQueue, setRecallingQueue] = useState(false);
+  const recallingQueueRef = useRef(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
@@ -431,19 +445,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const sessionStats = useMemo(() => {
     if (sessionStatsOverride) return sessionStatsOverride;
-    const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-    let cost = 0;
-    let userMessages = 0;
-    let assistantMessages = 0;
-    let toolResults = 0;
-    let toolCalls = 0;
+    const prefix = historyPage?.prefix;
+    const tokens = prefix ? { ...prefix.tokens } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+    let cost = prefix?.cost ?? 0;
+    let userMessages = prefix?.userMessages ?? 0;
+    let assistantMessages = prefix?.assistantMessages ?? 0;
+    let toolResults = prefix?.toolResults ?? 0;
+    let toolCalls = prefix?.toolCalls ?? 0;
     for (const msg of messages) {
       if (msg.role === "user") userMessages += 1;
       if (msg.role === "toolResult") toolResults += 1;
       if (msg.role !== "assistant") continue;
       assistantMessages += 1;
       const u = (msg as import("@/lib/types").AssistantMessage).usage;
-      toolCalls += (msg as import("@/lib/types").AssistantMessage).content.filter((c) => c.type === "toolCall").length;
+      toolCalls += msg.historyToolCalls ?? (msg as import("@/lib/types").AssistantMessage).content.filter((c) => c.type === "toolCall").length;
       if (!u) continue;
       tokens.input += u.input ?? 0;
       tokens.output += u.output ?? 0;
@@ -470,43 +485,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       assistantMessages,
       toolCalls,
       toolResults,
-      totalMessages: messages.length,
+      totalMessages: (prefix?.totalMessages ?? 0) + messages.length,
       tokens,
       cost,
       contextUsage: effectiveContextUsage,
     } satisfies SessionStatsInfo;
-  }, [messages, sessionStatsOverride, contextUsage, displayModel, modelList, data?.filePath, session?.id, session?.name, engine]);
+  }, [messages, sessionStatsOverride, contextUsage, displayModel, modelList, data?.filePath, session?.id, session?.name, engine, historyPage]);
 
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
     let messagesLoaded = false;
+    const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current, modelRevision = contextRevisionRef.current;
+    const current = () => mountedRef.current && sessionIdRef.current === sid && historyLoadRevision.current === revision && messageRevision.current === streamRevision && contextRevisionRef.current === modelRevision;
+    const url = historyUrl(sid);
+    const apply = (d: SessionData) => {
+      if (!current() || d.sessionId !== sid) return;
+      setData(d); setActiveLeafId(d.leafId); setMessages(d.context.messages); setEntryIds(d.context.entryIds ?? []);
+      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null); setHistoryPageError(null);
+      setCurrentModelOverride(null); setError(null);
+      if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
+      messagesLoaded = true; if (showLoading) setLoading(false);
+    };
     try {
-      if (showLoading) setLoading(true);
-      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}?${params}`);
-      if (res.status === 404) {
-        if (showLoading) {
-          setData(null);
-          setActiveLeafId(null);
-          setMessages([]);
-          setError(null);
-        }
-        return null;
+      const cached = historyClientCache.peek(url);
+      if (showLoading && cached) apply(cached);
+      else if (showLoading) setLoading(true);
+      let d: SessionData;
+      try { d = await historyClientCache.load(url); }
+      catch (failure) {
+        if (!(failure instanceof HistoryRequestError) || failure.status !== 409 || !current()) throw failure;
+        historyClientCache.invalidate(sid); d = await historyClientCache.load(url);
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json() as SessionData;
-      if (sessionIdRef.current !== sid) return null;
-      setData(d);
-      setActiveLeafId(d.leafId);
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
-      setCurrentModelOverride(null);
-      setError(null);
-      if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
-        setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
-      }
-
-      messagesLoaded = true;
-      if (showLoading) setLoading(false);
+      if (!current()) return null;
+      apply(d);
       if (!includeState) return null;
 
       try {
@@ -524,7 +534,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
-          if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
+          if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages, liveState.queuedItems));
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
         }
@@ -534,27 +544,47 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return null;
       }
     } catch (e) {
-      setError(String(e));
+      if (current()) {
+        if (e instanceof HistoryRequestError && [401, 403, 404].includes(e.status)) { setData(null); setMessages([]); setEntryIds([]); setHistoryPage(null); }
+        setError(String(e));
+      }
       return null;
     } finally {
-      if (showLoading && !messagesLoaded) setLoading(false);
+      if (mountedRef.current && showLoading && !messagesLoaded && historyLoadRevision.current === revision) setLoading(false);
     }
   }, []);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
+    const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
     try {
-      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
-      if (leafId) params.set("leafId", leafId);
-      const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json() as { context: { messages: AgentMessage[]; entryIds: string[] } };
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
-    } catch (e) {
-      console.error("Failed to load context:", e);
-    }
+      const d = await historyClientCache.load(historyUrl(sid, leafId ? { leafId } : {}));
+      if (!mountedRef.current || sessionIdRef.current !== sid || historyLoadRevision.current !== revision || messageRevision.current !== streamRevision) return;
+      setMessages(d.context.messages); setEntryIds(d.context.entryIds ?? []);
+      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null); setHistoryPageError(null);
+    } catch { if (mountedRef.current && historyLoadRevision.current === revision) setHistoryPageError("History could not be loaded. Please retry."); }
   }, []);
+
+  const loadEarlierHistory = useCallback(async () => {
+    const sid = sessionIdRef.current, page = historyPage;
+    if (!sid || !page?.before || earlierPending.current) return false;
+    const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
+    earlierPending.current = true; setLoadingEarlier(true); setHistoryPageError(null);
+    try {
+      const d = await historyClientCache.load(historyUrl(sid, { before: page.before, version: page.version, ...(page.leafId ? { leafId: page.leafId } : {}) }));
+      if (!mountedRef.current || sessionIdRef.current !== sid || revision !== historyLoadRevision.current || streamRevision !== messageRevision.current) return false;
+      historyPrepending.current = true;
+      setMessages((previous) => [...d.context.messages, ...previous]);
+      setEntryIds((previous) => [...d.context.entryIds, ...previous]);
+      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null);
+      return true;
+    } catch (failure) {
+      if (mountedRef.current && revision === historyLoadRevision.current) {
+        if (failure instanceof HistoryRequestError && failure.status === 409) { historyClientCache.invalidate(sid); await loadContext(sid, page.leafId); }
+        setHistoryPageError("History changed or could not be loaded. Please retry.");
+      }
+      return false;
+    } finally { earlierPending.current = false; if (mountedRef.current) setLoadingEarlier(false); }
+  }, [historyPage, loadContext]);
 
   const loadTools = useCallback(async (sid: string) => {
     if (engine !== "omp") return;
@@ -1021,7 +1051,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
       setIsCompacting(state?.isCompacting ?? false);
-      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages, state?.queuedItems));
       const busy = data.running && state
         && (state.isStreaming || state.isPromptRunning || state.isCompacting);
       if (busy || !agentRunningRef.current) return;
@@ -1096,7 +1126,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
-              setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
+              setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages, d.state?.queuedItems));
             })
             .catch(() => {});
         }
@@ -1162,6 +1192,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "message_end": {
+        messageRevision.current++;
+        if (sessionIdRef.current) historyClientCache.invalidate(sessionIdRef.current);
         // Same late-event guard: after reconcile finished this run,
         // loadSession already loaded this message from the session file —
         // appending it again would duplicate it.
@@ -1227,6 +1259,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setQueuedMessages({
           steering: [...((event.steering as string[] | undefined) ?? [])],
           followUp: [...((event.followUp as string[] | undefined) ?? [])],
+          items: event.items as QueuedMessageItem[] | undefined,
         });
         break;
       case "auto_retry_start":
@@ -1275,6 +1308,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
 
     const promptRunId = promptRunIdRef.current + 1;
+    messageRevision.current++;
+    if (sessionIdRef.current) historyClientCache.invalidate(sessionIdRef.current);
     cancelEventStreamGrace();
     rpcPromptPendingRef.current = true;
 
@@ -1811,22 +1846,45 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice]);
 
+  const handleRecallQueuedMessage = useCallback(async (item: QueuedMessageItem) => {
+    const sid = sessionIdRef.current;
+    if (!sid || recallingQueueRef.current) return;
+    recallingQueueRef.current = true; setRecallingQueue(true);
+    const restore = (text: string, notice?: string) => {
+      if (mountedRef.current && sessionIdRef.current === sid) {
+        opts.chatInputRef?.current?.prependText(text, notice);
+        if (notice) addNotice({ type: "warning", message: notice });
+      } else {
+        const draft = getDraft(sid);
+        setDraft(sid, { value: text + (draft?.value ? `\n\n${draft.value}` : ""), images: draft?.images ?? [], notice });
+      }
+    };
+    try {
+      const reply = await sendAgentCommand<{ removed: boolean; text?: string }>(sid, { type: "recall_queued_message", id: item.id });
+      if (reply.removed && typeof reply.text === "string") restore(reply.text);
+      else restore(item.text, "消息已开始处理或未确认撤回。草稿只是副本，请检查队列/历史，勿直接重复发送。");
+    } catch {
+      restore(item.text, "取回状态未确认，原文已保留为草稿副本；请先检查队列/历史，不要盲目重复发送。");
+    } finally { recallingQueueRef.current = false; if (mountedRef.current) setRecallingQueue(false); }
+  }, [addNotice, opts.chatInputRef]);
+
   const handleRecallQueue = useCallback(async () => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid || recallingQueueRef.current) return;
+    recallingQueueRef.current = true; setRecallingQueue(true);
     try {
       const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
-      // Native OMP removes only messages that have not started delivery.
-      const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
-      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
-      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
-      if (texts.length > 0) {
-        opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
+      const text = [...(result?.steering ?? []), ...(result?.followUp ?? [])].join("\n\n");
+      // Restore confirmed removals before another network request can fail.
+      if (text) {
+        if (mountedRef.current && sessionIdRef.current === sid) opts.chatInputRef?.current?.prependText(text);
+        else { const old = getDraft(sid); setDraft(sid, { value: text + (old?.value ? `\n\n${old.value}` : ""), images: old?.images ?? [] }); }
       }
-    } catch (e) {
-      console.error("Failed to recall queued messages:", e);
-      addNotice({ type: "error", message: "Failed to recall queued messages" });
-    }
+      const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
+      if (mountedRef.current && sessionIdRef.current === sid) setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+    } catch {
+      if (mountedRef.current) addNotice({ type: "error", message: "Queue recall was not confirmed. Check the native queue before retrying." });
+    } finally { recallingQueueRef.current = false; if (mountedRef.current) setRecallingQueue(false); }
   }, [opts.chatInputRef, addNotice]);
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
@@ -1919,7 +1977,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (agentState.state.extensionStatuses !== undefined) setExtensionStatuses(agentState.state.extensionStatuses ?? []);
           if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
-          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages, agentState.state.queuedItems));
         }
       });
     }
@@ -1965,6 +2023,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
 
   useEffect(() => {
+    if (historyPrepending.current) { historyPrepending.current = false; return; }
     if (messages.length > 0) {
       if (pendingScrollToUserRef.current) {
         pendingScrollToUserRef.current = false;
@@ -2036,6 +2095,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState,
+    hasEarlierHistory: Boolean(historyPage?.before), loadingEarlier, historyPageError, loadEarlierHistory,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage: sessionStats?.contextUsage ?? contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
@@ -2051,7 +2111,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue,
+    handleRecallQueue, handleRecallQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     dispatch, setAgentRunning, setForkingEntryId,

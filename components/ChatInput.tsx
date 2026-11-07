@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
-import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
+import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, QueuedMessageItem, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
 import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { slashArgumentCompletions, type SlashArgumentCompletion } from "@/lib/slash-command-arguments";
@@ -63,6 +63,8 @@ interface Props {
   queuedMessages?: QueuedMessages | null;
   inputHistory?: string[];
   onRecallQueue?: () => void;
+  onRecallQueuedMessage?: (item: QueuedMessageItem) => Promise<void>;
+  recallingQueue?: boolean;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
@@ -78,7 +80,7 @@ interface Props {
 export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
-  prependText: (text: string) => void;
+  prependText: (text: string, notice?: string) => void;
   addFiles: (files: File[]) => void;
 }
 
@@ -256,7 +258,8 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: string }) {
+function QueuedMessageRow({ kind, text, onEdit, disabled }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; disabled?: boolean }) {
+  const { locale } = useI18n();
   return (
     <div
       title={text}
@@ -283,7 +286,8 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
       >
         {kind}
       </span>
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
+      {onEdit && <button type="button" disabled={disabled} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)" }}>{locale === "zh-CN" ? "取回编辑" : "Recall to edit"}</button>}
     </div>
   );
 }
@@ -355,7 +359,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
+  retryInfo, queuedMessages, inputHistory = [], onRecallQueue, onRecallQueuedMessage, recallingQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
@@ -366,6 +370,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
+  const [draftNotice, setDraftNotice] = useState(() => draftKey ? getDraft(draftKey)?.notice : undefined);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [modelFilter, setModelFilter] = useState("");
@@ -439,13 +444,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
     },
-    prependText(text: string) {
+    prependText(text: string, notice?: string) {
+      if (notice) setDraftNotice(notice);
       if (!text.trim()) return;
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
       // Mirrors the TUI's queue restore: queued text first, then whatever
       // the user already typed, separated by a blank line.
       const combined = [text, current].filter((t) => t.trim()).join("\n\n");
+      valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
       requestAnimationFrame(() => {
@@ -610,6 +617,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const clearInput = useCallback(() => {
     setValue("");
+    setDraftNotice(undefined);
     setAttachmentError(null);
     setAtQuery(null);
     setHistoryMenuOpen(false);
@@ -626,8 +634,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setDraft(draftKey, {
       value,
       images: attachedImages.map(imageToDraftImage),
+      notice: draftNotice,
     });
-  }, [attachedImages, draftKey, value]);
+  }, [attachedImages, draftKey, value, draftNotice]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
@@ -637,12 +646,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setDraft(previousDraftKey, {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
+        notice: getDraft(previousDraftKey)?.notice,
       });
     }
 
     const draft = draftKey ? getDraft(draftKey) : null;
     draftKeyRef.current = draftKey;
     setValue(draft?.value ?? "");
+    setDraftNotice(draft?.notice);
     setAtQuery(null);
     setHistoryMenuOpen(false);
     setAttachedImages((prev) => {
@@ -1287,6 +1298,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onRecallQueue && (
                 <button
                   onClick={onRecallQueue}
+                  disabled={recallingQueue}
                    title={t("chat.recallTitle")}
                   style={{
                     display: "flex",
@@ -1319,12 +1331,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
               )}
             </div>
-            {queuedMessages?.steering.map((text, i) => (
-              <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} />
-            ))}
-            {queuedMessages?.followUp.map((text, i) => (
-              <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} />
-            ))}
+            {queuedMessages?.items?.length ? queuedMessages.items.map((item) => <QueuedMessageRow key={item.id} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} disabled={recallingQueue} onEdit={onRecallQueuedMessage ? () => { void onRecallQueuedMessage(item); } : undefined} />) : <>
+              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} />)}
+              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} />)}
+            </>}
           </div>
         )}
         {/* Retry banner */}
@@ -1405,6 +1415,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         )}
 
+        {draftNotice && <div role="status" style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>{draftNotice} <button type="button" onClick={() => setDraftNotice(undefined)}>{t("i18n.close")}</button></div>}
         {/* Main input */}
         <div style={{ position: "relative", minWidth: 0 }}>
           {historyMenuOpen && inputHistory.length > 0 && (

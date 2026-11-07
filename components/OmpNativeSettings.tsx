@@ -12,6 +12,7 @@ export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; on
   const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
       if (event.key !== "Tab") return;
       const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, [tabindex="0"]') || [])

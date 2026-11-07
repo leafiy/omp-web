@@ -10,6 +10,7 @@ import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionCon
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { sessionPathKey } from "./session-path";
+import { readSessionSnapshot } from "./session-file-cache";
 import { resolveProject, type ProjectInfo } from "./worktree";
 
 import { getEngineAgentDir } from "./engine-paths";
@@ -286,7 +287,7 @@ export function loadOmpSessionEntries(filePath: string): SessionEntry[] {
 // A read-only structural view, not a Pi SessionManager (which can migrate/write
 // files on construction). Mutations belong exclusively to the native OMP RPC.
 export function openSessionManager(filePath: string) {
-  const raw = loadOmpSessionEntries(filePath);
+  const raw = readSessionSnapshot(filePath).entries;
   const header = readSessionHeader(filePath);
   const entries = raw.filter((entry) => !hasSessionType(entry) && typeof entry.id === "string");
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
@@ -428,7 +429,7 @@ function omitToolResultBase64Images(message: AgentMessage): AgentMessage {
 
 // Convert a session entry on the active branch into a UI message.
 // Returns null for entries that do not map to chat history (metadata, non-message types).
-function entryToUiMessage(
+export function entryToUiMessage(
   entry: SessionEntry,
   options: { deferThinking?: boolean; deferToolResultImages?: boolean },
 ): AgentMessage | null {

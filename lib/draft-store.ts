@@ -6,6 +6,7 @@ export interface ChatDraftImage {
 export interface ChatDraft {
   value: string;
   images: ChatDraftImage[];
+  notice?: string;
 }
 
 const drafts = new Map<string, ChatDraft>();
@@ -14,6 +15,7 @@ function cloneDraft(draft: ChatDraft): ChatDraft {
   return {
     value: draft.value,
     images: draft.images.map((image) => ({ ...image })),
+    ...(draft.notice ? { notice: draft.notice } : {}),
   };
 }
 

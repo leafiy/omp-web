@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useI18n } from "@/hooks/useI18n";
 import { isTerminalId } from "@/lib/terminal-contract";
+import { InlineConfirmation } from "./InlineConfirmation";
 import styles from "./TerminalPanel.module.css";
 
 const TerminalViewport = dynamic(() => import("./TerminalViewport"), { ssr: false });
@@ -28,6 +29,8 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
   const [height, setHeight] = useState(280);
   const [status, setStatus] = useState<TerminalStatus>({ state: "connecting" });
   const [stopping, setStopping] = useState(false);
+  const [stopTarget, setStopTarget] = useState<string | null>(null);
+  const stoppingRef = useRef(false);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const storageKey = `omp-terminal:${cwd}`;
 
@@ -55,22 +58,24 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
     setOpen(true);
   }
 
-  async function terminate() {
-    if (!id || !window.confirm(t("terminal.confirmStop"))) return;
+  async function terminate(target: string) {
+    if (!id || target !== id || stoppingRef.current) return;
+    stoppingRef.current = true;
+    setStopTarget(null);
     setStopping(true);
     try {
-      const response = await fetch(`/api/terminal/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/terminal/${target}`, { method: "DELETE" });
       if (!response.ok) throw new Error(t("terminal.stopFailed"));
-      try { sessionStorage.removeItem(storageKey); } catch { /* optional */ }
+      try { if (sessionStorage.getItem(storageKey) === target) sessionStorage.removeItem(storageKey); } catch { /* optional */ }
       setId(null);
       setOpen(false);
     } catch (error) {
       setStatus({ state: "error", detail: error instanceof Error ? error.message : String(error) });
-    } finally { setStopping(false); }
+    } finally { stoppingRef.current = false; setStopping(false); }
   }
 
   return (
-    <section className={styles.panel} style={{ height: open ? height : 34, maxHeight: open ? "70%" : undefined }} aria-label={t("terminal.title")}>
+    <section className={styles.panel} style={{ height: open ? height : stopTarget ? "auto" : 34, maxHeight: open || stopTarget ? "70%" : undefined }} aria-label={t("terminal.title")}>
       {open && <div
         className={styles.resize}
         role="separator" aria-orientation="horizontal" aria-label={t("terminal.resize")}
@@ -104,9 +109,14 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
           {open && (status.state === "error" || status.state === "disconnected") && <button type="button" onClick={() => {
             setStatus({ state: "connecting" }); setGeneration((value) => value + 1);
           }}>{t("terminal.reconnect")}</button>}
-          <button type="button" disabled={stopping} onClick={() => void terminate()} title={t("terminal.stop")} aria-label={t("terminal.stop")}>×</button>
+          <button type="button" disabled={stopping} onClick={() => setStopTarget(id)} title={t("terminal.stop")} aria-label={t("terminal.stop")}>×</button>
         </>}
       </div>
+      {stopTarget && <div style={{ padding: "0 8px", minHeight: 0, overflow: "auto" }}>
+        <InlineConfirmation key={stopTarget} title={t("terminal.stop")} message={t("terminal.confirmStop")}
+          confirmLabel={t("terminal.stop")} cancelLabel={t("i18n.cancel")} confirmDisabled={stopping || stopTarget !== id}
+          onCancel={() => setStopTarget(null)} onConfirm={() => { void terminate(stopTarget); }} />
+      </div>}
       {id && cwd && <div id="workspace-terminal" className={styles.body} style={{ display: open ? "flex" : "none" }}>
         <div className={styles.notice}>{status.detail || t("terminal.notice")}</div>
         <TerminalViewport key={`${id}:${generation}`} id={id} cwd={cwd} onStatus={setStatus} />

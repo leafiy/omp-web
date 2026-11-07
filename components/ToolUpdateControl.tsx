@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdatableTool } from "@/lib/tool-update-types";
+import { InlineConfirmation } from "./InlineConfirmation";
 
 const WATCHED_JOB_KEY = "omp-web:tool-update-job";
 const active = (job: ToolUpdateStatus | null | undefined) => job?.phase === "updating" || job?.phase === "restarting";
@@ -30,6 +31,7 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
   const [snapshot, setSnapshot] = useState<ToolUpdatesSnapshot | null>(null);
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState<UpdatableTool | null>(null);
+  const [confirmationTool, setConfirmationTool] = useState<UpdatableTool | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -141,19 +143,30 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
     ? { pi: "Pi 聊天工具", omp: "OMP 聊天工具", claude: "Claude Code 聊天工具", codex: "Codex CLI 聊天工具" }
     : { pi: "Pi chat tool", omp: "OMP chat tool", claude: "Claude Code chat tool", codex: "Codex CLI chat tool" };
 
-  function confirmUpdate(tool: UpdatableTool) {
-    if (blocked) return;
+  function confirmationMessage(tool: UpdatableTool) {
     const label = TOOL_LABELS[tool];
-    const message = zh
+    return zh
       ? `更新 ${label}？\n\n只更新这一个软件，不更新其他软件或 omp-web。\n更新完成后网页会重启，所有正在运行的聊天和终端都会中断，请先保存工作。\n不会清空已保存的聊天记录；失败时不自动重试。`
       : `Update ${label}?\n\nOnly this software will be updated, not the other tools or omp-web.\nAfter updating, the web service restarts and ALL running chats and terminals are interrupted. Save your work first.\nSaved chat history is not cleared. Failed updates are not retried automatically.`;
-    if (window.confirm(message)) actions.current?.start(tool);
+  }
+
+  function confirmUpdate(tool: UpdatableTool) {
+    if (!blocked && snapshot?.tools.find((item) => item.tool === tool)?.available) setConfirmationTool(tool);
   }
 
   return (
     <section aria-labelledby="software-updates-title" aria-busy={checking || submitting !== null || busy}>
       <h3 id="software-updates-title" style={{ margin: "18px 0 6px", fontSize: 15, fontWeight: 600 }}>{zh ? "软件更新" : "Software updates"}</h3>
       <p style={{ margin: "0 0 12px", color: "var(--text-muted)", fontSize: 13 }}>{zh ? "点哪个，只更新哪个。更新后网页会重启，请先结束正在运行的任务。" : "Update one tool at a time. The web service restarts afterward; finish running tasks first."}</p>
+      {confirmationTool && <InlineConfirmation key={confirmationTool}
+        title={zh ? `确认更新 ${TOOL_LABELS[confirmationTool]}` : `Confirm ${TOOL_LABELS[confirmationTool]} update`}
+        message={confirmationMessage(confirmationTool)} confirmLabel={zh ? "确认更新并重启" : "Confirm update and restart"} cancelLabel={zh ? "取消" : "Cancel"}
+        confirmDisabled={blocked || !snapshot?.tools.find((item) => item.tool === confirmationTool)?.available}
+        onCancel={() => setConfirmationTool(null)} onConfirm={() => {
+          const tool = confirmationTool;
+          setConfirmationTool(null);
+          if (!blocked && snapshot?.tools.find((item) => item.tool === tool)?.available) actions.current?.start(tool);
+        }} />}
       <div style={{ display: "grid", gap: 8 }}>
         {TOOL_IDS.map((tool) => {
           const status = snapshot?.tools.find((t) => t.tool === tool);

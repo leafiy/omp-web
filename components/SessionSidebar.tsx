@@ -1,5 +1,7 @@
 "use client";
 
+import { historyClientCache } from "@/lib/history-client-cache";
+
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { engineForSession, engineLabel, supportsExtendedChat } from "@/lib/engine";
@@ -1895,11 +1897,13 @@ function SessionItem({
     setRenaming(false);
     if (name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      if (!response.ok) throw new Error("Rename failed");
+      historyClientCache.invalidate(session.id);
       onRenamed?.();
     } catch {
       // ignore
@@ -1910,7 +1914,9 @@ function SessionItem({
     setConfirmDelete(false);
     setDeleting(true);
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Delete failed");
+      historyClientCache.invalidate(session.id);
       onDeleted?.(session.id);
     } catch {
       setDeleting(false);

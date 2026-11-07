@@ -50,13 +50,21 @@ export interface ToolCallContent {
 
 export type AssistantContentBlock = TextContent | ImageContent | ThinkingContent | ToolCallContent;
 
-export interface UserMessage {
+export interface HistoryDeferredFields {
+  historyDeferred?: boolean;
+  historyEntryId?: string;
+  historyVersion?: string;
+  historySessionId?: string;
+  historyToolCalls?: number;
+}
+
+export interface UserMessage extends HistoryDeferredFields {
   role: "user";
   content: string | (TextContent | ImageContent)[];
   timestamp?: number;
 }
 
-export interface AssistantMessage {
+export interface AssistantMessage extends HistoryDeferredFields {
   role: "assistant";
   content: AssistantContentBlock[];
   model: string;
@@ -79,7 +87,7 @@ export interface AssistantMessage {
   };
 }
 
-export interface ToolResultMessage {
+export interface ToolResultMessage extends HistoryDeferredFields {
   role: "toolResult";
   toolCallId: string;
   toolName?: string;
@@ -89,7 +97,7 @@ export interface ToolResultMessage {
   timestamp?: number;
 }
 
-export interface CustomMessage {
+export interface CustomMessage extends HistoryDeferredFields {
   role: "custom";
   customType: string;
   content: string | (TextContent | ImageContent)[];
@@ -98,7 +106,7 @@ export interface CustomMessage {
   timestamp?: number;
 }
 
-export interface BashExecutionMessage {
+export interface BashExecutionMessage extends HistoryDeferredFields {
   role: "bashExecution";
   command: string;
   output: string;

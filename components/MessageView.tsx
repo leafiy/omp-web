@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { DeferredHistoryMessage } from "./DeferredHistoryMessage";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -99,6 +100,7 @@ function haveSameRelevantToolResults(
 }
 
 export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
+  if (message.historyDeferred) return <DeferredHistoryMessage key={`${message.historySessionId}:${message.historyEntryId}:${message.historyVersion}`} message={message}>{(loaded) => <MessageView message={loaded} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} />}</DeferredHistoryMessage>;
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
@@ -708,7 +710,12 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+function ToolCallBlock(props: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+  if (props.result?.historyDeferred) return <DeferredHistoryMessage key={`${props.result.historySessionId}:${props.result.historyEntryId}:${props.result.historyVersion}`} message={props.result}>{(loaded) => <ResolvedToolCallBlock {...props} result={loaded as ToolResultMessage} />}</DeferredHistoryMessage>;
+  return <ResolvedToolCallBlock {...props} />;
+}
+
+function ResolvedToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
   const [expanded, setExpanded] = useState(false);
   const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);

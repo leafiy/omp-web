@@ -6,7 +6,7 @@ import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
 import { ClaudeEventProjector } from "./claude-code-events";
 import { ClaudeContextCache } from "./claude-context-cache";
 import { ClaudeInputLedger, type ClaudeInputKind } from "./claude-input-ledger";
-import { interruptClaude, supportsClaudeSteering } from "./claude-steering";
+import { interruptClaude, supportsClaudeSteering, canRecallClaudeInput, recallClaudeInput } from "./claude-steering";
 import { claudeSlashCommands, claudeSlashCommandRestriction } from "./claude-code-commands";
 import { ClaudeWebTranscript } from "./claude-code-store";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
@@ -25,6 +25,7 @@ class PromptInput implements AsyncIterable<SDKUserMessage> {
     this.pending.push(value);
     this.wake?.();
   }
+  remove(id: string): boolean { const index = this.pending.findIndex(item => item.uuid === id); if (index < 0) return false; this.pending.splice(index, 1); return true; }
   clear(): string[] { return this.pending.splice(0).flatMap((item) => item.uuid ? [item.uuid] : []); }
   close(): void { this.clear(); this.closed = true; this.wake?.(); }
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
@@ -56,6 +57,7 @@ export class ClaudeCodeSession {
   private changingModel = false;
   private readonly inputs = new ClaudeInputLedger();
   private steeringAvailable = false;
+  private recalling?: string;
   private steeredCycle = false;
   private stopping = false;
   private stopTimer?: ReturnType<typeof setTimeout>;
@@ -94,7 +96,7 @@ export class ClaudeCodeSession {
     this.listeners.add(listener);
     if (this.ready && this.steeringAvailable) {
       listener({ type: "agent_capabilities", supportsSteering: true });
-      listener({ type: "queue_update", ...this.inputs.queued() });
+      listener({ type: "queue_update", ...this.inputs.queued(), items: this.recallItems() });
     }
     for (const { event } of this.dialogs.values()) listener(event);
     return () => { this.listeners.delete(listener); };
@@ -228,7 +230,8 @@ export class ClaudeCodeSession {
     }
   }
 
-  private queueChanged(): void { this.emit({ type: "queue_update", ...this.inputs.queued() }); this.changed(); }
+  private recallItems() { return this.steeringAvailable && this.query && canRecallClaudeInput(this.query) ? this.inputs.pendingItems() : []; }
+  private queueChanged(): void { this.emit({ type: "queue_update", ...this.inputs.queued(), items: this.recallItems() }); this.changed(); }
 
   private finishTurn(): void {
     if (!this.busy) return;
@@ -306,7 +309,7 @@ export class ClaudeCodeSession {
           isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy,
           isBashRunning: false, isCompacting: false, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
           supportsSteering: this.steeringAvailable,
-          queuedMessages: this.inputs.queued(), extensionStatuses: [], extensionWidgets: [],
+          queuedMessages: this.inputs.queued(), queuedItems: this.recallItems(), extensionStatuses: [], extensionWidgets: [],
           systemPrompt: "", contextUsage,
         };
       }
@@ -325,6 +328,25 @@ export class ClaudeCodeSession {
       case "extension_ui_response": {
         if (typeof command.id === "string") this.dialogs.get(command.id)?.finish(command);
         return null;
+      }
+      case "recall_queued_message": {
+        if (this.stopping || this.interruptRequested || this.recalling) throw new Error("A queue operation is already in progress");
+        const item = this.recallItems().find(item => item.id === command.id);
+        if (!item) return { removed: false };
+        this.recalling = item.id;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          let removed = this.input.remove(item.id);
+          if (!removed) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            if (!this.recallItems().some(pending => pending.id === item.id) || this.stopping || this.interruptRequested) return { removed: false };
+            removed = await Promise.race([recallClaudeInput(this.query!, item.id), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Recall was not confirmed; check the queue before resending")), 5000); })]);
+          }
+          if (!removed) return { removed: false };
+          this.inputs.cancel([item.id]); this.queueChanged();
+          if (!this.inputs.size && !this.stopping) this.finishTurn();
+          return { removed: true, ...item };
+        } finally { clearTimeout(timer); this.recalling = undefined; }
       }
       case "abort": {
         if (!this.busy || this.stopping || this.interruptRequested) return null;

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { OmpUpdateStatus } from "@/lib/omp-update-types";
+import { InlineConfirmation } from "./InlineConfirmation";
 
 const WATCHED_JOB_KEY = "omp-web:omp-update-job";
 const POLL_INTERVAL_MS = 2_000;
@@ -42,6 +43,7 @@ export function OmpUpdateControl({ zh }: { zh: boolean }) {
   const [status, setStatus] = useState<OmpUpdateStatus | null>(null);
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -218,12 +220,11 @@ export function OmpUpdateControl({ zh }: { zh: boolean }) {
     background: "var(--bg-panel)", color: "var(--text)", fontSize: 13,
   };
 
+  const confirmationMessage = zh
+    ? "将下载并更新这台主机上的 OMP，然后自动重启网页服务。\n\n这会中断所有网页聊天任务和内嵌终端（包括其他用户），未落盘内容可能丢失，请先结束任务、保存工作。配置、凭据和已保存的会话历史会保留；运行中的任务不会自动恢复。不会更新 omp-web 本身。\n\n现在更新并重启？"
+    : "Download and update OMP on this host, then automatically restart the web service?\n\nThis interrupts ALL web chat tasks and embedded terminals, including other users' work. Unsaved data may be lost; finish tasks and save your work first. Configuration, credentials and saved session history are preserved; running tasks will not resume automatically. This does not update omp-web itself.\n\nUpdate and restart now?";
   function confirmUpdate() {
-    if (disabled) return;
-    const message = zh
-      ? "将下载并更新这台主机上的 OMP，然后自动重启网页服务。\n\n这会中断所有网页聊天任务和内嵌终端（包括其他用户），未落盘内容可能丢失，请先结束任务、保存工作。配置、凭据和已保存的会话历史会保留；运行中的任务不会自动恢复。不会更新 omp-web 本身。\n\n现在更新并重启？"
-      : "Download and update OMP on this host, then automatically restart the web service?\n\nThis interrupts ALL web chat tasks and embedded terminals, including other users' work. Unsaved data may be lost; finish tasks and save your work first. Configuration, credentials and saved session history are preserved; running tasks will not resume automatically. This does not update omp-web itself.\n\nUpdate and restart now?";
-    if (window.confirm(message)) actions.current?.start();
+    if (!disabled) setConfirming(true);
   }
 
   return (
@@ -240,6 +241,12 @@ export function OmpUpdateControl({ zh }: { zh: boolean }) {
           {checking ? (zh ? "读取状态中…" : "Checking status…") : (zh ? "重新读取状态" : "Retry status check")}
         </button>
       </div>
+      {confirming && <InlineConfirmation title={zh ? "确认更新 OMP" : "Confirm OMP update"} message={confirmationMessage}
+        confirmLabel={zh ? "确认更新并重启" : "Confirm update and restart"} cancelLabel={zh ? "取消" : "Cancel"} confirmDisabled={disabled}
+        onCancel={() => setConfirming(false)} onConfirm={() => {
+          setConfirming(false);
+          if (!disabled) actions.current?.start();
+        }} />}
       <div role="status" aria-live="polite" style={{ fontSize: 13 }}>
         {reloading ? (zh ? "服务器已确认本次更新完成，正在刷新网页…" : "The server confirmed this update completed. Reloading the page…") : reconnecting ? (
           <p style={{ margin: "6px 0" }}>{status

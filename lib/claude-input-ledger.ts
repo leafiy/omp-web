@@ -49,6 +49,9 @@ export class ClaudeInputLedger {
     }
     return { steering, followUp };
   }
+  pendingItems(): Array<{ id: string; kind: "steer" | "follow_up"; text: string }> {
+    return [...this.entries].flatMap(([id, entry]) => entry.started || entry.kind === "prompt" ? [] : [{ id, kind: entry.kind, text: typeof entry.message.content === "string" ? entry.message.content : entry.message.content.filter(b => b.type === "text").map(b => b.text).join("\n") }]);
+  }
   unstartedIds(): string[] { return [...this.entries].filter(([, entry]) => !entry.started).map(([id]) => id); }
   clear(): void { this.entries.clear(); }
 }

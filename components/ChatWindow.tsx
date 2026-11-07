@@ -205,6 +205,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
 
   const {
     loading, error, messages, entryIds, streamState,
+    hasEarlierHistory, loadingEarlier, historyPageError, loadEarlierHistory,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
@@ -217,7 +218,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue,
+    handleRecallQueue, handleRecallQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
     handleThinkingLevelChange, loadSlashCommands,
   } = useAgentSession({
@@ -272,7 +273,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     if (!container) return;
     container.scrollTop = restoreScrollTop(container.scrollHeight, prevScrollDistanceRef.current);
     prevScrollDistanceRef.current = null;
-  }, [visibleCount, scrollContainerRef]);
+  }, [visibleCount, messages.length, scrollContainerRef]);
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
   const statsKey = sessionStats
@@ -377,6 +378,8 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       queuedMessages={queuedMessages}
       inputHistory={inputHistory}
       onRecallQueue={engine === "omp" ? handleRecallQueue : undefined}
+      onRecallQueuedMessage={engine === "claude" ? handleRecallQueuedMessage : undefined}
+      recallingQueue={recallingQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
       onLoadSlashCommands={loadSlashCommands}
@@ -574,7 +577,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
                     entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || !supportsExtendedChat(engine) || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+                    onFork={sessionBusy || isNew || !supportsExtendedChat(engine) || (idx === 0 && msg.role === "user" && !hasEarlierHistory) ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={sessionBusy || engine !== "omp" ? undefined : handleNavigate}
                     prevAssistantEntryId={sessionBusy || engine !== "omp" ? undefined : prevAssistantEntryId}
@@ -677,6 +680,18 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
               return (
                 <>
+                  {hasEarlierHistory && <div style={{ textAlign: "center", padding: 12 }}>
+                    <button type="button" disabled={loadingEarlier} onClick={async () => {
+                      if (await loadEarlierHistory()) {
+                        const container = scrollContainerRef.current;
+                        if (container) prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
+                        setVisibleCount((count) => count + 60);
+                      } else prevScrollDistanceRef.current = null;
+                    }} style={{ padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", color: "var(--text)" }}>
+                      {loadingEarlier ? (locale === "zh-CN" ? "读取中…" : "Loading…") : (locale === "zh-CN" ? "加载更早消息" : "Load earlier messages")}
+                    </button>
+                    {historyPageError && <p role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>{locale === "zh-CN" ? "会话有更新或暂时无法读取，请重试。" : historyPageError}</p>}
+                  </div>}
                   {hasMore && (
                      <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
                        {t("chat.loadEarlier", { count: startIndex })}

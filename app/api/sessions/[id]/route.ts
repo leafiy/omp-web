@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
+import { sessionFileVersion } from "@/lib/session-file-cache";
+import { pageHistory, lightHistoryTree } from "@/lib/history-page";
+import { guardHistoryRequest, historyHeaders } from "@/lib/history-http";
 import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import {
@@ -118,6 +122,8 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = guardHistoryRequest(req);
+  if (denied) return denied;
   const { id } = await params;
   try {
     const filePath = await resolveSessionPath(id);
@@ -125,15 +131,26 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
+    const searchParams = new URL(req.url).searchParams;
+    const windowed = searchParams.get("window") === "1";
+    const limit = Number(searchParams.get("limit") ?? 60);
+    if (windowed && (!Number.isInteger(limit) || limit < 1 || limit > 120)) return NextResponse.json({ error: "Invalid page size" }, { status: 400, headers: historyHeaders });
+    const version = sessionFileVersion(filePath);
+    if (windowed && searchParams.has("version") && searchParams.get("version") !== version) return NextResponse.json({ error: "History changed; refresh the latest page" }, { status: 409, headers: historyHeaders });
+    const liveLeafId = getRpcSession(id)?.getActiveLeafId();
+    const etag = '"' + createHash("sha256").update(JSON.stringify(["history-v1", id, version, liveLeafId, searchParams.toString()])).digest("hex") + '"';
+    const headers = { ...historyHeaders, ETag: etag };
+    if (windowed && req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
     const sm = openSessionManager(filePath);
     const entries = sm.getEntries() as never;
-    const liveLeafId = getRpcSession(id)?.getActiveLeafId();
-    const leafId = liveLeafId !== undefined ? liveLeafId : sm.getLeafId();
-    const tree = projectTreeForResponse(sm.getTree());
-    const searchParams = new URL(req.url).searchParams;
+    const leafId = searchParams.has("leafId") ? searchParams.get("leafId") || null : liveLeafId !== undefined ? liveLeafId : sm.getLeafId();
+    const tree = windowed && engineForSession(id) !== "omp" ? [] : projectTreeForResponse(sm.getTree());
     const deferThinking = searchParams.has("deferThinking");
-    const deferToolResultImages = searchParams.has("deferMedia");
+    const deferToolResultImages = !windowed && searchParams.has("deferMedia");
     const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
+    let paged;
+    try { paged = windowed ? pageHistory(context, id, version, limit, searchParams.get("before") || undefined) : undefined; }
+    catch { return NextResponse.json({ error: "History cursor changed" }, { status: 409, headers: historyHeaders }); }
 
     const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
@@ -160,16 +177,18 @@ export async function GET(
       parentSessionId,
     } : null;
 
+    if (sessionFileVersion(filePath) !== version) return NextResponse.json({ error: "History changed while reading" }, { status: 409, headers: historyHeaders });
+    if (windowed && info) info.firstMessage = info.firstMessage.slice(0, 240);
     return NextResponse.json({
-      sessionId: id,
-      filePath,
-      info,
-      leafId,
-      tree,
-      context,
-    });
+      sessionId: id, filePath, info, leafId,
+      tree: windowed ? lightHistoryTree(tree) : tree,
+      context: paged?.context ?? context,
+      ...(paged ? { page: paged.page } : {}),
+    }, { headers });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const missing = error && typeof error === "object" && "code" in error && error.code === "ENOENT";
+    const changed = error instanceof Error && error.message === "Session changed while reading; retry";
+    return NextResponse.json({ error: missing ? "Session not found" : changed ? "History changed while reading" : "History could not be read" }, { status: missing ? 404 : changed ? 409 : 503, headers: historyHeaders });
   }
 }
 
