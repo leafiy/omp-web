@@ -2,7 +2,7 @@
 
 import { historyClientCache } from "@/lib/history-client-cache";
 
-import { useEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { engineForSession, engineLabel, supportsSessionDeletion } from "@/lib/engine";
 import {
@@ -79,6 +79,12 @@ function ToolbarIconButton({
 
 interface Props {
   selectedSessionId: string | null;
+  /**
+   * The chat just created in this tab. Pi/OMP write their session file only after
+   * the first assistant message, so the server list cannot include it until the
+   * first reply ends; show this optimistic row meanwhile.
+   */
+  pendingSession?: SessionInfo | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
   /** Starts an empty chat; its directory can still be changed in the chat. */
   onNewSession?: (sessionId: string, cwd: string) => void;
@@ -356,7 +362,7 @@ function newClientSessionId(): string {
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, activeCwd, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, activeCwd, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -555,7 +561,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onNewSession?.(newClientSessionId(), cwd);
   }, [onNewSession]);
 
-  const groups = groupSessionsByProject(allSessions);
+  const displaySessions = useMemo(() => {
+    if (!pendingSession || allSessions.some((s) => s.id === pendingSession.id)) return allSessions;
+    const projectRoot = pendingSession.projectRoot
+      || allSessions.find((s) => s.cwd === pendingSession.cwd)?.projectRoot
+      || pendingSession.cwd;
+    return [{ ...pendingSession, projectRoot }, ...allSessions];
+  }, [allSessions, pendingSession]);
+  const groups = groupSessionsByProject(displaySessions);
   const groupIndex = new Map(groups.map((group, index) => [group.root, index]));
   const query = filter.trim().toLowerCase();
   const visibleGroups = query
@@ -568,7 +581,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     : groups;
 
   // The project that owns the open session (transient sessions resolve by cwd).
-  const selectedSessionInfo = selectedSessionId ? allSessions.find((s) => s.id === selectedSessionId) : undefined;
+  const selectedSessionInfo = selectedSessionId ? displaySessions.find((s) => s.id === selectedSessionId) : undefined;
   const activeProjectRoot = selectedSessionInfo
     ? sessionProjectRoot(selectedSessionInfo)
     : selectedSessionId && activeCwd

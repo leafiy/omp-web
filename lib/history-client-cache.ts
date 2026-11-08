@@ -1,12 +1,17 @@
 import type { SessionData } from "../hooks/useAgentSession";
 
 export class HistoryRequestError extends Error { constructor(readonly status: number) { super(`History HTTP ${status}`); } }
-type Entry = { data?: SessionData; etag?: string; bytes: number; controller?: AbortController; pending?: Promise<SessionData> };
+type Entry = { data?: SessionData; etag?: string; bytes: number; pending?: Promise<SessionData> };
 
-/** Per-tab, bounded RAM only. No localStorage, IndexedDB, credentials or runtime state. */
+/**
+ * Per-tab, bounded RAM only. No localStorage, IndexedDB, credentials or runtime state.
+ * Removing an entry detaches (never aborts) its in-flight request: callers already
+ * awaiting it still get a response, but it can no longer repopulate the cache.
+ * Aborting surfaced as "AbortError" chat failures when a title update raced a reload.
+ */
 export function createHistoryClientCache(fetcher: typeof fetch = (...args) => fetch(...args), maxBytes = 20 * 1024 * 1024, maxEntries = 8) {
   const cache = new Map<string, Entry>();
-  function remove(key: string) { const entry = cache.get(key); cache.delete(key); entry?.controller?.abort(); }
+  function remove(key: string) { cache.delete(key); }
   function trim() {
     let bytes = [...cache.values()].reduce((n, entry) => n + entry.bytes, 0);
     for (const [key, entry] of cache) {
@@ -24,9 +29,9 @@ export function createHistoryClientCache(fetcher: typeof fetch = (...args) => fe
       const previous = cache.get(url);
       if (previous?.pending) return previous.pending;
       const entry: Entry = previous ?? { bytes: 0 };
-      cache.delete(url); cache.set(url, entry); entry.controller = new AbortController();
+      cache.delete(url); cache.set(url, entry);
       const work = Promise.resolve().then(async () => {
-        const response = await fetcher(url, { cache: "no-store", signal: entry.controller!.signal, headers: entry.etag ? { "If-None-Match": entry.etag } : {} });
+        const response = await fetcher(url, { cache: "no-store", headers: entry.etag ? { "If-None-Match": entry.etag } : {} });
         if ([401, 403].includes(response.status)) { for (const key of cache.keys()) remove(key); throw new HistoryRequestError(response.status); }
         if (response.status === 404) { const prefix = url.split("?")[0] + "?"; for (const key of cache.keys()) if (key.startsWith(prefix)) remove(key); throw new HistoryRequestError(404); }
         if (response.status === 304 && entry.data) return entry.data;
@@ -38,7 +43,7 @@ export function createHistoryClientCache(fetcher: typeof fetch = (...args) => fe
           entry.data = data; entry.etag = response.headers.get("etag") ?? undefined; entry.bytes = text.length * 3; trim();
         }
         return data;
-      }).finally(() => { if (entry.pending === work) { entry.pending = undefined; entry.controller = undefined; } });
+      }).finally(() => { if (entry.pending === work) entry.pending = undefined; });
       entry.pending = work; trim(); return work;
     },
   };

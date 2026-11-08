@@ -468,6 +468,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const eventStreamGraceGenerationRef = useRef(0);
   const eventStreamGraceActiveRef = useRef(false);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
+  // SSE (re)connects replay the current title; only a real change needs reloads.
+  const knownSessionNameRef = useRef<string>(session?.name ?? "");
   const agentRunningRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
@@ -602,6 +604,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return null;
       }
     } catch (e) {
+      // A superseded request is not a history failure; the newer load applies.
+      if (e instanceof DOMException && e.name === "AbortError") return null;
       if (current()) {
         if (e instanceof HistoryRequestError && [401, 403, 404].includes(e.status)) { setData(null); setMessages([]); setEntryIds([]); setHistoryPage(null); }
         setError(String(e));
@@ -666,7 +670,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       engine,
       path: "",
       cwd: newSessionCwd,
-      name: undefined,
+      // A native title can arrive before the prompt request returns.
+      name: knownSessionNameRef.current || undefined,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       messageCount,
@@ -1212,6 +1217,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const sid = sessionIdRef.current;
         if (!sid || event.sessionId !== sid || typeof event.title !== "string") break;
         const name = event.title;
+        if (name === knownSessionNameRef.current) break;
+        knownSessionNameRef.current = name;
         historyClientCache.invalidate(sid);
         setSessionStatsOverride((prev) => prev ? { ...prev, sessionName: name } : prev);
         onSessionNameChange?.(sid, name);

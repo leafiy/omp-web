@@ -110,6 +110,8 @@ export class ClaudeCodeSession {
   private nativeTitleCheckedAt = 0;
   /** Claude persists its transcript with the first turn; before that there is nothing to read. */
   private nativeHistory = false;
+  /** Claude names a session early in its first turn; look for it while the turn runs. */
+  private nativeTitleWatch?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly options: AgentProcessOptions & { nativeId?: string },
@@ -169,6 +171,20 @@ export class ClaudeCodeSession {
       .finally(() => { if (this.nativeTitleRead === read) this.nativeTitleRead = undefined; });
     this.nativeTitleRead = read;
     return read;
+  }
+  private watchNativeTitle(): void {
+    if (this.nativeTitleWatch || this.options.catalogOnly || this.closed || this.sessionName()) return;
+    // A main-thread reply means Claude has already written the user turn natively.
+    this.nativeHistory = true;
+    this.nativeTitleWatch = setInterval(() => {
+      if (this.closed || !this.busy || this.sessionName()) {
+        clearInterval(this.nativeTitleWatch);
+        this.nativeTitleWatch = undefined;
+        return;
+      }
+      void this.refreshNativeTitle(true);
+    }, 4000);
+    this.nativeTitleWatch.unref();
   }
 
   async start(): Promise<void> {
@@ -325,6 +341,7 @@ export class ClaudeCodeSession {
         const raw = frame as unknown as Record<string, unknown>;
         this.tasks.claude(raw);
         if (raw.parent_tool_use_id) continue;
+        if (!this.nativeTitle && (raw.type === "assistant" || raw.type === "stream_event")) this.watchNativeTitle();
         // A background task can wake the main agent without a new browser send.
         // Keep that continuation separate from child transcripts and input UUIDs.
         if (this.ready && !this.busy && !this.stopping && (raw.type === "assistant" || raw.type === "stream_event")) {
@@ -694,6 +711,8 @@ export class ClaudeCodeSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
+    clearInterval(this.nativeTitleWatch);
+    this.nativeTitleWatch = undefined;
     for (const request of this.titleRequests) request.abort(new Error("Claude Code session closed"));
     this.tasks.disconnected();
     this.stopping = false;
