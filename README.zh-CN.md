@@ -1,5 +1,3 @@
-# omp-web
-
 **一个网页入口，使用本机的多个编程 Agent。**
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
@@ -10,7 +8,8 @@
 
 不必为了日常使用来回切换多个终端、反复 SSH 重连，或为了另一套聊天前端重新折腾配置。打开一个链接，选择项目和 Agent，就可以开始工作——电脑、手机都能用。
 
-<img width="3494" height="2168" alt="image" src="https://github.com/user-attachments/assets/45822528-7205-4827-adc6-819bda89957a" />
+<img width="3458" height="2158" alt="image" src="https://github.com/user-attachments/assets/1795000f-0d74-4fb4-95e5-a7ea8c681b2d" />
+
 
 
 **配合 Tailscale、EasyTier 等可信私有网络，连通之后，有浏览器即可开工。**
