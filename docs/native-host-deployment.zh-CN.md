@@ -41,7 +41,9 @@ PI_WEB_PASSWORD_FILE=/etc/omp-web/access-password
 
 Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只绑定可信隧道地址，或绑定 loopback 后通过 SSH 转发。不要监听公网通配地址。
 
-## 可重复发布
+## 历史归档发布方式
+
+以下保留早期部署记录。`192.168.52.3` 已按用户要求改为直接安装 GitHub 源码，使用下一节的标准 Git 更新流程，不再通过本机归档包或单独发布脚本更新。
 
 1. 在独立目录测试、构建，不能覆盖运行中的 `.next`。
 2. 用 `scripts/package-native-host.sh <构建目录> <新归档路径>` 打包。脚本只读取已构建产物和依赖，白名单不包括 `.env`、Agent 用户目录、凭据、原生历史或网页消息投影。
@@ -50,12 +52,33 @@ Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只
 5. 用目标用户运行程序，验证未登录/错误密码被拒绝、正确密码可访问、SSE 也受保护、四工具路径正确，再切换服务链接。
 6. 失败时停用新服务或恢复旧发布链接。软件更新和模型请求不是部署验证的默认步骤。
 
+## GitHub 源码安装：192.168.52.3
+
+2026-11-08 用户明确要求：远端安装 GitHub 版本，不维护单独的更新逻辑。
+
+- Git 仓库：`https://github.com/leafiy/omp-web.git`，跟踪 `origin/main`；实际检出目录 `/opt/omp-web-github`，服务入口 `/opt/omp-web` 指向该目录。
+- 标题修复功能代码来自 GitHub 提交 `5aaefc2`，由远端 Node 22.22.1 直接运行 `npm run build`，不是上传本机构建。远端 Build ID：`GQwLXYV-9D5ax0QXMqDKq`。
+- 此次锁文件与已有安装一致，复用远端已安装、匹配其 Node ABI 的依赖；没有安装或升级 Agent CLI，没有复制模型凭据或原生历史。
+- 已通过远端构建和类型检查；正式首页返回 200，14 个实际提供的静态资源与远端构建一致，未认证访问为 401，跨源请求为 403，四工具安装路径可发现。通过远端实际提供的页面与静态资源，四引擎模拟会话的浏览器检查也通过，覆盖标题实时更新、刷新和手机视图。没有发送远端模型请求，旧会话不补标题。
+- 本次私有发布候选目录和独立发布任务已清除。此前版本仅保留为回滚备份，不再作为更新来源。访问密码、原生 Agent 配置与历史、现有服务和反向隧道配置不改动。
+
+后续更新直接使用 GitHub 仓库。先确认会话、后台任务和终端空闲，再在维护窗口执行：
+
+```sh
+systemctl stop omp-web.service
+git -C /opt/omp-web pull --ff-only
+npm --prefix /opt/omp-web run build
+systemctl start omp-web.service
+```
+
+依赖锁文件变化时，应按 GitHub 锁文件在远端安装依赖后再构建；不能复制另一台机器的原生 `.node` 文件。不要在服务运行时覆盖同一目录的 `.next`。软件升级、重新登录、配置同步和旧历史补名都不是网页更新的隐含步骤。
+
 ## 本次远端结果：192.168.52.3
 
 - URL：`http://192.168.52.3:2225`，只监听该 tun0 地址，没有监听公网网卡或公网 IPv6。
 - SSH/服务用户：root。网页和终端具有该用户权限，不是额外的沙箱。
 - 服务：`omp-web.service`，已启用开机启动；隧道地址暂不可用时重试，不回退到公网监听。
-- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-releases/20261107-followup-eNobApPg`。此前 UI/子 agent 版及更早发布目录保留用于回滚；依赖仍使用首次版本 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，不能删除。
+- 当前程序链接：`/opt/omp-web` → `/opt/omp-web-github`，该目录是上述 GitHub 仓库的完整检出。旧发布目录保留为备份；依赖仍复用 `/opt/omp-web-releases/20261105-native-host-cYZladu2/node_modules`，该目录暂不能删除。
 - 访问密码：远端 `/etc/omp-web/access-password`，0600，未输出到聊天。
 - 网站运行环境：`/etc/omp-web/web.env`，仅网站运行与认证字段，没有 Agent 模型配置或密钥。
 - 原生路径均自动选择 `/root/.local/bin/` 下的四个工具，未选到旧 `.bun/bin/omp` 或网页依赖里的旧 Pi。
