@@ -4,7 +4,7 @@ import { historyClientCache } from "@/lib/history-client-cache";
 
 import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { engineForSession, engineLabel, supportsSessionDeletion } from "@/lib/engine";
+import { engineForSession, engineLabel, engineShortLabel, supportsSessionDeletion } from "@/lib/engine";
 import {
   DEFAULT_NEW_SESSION_CWD,
   groupSessionsByProject,
@@ -1420,8 +1420,14 @@ function SessionItem({
           }}
         />
       ) : (
-        /* ── Normal view: title on the left, age (or actions) on the right ── */
+        /* ── Normal view: engine tag + title on the left, age (or actions) on the right ── */
         <>
+          <span
+            title={engineLabel(engine)}
+            style={{ flexShrink: 0, minWidth: 24, boxSizing: "border-box", textAlign: "center", padding: "0 3px", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-dim)", fontSize: 9, lineHeight: "13px", fontFamily: "var(--font-mono)" }}
+          >
+            {engineShortLabel(engine)}
+          </span>
           {/* Fork indicator for child sessions */}
           {depth > 0 && (
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1530,13 +1536,8 @@ function SessionItem({
               </button>}
             </div>
           ) : (
-            <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, color: "var(--text-dim)", fontSize: 11 }}>
-              <span style={{ padding: "0 3px", border: "1px solid var(--border)", borderRadius: 3, fontSize: 9, lineHeight: "13px", fontFamily: "var(--font-mono)" }}>
-                {engineLabel(engine)}
-              </span>
-              <span title={session.modified} style={{ minWidth: 22, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                {formatRelativeTime(session.modified)}
-              </span>
+            <span title={session.modified} style={{ flexShrink: 0, minWidth: 22, textAlign: "right", color: "var(--text-dim)", fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+              {formatRelativeTime(session.modified)}
             </span>
           )}
         </>

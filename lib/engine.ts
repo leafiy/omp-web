@@ -4,6 +4,11 @@ export function engineLabel(engine: AgentEngine): string {
   return engine === "codex" ? "Codex CLI" : engine === "claude" ? "Claude Code" : engine === "pi" ? "Pi" : "OMP";
 }
 
+/** Compact engine tag for dense lists such as the session sidebar. */
+export function engineShortLabel(engine: AgentEngine): string {
+  return engine === "codex" ? "CX" : engine === "claude" ? "CC" : engine === "pi" ? "Pi" : "OMP";
+}
+
 /** Older clients and existing unqualified session links keep using OMP. */
 export function parseEngine(value: unknown): AgentEngine {
   if (value === undefined || value === null || value === "omp") return "omp";
