@@ -9,6 +9,7 @@ export class WebSessionTranscript {
   private leaf: string | null = null;
   private title?: string;
   private selectedModel?: string;
+  private selectedEffort?: string;
   private messages: AgentMessage[] = [];
   constructor(readonly nativeId: string, readonly cwd: string, stateDir: string, private readonly provider: "claude-code" | "codex-cli", existingPath?: string) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nativeId)) throw new Error("Invalid native session UUID");
@@ -24,6 +25,7 @@ export class WebSessionTranscript {
         if (entry.type === "message") this.messages.push(entry.message);
         if (entry.type === "session_info") this.title = entry.name;
         if (entry.type === "model_change") this.selectedModel = entry.modelId;
+        if (entry.type === "thinking_level_change") this.selectedEffort = entry.thinkingLevel;
       }
     } else {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -33,6 +35,8 @@ export class WebSessionTranscript {
   append(message: AgentMessage): void { this.record({ type: "message", message }); this.messages.push(message); }
   rename(name: string): void { this.record({ type: "session_info", name }); this.title = name; }
   setModel(model: string): void { this.record({ type: "model_change", provider: this.provider, modelId: model }); this.selectedModel = model; }
+  setEffort(level: string): void { this.record({ type: "thinking_level_change", thinkingLevel: level }); this.selectedEffort = level; }
+  get effort(): string | undefined { return this.selectedEffort; }
   private record(payload: Record<string, unknown>): void {
     const id = randomUUID();
     appendFileSync(this.path, JSON.stringify({ ...payload, id, parentId: this.leaf, timestamp: new Date().toISOString() }) + "\n", { mode: 0o600 });

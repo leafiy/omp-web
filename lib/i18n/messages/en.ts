@@ -338,6 +338,8 @@ export const enLocale: LocalePlugin = {
     "chat.allBuiltInTools": "All built-in tools",
     "chat.changeReasoning": "Change reasoning level: {level}",
     "chat.changeReasoningLabel": "Change reasoning level",
+    "chat.changeEffort": "Change Claude effort: {level}",
+    "chat.changeEffortLabel": "Change Claude effort",
     "chat.changeToolPreset": "Change tool preset",
     "chat.stopCompaction": "Stop compaction",
     "chat.compactContext": "Compact context",

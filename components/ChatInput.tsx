@@ -32,6 +32,7 @@ interface ModelOption {
   provider: string;
   modelId: string;
   name: string;
+  resolvedModel?: string;
 }
 
 interface Props {
@@ -45,7 +46,7 @@ interface Props {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string }[];
+  modelList?: { id: string; name: string; provider: string; resolvedModel?: string }[];
   modelError?: string | null;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
@@ -116,13 +117,19 @@ export function filterModelOptions(options: ModelOption[], query: string): Model
   if (!normalizedQuery) return options;
 
   return options.filter((option) => (
-    `${option.name} ${option.modelId}`
+    `${option.name} ${option.modelId} ${option.resolvedModel ?? ""}`
       .toLocaleLowerCase()
       .includes(normalizedQuery)
   ));
 }
 
 const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export function thinkingLevelOptions(engine: AgentEngine | undefined, available?: string[] | null) {
+  return THINKING_LEVELS.filter(level => {
+    if (engine === "claude") return level === "auto" || (level !== "off" && level !== "minimal" && Boolean(available?.includes(level)));
+    return !available || available.length <= 1 || level === "auto" || available.includes(level);
+  });
+}
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
   auto: "chat.thinkingUseDefault", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
   medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax",
@@ -1232,7 +1239,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelOption[] = (() => {
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name })).sort(compareModelOptions);
+      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, resolvedModel: m.resolvedModel })).sort(compareModelOptions);
     }
     return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
       provider: model?.provider ?? "unknown",
@@ -1251,8 +1258,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     else modelsByProvider.push({ provider: opt.provider, options: [opt] });
   }
 
+  const activeModelOption = model ? modelOptions.find(o => o.provider === model.provider && o.modelId === model.modelId)
+    ?? modelOptions.find(o => o.provider === model.provider && o.resolvedModel === model.modelId && o.modelId !== "default")
+    ?? modelOptions.find(o => o.provider === model.provider && o.resolvedModel === model.modelId) : undefined;
   const displayModelName = model
-    ? (modelOptions.find((o) => o.modelId === model.modelId && o.provider === model.provider)?.name ?? model.modelId)
+    ? (modelNames?.[`${model.provider}:${model.modelId}`] ?? activeModelOption?.name ?? model.modelId)
     : null;
   const currentName = displayModelName;
 
@@ -1991,7 +2001,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-hover)" : "none";
                       e.currentTarget.style.color = "var(--text-muted)";
                     }}
-                    title={modelOptions.length > 0 ? "Change model" : "No available models"}
+                    title={modelOptions.length > 0 ? `Change model${engine === "claude" && model ? `: ${activeModelOption?.resolvedModel ?? model.modelId}` : ""}` : "No available models"}
                   >
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: isMobile ? "none" : undefined, flexShrink: 0 }}>
                       <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -2073,7 +2083,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                               </div>
                             )}
                             {group.options.map((opt) => {
-                              const isActive = opt.modelId === model?.modelId && opt.provider === model?.provider;
+                              const isActive = opt === activeModelOption;
                               return (
                                 <button
                                   key={`${opt.provider}:${opt.modelId}`}
@@ -2098,7 +2108,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   {isActive
                                     ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
                                     : <span style={{ width: 10, flexShrink: 0 }} />}
-                                  {opt.name}
+                                  <span style={{ minWidth: 0 }}>
+                                    {opt.name}
+                                    {engine === "claude" && <span style={{ display: "block", fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis" }}>{opt.resolvedModel ?? opt.modelId}{opt.resolvedModel && opt.resolvedModel !== opt.modelId ? ` (${opt.modelId})` : ""}</span>}
+                                  </span>
                                 </button>
                               );
                             })}
@@ -2195,8 +2208,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={() => !isStreaming && setThinkingDropdownOpen((v) => !v)}
                   disabled={isStreaming}
-                   title={t("chat.changeReasoning", { level: thinkingDisplayLabel })}
-                   aria-label={t("chat.changeReasoningLabel")}
+                   title={t(engine === "claude" ? "chat.changeEffort" : "chat.changeReasoning", { level: thinkingDisplayLabel })}
+                   aria-label={t(engine === "claude" ? "chat.changeEffortLabel" : "chat.changeReasoningLabel")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -2226,7 +2239,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="7" y1="18" x2="12" y2="18" />
                     <line x1="8" y1="21" x2="11" y2="21" />
                   </svg>
-                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>}
+                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{engine === "claude" ? `Effort · ${thinkingDisplayLabel}` : thinkingDisplayLabel}</span>}
                 </button>
                 {thinkingDropdownOpen && (
                   <div style={{
@@ -2235,11 +2248,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
                     overflow: "hidden", minWidth: 180,
                   }}>
-                    {THINKING_LEVELS.filter((lvl) => {
-                      if (!availableThinkingLevels || availableThinkingLevels.length <= 1) return true;
-                      if (lvl === "auto") return true;
-                      return availableThinkingLevels.includes(lvl);
-                    }).map((lvl) => {
+                    {thinkingLevelOptions(engine, availableThinkingLevels).map((lvl) => {
                       const isActive = (thinkingLevel ?? "auto") === lvl;
                        const desc = t(THINKING_LEVEL_DESC_KEYS[lvl]);
                       const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;

@@ -11,6 +11,7 @@ import { ClaudeInputLedger, type ClaudeInputKind } from "./claude-input-ledger";
 import { interruptClaude, supportsClaudeSteering, canRecallClaudeInput, recallClaudeInput } from "./claude-steering";
 import { claudeSlashCommands, claudeSlashCommandRestriction } from "./claude-code-commands";
 import { ClaudeWebTranscript } from "./claude-code-store";
+import { readClaudeModels, readClaudeModelSettings, claudeEffortLevels, isClaudeEffort, type ClaudeModelSettings } from "./claude-models";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
 
@@ -58,6 +59,21 @@ export class ClaudeCodeSession {
   private transcript?: ClaudeWebTranscript;
   private projector?: ClaudeEventProjector;
   private model = "";
+  private modelSettings?: ClaudeModelSettings;
+  private settingsRevision = 0;
+  private get effortControlAvailable(): boolean { return Boolean(this.modelSettings && typeof this.query?.applyFlagSettings === "function"); }
+  private async refreshModelSettings(): Promise<void> {
+    const revision = this.settingsRevision;
+    const settings = await readClaudeModelSettings(this.query!);
+    if (!settings || revision !== this.settingsRevision || this.closed) return;
+    if (this.ready) {
+      if (settings.model !== this.model) this.transcript?.setModel(settings.model);
+      if (settings.effort !== this.modelSettings?.effort) this.transcript?.setEffort(settings.effort ?? "auto");
+    }
+    this.modelSettings = settings;
+    this.model = settings.model;
+    this.projector?.setModel(this.model);
+  }
   private readonly tasks = new AgentTasks("claude", event => { this.emit(event); this.changed(); this.resetIdle(); });
   private listeners = new Set<(event: AgentFrame) => void>();
   private dialogs = new Map<string, PendingDialog>();
@@ -121,7 +137,6 @@ export class ClaudeCodeSession {
   async start(): Promise<void> {
     try {
       const config = getClaudeConfig();
-      if (this.options.thinkingLevel) throw new Error("Claude thinking overrides are not supported by these web controls yet");
       if (this.options.initialModel && this.options.initialModel.provider !== "claude-code") throw new Error("Select a native Claude Code model");
       const env = claudeChildEnvironment();
       this.model = this.options.initialModel?.modelId || "";
@@ -129,13 +144,17 @@ export class ClaudeCodeSession {
       this.nativeExecutable = config.executable;
       this.projector = new ClaudeEventProjector(this.model);
       if (this.options.sessionFile) this.transcript = new ClaudeWebTranscript(this.nativeId, this.cwd, this.options.sessionFile);
+      this.model ||= this.transcript?.model ?? "";
       const resume = Boolean(this.options.sessionFile && this.transcript?.getMessages().some((m) => m.role === "user"));
+      const effort = this.options.thinkingLevel ?? this.transcript?.effort;
+      if (effort && effort !== "auto" && !isClaudeEffort(effort)) throw new Error("Invalid Claude effort level");
       const factory = this.createQuery ?? nativeClaudeQuery;
       this.query = factory({
         prompt: this.input,
         options: {
           cwd: this.cwd, env, pathToClaudeCodeExecutable: config.executable,
           ...(this.model ? { model: this.model } : {}),
+          ...(isClaudeEffort(effort) ? { effort } : {}),
           ...(this.options.catalogOnly ? {} : resume ? { resume: this.nativeId } : { sessionId: this.nativeId }),
           systemPrompt: { type: "preset", preset: "claude_code" },
           settingSources: ["user", "project", "local"],
@@ -161,9 +180,15 @@ export class ClaudeCodeSession {
         ]);
       } finally { clearTimeout(timer); }
       if (this.closed) throw new Error(this.lastError || "Claude Code exited during initialization");
+      if (effort === "auto") await this.query.applyFlagSettings({ effortLevel: null });
+      await this.refreshModelSettings();
+      if (isClaudeEffort(effort) && !claudeEffortLevels(await readClaudeModels(this.query), this.model).includes(effort)) {
+        throw new Error("Requested effort is not supported by the selected native Claude model");
+      }
       if (!this.options.catalogOnly) {
         this.transcript ??= new ClaudeWebTranscript(this.nativeId, this.cwd);
         if (this.model) this.transcript.setModel(this.model);
+        if (effort) this.transcript.setEffort(effort);
       }
       this.ready = true;
       this.resetIdle();
@@ -283,7 +308,9 @@ export class ClaudeCodeSession {
           this.context.invalidate();
           this.tools = frame.tools;
           this.terminalCommands = frame.terminal_slash_commands ?? [];
+          this.settingsRevision++;
           this.model = frame.model;
+          if (frame.effort === null || isClaudeEffort(frame.effort)) this.modelSettings = { model: frame.model, effort: frame.effort };
           this.projector!.setModel(this.model);
           this.transcript?.setModel(this.model);
         }
@@ -409,10 +436,12 @@ export class ClaudeCodeSession {
     this.resetIdle();
     switch (command.type) {
       case "get_state": {
+        if (!this.isRunning() && !this.changingModel) await this.refreshModelSettings();
         const contextUsage = await this.context.get(this.busy || this.changingModel);
         return {
           sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
           engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
+          thinkingLevel: this.modelSettings?.effort ?? "auto", effortControlAvailable: this.effortControlAvailable,
           isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active,
           tasks: this.tasks.snapshot(),
           isBashRunning: false, isCompacting: false, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
@@ -428,12 +457,34 @@ export class ClaudeCodeSession {
         const messages = await this.readChildMessages(this.nativeId, id, this.cwd);
         return this.tasks.detail(id, taskTranscript(messages));
       }
-      case "get_available_models": return { models: await this.query!.supportedModels() };
+      case "get_available_models": {
+        if (!this.isRunning() && !this.changingModel) await this.refreshModelSettings();
+        return { models: await readClaudeModels(this.query!), settings: this.modelSettings, effortControlAvailable: this.effortControlAvailable };
+      }
       case "get_native_usage": return this.query!.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
       case "get_commands": return { commands: claudeSlashCommands(await this.query!.supportedCommands(), this.terminalCommands) };
       case "get_skill_commands": return { commands: await this.query!.supportedCommands() };
       case "get_tools": return this.tools.map((name) => ({ name, description: "Claude Code native tool", active: true }));
-      case "get_available_thinking_levels": return { levels: [] };
+      case "get_available_thinking_levels": return { levels: claudeEffortLevels(await readClaudeModels(this.query!), this.model) };
+      case "set_thinking_level": {
+        if (this.isRunning() || this.changingModel) throw new Error("Wait for Claude Code to finish before changing effort");
+        const level = command.level;
+        if (level !== "auto" && !isClaudeEffort(level)) throw new Error("Invalid Claude effort level");
+        if (!this.effortControlAvailable) throw new Error("Native Claude effort controls are not supported by this CLI/SDK");
+        this.changingModel = true;
+        this.settingsRevision++;
+        try {
+          await this.refreshModelSettings();
+          if (level !== "auto" && !claudeEffortLevels(await readClaudeModels(this.query!), this.model).includes(level)) {
+            throw new Error("Effort level is not supported by the selected native Claude model");
+          }
+          await this.query!.applyFlagSettings({ effortLevel: level === "auto" ? null : level });
+          await this.refreshModelSettings();
+          this.transcript?.setEffort(level === "auto" ? "auto" : this.modelSettings?.effort ?? level);
+          this.changed();
+          return { thinkingLevel: this.modelSettings?.effort ?? "auto" };
+        } finally { this.changingModel = false; this.context.invalidate(); }
+      }
       case "get_messages": return { messages: this.transcript!.getMessages() };
       case "get_last_assistant_text": {
         const last = this.transcript!.getMessages().findLast((m) => m.role === "assistant");
@@ -503,18 +554,24 @@ export class ClaudeCodeSession {
         this.changed();
         return null;
       case "set_model": {
-        if (this.busy || this.changingModel) throw new Error("Wait for Claude Code to finish before switching models");
+        if (this.isRunning() || this.changingModel) throw new Error("Wait for Claude Code to finish before switching models");
         if (command.provider !== "claude-code" || typeof command.modelId !== "string") throw new Error("Select a native Claude Code model");
         this.changingModel = true;
+        this.settingsRevision++;
         this.context.invalidate();
         try {
-          const models = await this.query!.supportedModels();
+          const models = await readClaudeModels(this.query!);
           if (!models.some((model) => model.value === command.modelId || model.resolvedModel === command.modelId)) throw new Error("Model is not in the native Claude Code catalog");
           await this.query!.setModel(command.modelId);
           this.model = command.modelId;
+          await this.refreshModelSettings();
           this.projector!.setModel(this.model);
           this.transcript?.setModel(this.model);
-          return { id: this.model, provider: "claude-code" };
+          // Persist the new model's applied effort, never a stale unsupported
+          // override belonging to the previous model.
+          if (this.modelSettings) this.transcript?.setEffort(this.modelSettings.effort ?? "auto");
+          this.changed();
+          return { id: this.model, provider: "claude-code", thinkingLevel: this.modelSettings?.effort ?? "auto" };
         } finally { this.changingModel = false; this.context.invalidate(); }
       }
       case "steer":

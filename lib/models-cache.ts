@@ -1,12 +1,15 @@
 export interface ModelsData {
   models: Record<string, string>;
-  modelList: { id: string; name: string; provider: string }[];
+  modelList: { id: string; name: string; provider: string; resolvedModel?: string; description?: string }[];
   defaultModel: { provider: string; modelId: string } | null;
   thinkingLevels: Record<string, string[]>;
   thinkingLevelMaps: Record<string, Record<string, string | null>>;
   /** `provider/modelId` → thinking level pinned by an `enabledModels` `:level` suffix. */
   thinkingLevelPins: Record<string, string>;
   modelError?: string;
+  /** Actual native default for display only; not an implicit startup override. */
+  defaultThinkingLevel?: string;
+  effortControlAvailable?: boolean;
   /** Warnings from resolving the `enabledModels` scope (e.g. a pattern matched nothing). */
   modelScopeWarnings?: string[];
 }

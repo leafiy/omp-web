@@ -210,7 +210,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
   const {
     loading, error, messages, entryIds, streamState, taskSnapshot, taskStatusStale,
     hasEarlierHistory, loadingEarlier, historyPageError, loadEarlierHistory,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
+    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, effortControlAvailable, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, canSendDuringRun, canQueueFollowUp,
@@ -376,7 +376,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       compactError={compactError}
       compactResult={compactResult}
       thinkingLevel={thinkingLevel}
-      onThinkingLevelChange={supportsExtendedChat(engine) && (session || isNew) ? handleThinkingLevelChange : undefined}
+      onThinkingLevelChange={(supportsExtendedChat(engine) || (engine === "claude" && effortControlAvailable && Boolean(availableThinkingLevels?.length))) && (session || isNew) ? handleThinkingLevelChange : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}

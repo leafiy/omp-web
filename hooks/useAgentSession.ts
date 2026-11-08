@@ -75,6 +75,7 @@ interface LastAssistantTextResponse {
 }
 
 type AgentStateResponse = {
+  model?: { id: string; provider: string };
   tasks?: AgentTaskSnapshot;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   systemPrompt?: string;
@@ -350,7 +351,7 @@ export interface AttachedImage {
 }
 
 type SelectedModel = { provider: string; modelId: string };
-type ModelEntry = { id: string; name: string; provider: string; contextWindow?: number };
+type ModelEntry = { id: string; name: string; provider: string; contextWindow?: number; resolvedModel?: string };
 type ModelsResponse = {
   models: Record<string, string>;
   modelList?: ModelEntry[];
@@ -359,6 +360,8 @@ type ModelsResponse = {
   thinkingLevelMaps?: Record<string, Record<string, string | null>>;
   thinkingLevelPins?: Record<string, string>;
   modelError?: string;
+  defaultThinkingLevel?: string;
+  effortControlAvailable?: boolean;
   modelScopeWarnings?: string[];
 };
 
@@ -409,6 +412,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [effortControlAvailable, setEffortControlAvailable] = useState(false);
   const [modelScopeWarnings, setModelScopeWarnings] = useState<string[]>([]);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
@@ -484,6 +488,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const newSessionPromotedRef = useRef(false);
   const newSessionModelOverrideRef = useRef<SelectedModel | null>(null);
   const thinkingLevelOverrideRef = useRef<Exclude<ThinkingLevelOption, "auto"> | null>(null);
+  const thinkingChangeRevisionRef = useRef(0);
   const promptRunIdRef = useRef(0);
   const contextRevisionRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
@@ -1633,11 +1638,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const refreshContext = async (sid: string) => {
       if (engine !== "claude") return;
       const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
-      if (sessionIdRef.current === sid && contextRevisionRef.current === revision) setContextUsage(state?.contextUsage ?? null);
+      if (sessionIdRef.current === sid && contextRevisionRef.current === revision) {
+        setContextUsage(state?.contextUsage ?? null);
+        if (state?.model) {
+          const applied = { provider: state.model.provider, modelId: state.model.id };
+          setCurrentModelOverride(applied);
+          if (isNew) setPendingModel(applied);
+        }
+        if (state.thinkingLevel !== undefined) setThinkingLevel((state.thinkingLevel ?? "auto") as ThinkingLevelOption);
+      }
     };
     if (isNew) {
       const selectedModel = { provider, modelId };
       newSessionModelOverrideRef.current = selectedModel;
+      if (engine === "claude") {
+        thinkingLevelOverrideRef.current = null;
+        setThinkingLevel("auto");
+      }
       setNewSessionModel(selectedModel);
       setPendingModel(selectedModel);
       const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
@@ -1646,7 +1663,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         await sendAgentCommand(sid, { type: "set_model", provider, modelId });
         await refreshContext(sid);
       } catch (e) {
-        console.error("Failed to set model:", e);
+        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        if (engine === "claude") await refreshContext(sid).catch(() => {});
       }
       return;
     }
@@ -1657,9 +1675,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCurrentModelOverride({ provider, modelId });
       await refreshContext(sid);
     } catch (e) {
-      console.error("Failed to set model:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [isNew, setNewSessionModel, engine]);
+  }, [isNew, setNewSessionModel, engine, addNotice]);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -1688,6 +1706,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (signal?.aborted || !mountedRef.current || modelScopeRef.current !== modelScopeKey || modelRequestRef.current !== requestId) return;
     setModelNames(d.models);
     setModelError(d.modelError ?? null);
+    setEffortControlAvailable(d.effortControlAvailable === true);
     setModelScopeWarnings(d.modelScopeWarnings ?? []);
     setModelThinkingLevels(d.thinkingLevels ?? {});
     setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
@@ -1695,15 +1714,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setModelList(nextModelList);
     if (isNew && !sessionIdRef.current) {
       const match = d.defaultModel
-        ? nextModelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
+        ? nextModelList.find((m) => (m.id === d.defaultModel?.modelId || m.resolvedModel === d.defaultModel?.modelId) && m.provider === d.defaultModel?.provider)
         : undefined;
       const displayModel = match ?? (supportsExtendedChat(engine) ? nextModelList[0] : undefined);
-      setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
+      setNewSessionDefaultModel(match && d.defaultModel ? d.defaultModel : displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
       // An `enabledModels` pattern may pin a thinking level (`anthropic/*:high`).
       // Like pi, apply it to the model a new session starts with.
       const pinned = displayModel && d.thinkingLevelPins?.[`${displayModel.provider}/${displayModel.id}`];
       if (thinkingLevelOverrideRef.current === null) {
-        setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
+        setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? (newSessionModelOverrideRef.current ? "auto" : (d.defaultThinkingLevel as ThinkingLevelOption | undefined) ?? "auto"));
       }
     }
   }, [engine, isNew, modelCwd, modelScopeKey]);
@@ -2038,19 +2057,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [opts.chatInputRef, addNotice]);
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
-    setThinkingLevel(level);
-    if (isNew && !sessionIdRef.current) {
-      thinkingLevelOverrideRef.current = level === "auto" ? null : level;
-    }
-    if (level === "auto") return; // "auto" leaves pi's current setting untouched
+    const revision = ++thinkingChangeRevisionRef.current;
+    const scope = modelScopeRef.current;
     const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, { type: "set_thinking_level", level });
-    } catch (e) {
-      console.error("Failed to set thinking level:", e);
+    if (!sid) {
+      if (isNew) {
+        thinkingLevelOverrideRef.current = level === "auto" ? null : level;
+        setThinkingLevel(level);
+      }
+      return;
     }
-  }, [isNew]);
+    if (level === "auto" && engine !== "claude") { setThinkingLevel(level); return; }
+    try {
+      const result = await sendAgentCommand<{ thinkingLevel?: string }>(sid, { type: "set_thinking_level", level });
+      if (!mountedRef.current || sessionIdRef.current !== sid || modelScopeRef.current !== scope || thinkingChangeRevisionRef.current !== revision) return;
+      const applied = (result?.thinkingLevel ?? level) as ThinkingLevelOption;
+      setThinkingLevel(applied);
+      if (engine === "claude" && level !== "auto" && applied !== level) addNotice({ type: "warning", message: `Claude applied effort ${applied} (requested ${level}); native model and policy limits take precedence.` });
+    } catch (e) {
+      if (mountedRef.current && sessionIdRef.current === sid && modelScopeRef.current === scope && thinkingChangeRevisionRef.current === revision) {
+        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }, [isNew, engine, addNotice]);
 
   const handleToolPresetChange = useCallback(async (preset: "none" | "default" | "full") => {
     const toolNames = getToolNamesForPreset(preset);
@@ -2204,6 +2233,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setModelNames({});
     setModelList([]);
     setModelError(null);
+    setEffortControlAvailable(false);
+    thinkingChangeRevisionRef.current++;
     setModelScopeWarnings([]);
     setModelThinkingLevels({});
     setModelThinkingLevelMaps({});
@@ -2216,7 +2247,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     const controller = new AbortController();
     loadModels(controller.signal).catch((e) => {
-      if (e instanceof DOMException && e.name === "AbortError") return;
+      if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
+      setModelError(e instanceof Error ? e.message : String(e));
     });
     return () => controller.abort();
   }, [loadModels, modelsRefreshKey]);
@@ -2252,7 +2284,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState, taskSnapshot, taskStatusStale,
     hasEarlierHistory: Boolean(historyPage?.before), loadingEarlier, historyPageError, loadEarlierHistory,
-    agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, effortControlAvailable, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage: sessionStats?.contextUsage ?? contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,

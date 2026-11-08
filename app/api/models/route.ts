@@ -6,6 +6,7 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-acces
 import { parseEngine, type AgentEngine } from "@/lib/engine";
 import { ClaudeCodeSession } from "@/lib/claude-code-session";
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
+import { claudeModelsData, type ClaudeModelSettings } from "@/lib/claude-models";
 import { CodexRpcClient, denyCodexRequest, listCodexModels } from "@/lib/codex-rpc-client";
 
 export const dynamic = "force-dynamic";
@@ -32,10 +33,8 @@ async function loadModels(cwd: string, engine: AgentEngine): Promise<ModelsData>
     const session = new ClaudeCodeSession({ cwd, catalogOnly: true }, () => {});
     try {
       await session.start();
-      const { models } = await session.send({ type: "get_available_models" }) as { models: ModelInfo[] };
-      const modelList = models.map((m) => ({ id: m.value, provider: "claude-code", name: m.displayName || m.value }));
-      const names = Object.fromEntries(models.flatMap((m) => [[`claude-code:${m.value}`, m.displayName || m.value], ...(m.resolvedModel ? [[`claude-code:${m.resolvedModel}`, m.displayName || m.value]] : [])]));
-      return { ...EMPTY_MODELS, modelList, models: names, defaultModel: null };
+      const catalog = await session.send({ type: "get_available_models" }) as { models: ModelInfo[]; settings?: ClaudeModelSettings; effortControlAvailable: boolean };
+      return claudeModelsData(catalog.models, catalog.settings, catalog.effortControlAvailable);
     } finally { await session.shutdown(); }
   }
   // Each engine discovers its own credentials, project config and models.
