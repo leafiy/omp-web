@@ -319,10 +319,11 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
   }, [ctxKey, onContextUsageChange]);
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
 
+  // Dropped files are accepted while the agent runs too; ChatInput decides
+  // what can be queued (text/@references) and what waits for the run (images).
   const onDrop = useCallback((files: File[]) => {
-    if (sessionBusy) return;
     chatInputRef?.current?.addFiles(files);
-  }, [sessionBusy, chatInputRef]);
+  }, [chatInputRef]);
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
@@ -439,7 +440,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {isDragOver && !sessionBusy && (
+      {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {[0, 0.8, 1.6].map((delay) => (

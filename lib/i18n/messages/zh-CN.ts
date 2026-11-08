@@ -359,6 +359,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.uploadLimits": "支持任意文件类型 · 单文件最大 25MB / 合计 100MB",
     "chat.uploadingFiles": "正在准备 / 上传附件…请等待完成后发送。",
     "chat.uploadWait": "请等待当前附件处理完成后，再添加其他文件。",
+    "chat.imagesWaitForRun": "图片会在 agent 运行结束后随下一条消息发送；运行中的排队消息（steer / follow-up）只支持纯文字。",
     "chat.attachmentError": "附件处理失败",
     "chat.uploadTooLarge": "{name}：单文件不能超过 25MB。",
     "chat.uploadTotalTooLarge": "每次所选文件合计不能超过 100MB。",

@@ -358,6 +358,7 @@ export const enLocale: LocalePlugin = {
     "chat.uploadLimits": "Any file type · Up to 25MB each / 100MB total",
     "chat.uploadingFiles": "Preparing / uploading attachments… Please wait before sending.",
     "chat.uploadWait": "Please wait for the current attachments to finish, then add more files.",
+    "chat.imagesWaitForRun": "Images are sent with your next message after the agent finishes; queued steer/follow-up messages are text only.",
     "chat.attachmentError": "Attachment error",
     "chat.uploadTooLarge": "{name}: each file must be 25MB or smaller.",
     "chat.uploadTotalTooLarge": "Files must total 100MB or less per selection.",

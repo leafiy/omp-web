@@ -539,8 +539,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, [draftKey, cwd]);
 
+  // Attachments can be prepared while the agent runs: uploaded files become
+  // @references (plain text, so they can still be queued); images stay in the
+  // draft and go out with the next normal send, since queues are text-only.
   const processFiles = useCallback(async (files: File[]) => {
-    if (isStreaming || !files.length) return;
+    if (!files.length) return;
     if (attachmentJobRef.current) {
       setAttachmentError(t("chat.uploadWait"));
       return;
@@ -637,7 +640,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         setAttachmentBusy(false);
       }
     }
-  }, [isStreaming, cwd, t]);
+  }, [cwd, t]);
 
   const removeImage = useCallback((index: number) => {
     editRevisionRef.current++;
@@ -1334,7 +1337,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ref={fileInputRef}
         type="file"
         multiple
-        disabled={isStreaming || attachmentBusy}
+        disabled={attachmentBusy}
         style={{ display: "none" }}
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
@@ -1357,6 +1360,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         )}
         {attachmentError && (
           <ModelNoticeBanner tone="error" title={t("chat.attachmentError")} body={attachmentError} />
+        )}
+        {isStreaming && attachedImages.length > 0 && (
+          <div role="status" aria-live="polite" style={{ marginBottom: 8, fontSize: 12, color: "var(--text-muted)" }}>
+            {t("chat.imagesWaitForRun")}
+          </div>
         )}
         {/* Queued steering / follow-up messages (delivered by pi on upcoming turns) */}
         {((queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)) > 0 && (
@@ -1897,7 +1905,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <button
               data-composer-attach
               onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming || attachmentBusy}
+              disabled={attachmentBusy}
               title={t("chat.attachFiles")}
               aria-label={t("chat.attachFiles")}
               style={{
@@ -1906,12 +1914,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 background: "none", border: "none",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
-                cursor: isStreaming || attachmentBusy ? "not-allowed" : "pointer",
-                opacity: isStreaming || attachmentBusy ? 0.5 : 1,
+                cursor: attachmentBusy ? "not-allowed" : "pointer",
+                opacity: attachmentBusy ? 0.5 : 1,
                 transition: "background 0.12s, color 0.12s",
               }}
               onMouseEnter={(e) => {
-                if (isStreaming) return;
+                if (attachmentBusy) return;
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
               }}
