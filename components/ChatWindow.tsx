@@ -1,7 +1,7 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
 import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -9,6 +9,7 @@ import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantB
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
+import { CollapsedHistoryTurn, HistoryTurnToggle } from "./HistoryTurnFold";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { NewSessionDirectoryPicker } from "./NewSessionDirectoryPicker";
 import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
@@ -20,13 +21,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import {
-  captureScrollDistance,
-  getNextVisibleCount,
-  getVisibleRenderWindow,
-  restoreScrollTop,
-  VISIBLE_PAGE_SIZE,
-} from "@/lib/chat-lazy-load";
+import { historyTurnKey, isTurnAnchor } from "@/lib/history-turns";
 
 interface Props {
   session: SessionInfo | null;
@@ -115,16 +110,9 @@ function hasDisplayableProcessMessage(message: AgentMessage): boolean {
 
 // A user message normally anchors a turn (user prompt → process → final
 // answer), and the process messages in between get folded into a collapsed
-// ProcessDetailsGroup. When compaction fires mid-turn, pi drops the original
-// user prompt and inserts a compaction summary (role "custom", customType
-// "compaction") in its place; the agent then keeps producing tool calls and a
-// final answer with no user message left to anchor them. Treat a compaction
-// summary as an anchor too, otherwise every post-compaction message renders
-// standalone and never collapses.
-function isGroupAnchor(message: AgentMessage): boolean {
-  if (message.role === "user") return true;
-  return message.role === "custom" && (message as CustomMessage).customType === "compaction";
-}
+// ProcessDetailsGroup. A compaction summary also anchors a turn (see
+// isTurnAnchor): compaction can replace the prompt mid-turn, and the
+// remaining tool calls and answer must still collapse under something.
 
 function withAssistantBlocks(
   message: AssistantMessage,
@@ -211,7 +199,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
 
   const {
     loading, error, messages, entryIds, streamState, taskSnapshot, taskStatusStale,
-    hasEarlierHistory, loadingEarlier, historyPageError, loadEarlierHistory,
+    historyPageError, historyTurns, historyTurnStates, toggleHistoryTurn,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, effortControlAvailable, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
@@ -245,42 +233,6 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     registerAbortHandler(sessionBusy ? handleAbort : null);
   }, [sessionBusy, handleAbort]);
 
-  // --- Lazy-load historical messages ---
-  // Only render the last N messages initially. When the user scrolls to the
-  // top, load another page while keeping the scroll position stable.
-  const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const prevScrollDistanceRef = useRef<number | null>(null);
-
-  // IntersectionObserver on the sentinel div at the top of the message list.
-  // When it becomes visible, load the next page of older messages.
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    const container = scrollContainerRef.current;
-    if (!sentinel || !container) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          // Save distance from top before prepending to restore scroll later
-          prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
-          setVisibleCount((prev) => getNextVisibleCount(prev));
-        }
-      },
-      { root: container, threshold: 0 }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [visibleCount, messages.length, scrollContainerRef]);
-
-  // After visibleCount increases (more messages prepended), restore the
-  // scroll position so the viewport doesn't jump.
-  useEffect(() => {
-    if (prevScrollDistanceRef.current == null) return;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    container.scrollTop = restoreScrollTop(container.scrollHeight, prevScrollDistanceRef.current);
-    prevScrollDistanceRef.current = null;
-  }, [visibleCount, messages.length, scrollContainerRef]);
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
   const statsKey = sessionStats
@@ -327,7 +279,20 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
-  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  // Everything shown, in display order: open history turns in full, a
+  // collapsed prompt turn as its preview, then the loaded window. The
+  // minimap walks this list; its user/assistant entries index messageRefs.
+  const displayedMessages = useMemo(() => {
+    if (historyTurns.length === 0) return messages;
+    const list: AgentMessage[] = [];
+    for (const turn of historyTurns) {
+      const state = historyTurnStates[historyTurnKey(turn)];
+      if (state?.expanded && state.messages) list.push(...state.messages);
+      else if (turn.kind === "user") list.push({ role: "user", content: turn.text, timestamp: turn.timestamp });
+    }
+    list.push(...messages);
+    return list;
+  }, [historyTurns, historyTurnStates, messages]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
@@ -340,10 +305,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     }
     return history.reverse();
   }, [messages]);
-  const messageRefs = useMessageRefs(visibleMessages.length);
-  const revealHistoryForMinimap = useCallback(() => {
-    setVisibleCount((current) => Math.max(current, messages.length * 2));
-  }, [messages.length]);
+  const messageRefs = useMessageRefs(displayedMessages.filter((m) => m.role === "user" || m.role === "assistant").length);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
@@ -535,193 +497,233 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               <ExtensionWidgets widgets={aboveEditorWidgets} />
 
             {(() => {
-              const toolResultsMap = new Map<string, ToolResultMessage>();
-              for (const msg of messages) {
-                if (msg.role === "toolResult") {
-                  toolResultsMap.set((msg as ToolResultMessage).toolCallId, msg as ToolResultMessage);
-                }
-              }
-
-              let lastUserIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === "user") { lastUserIdx = i; break; }
-              }
-              // Anchor for live-tail detection: the last user message, or a
-              // compaction summary when compaction has replaced it mid-turn.
-              // Computed independently from lastUserIdx (which is kept for the
-              // scroll-to-user ref) because a compaction summary can sit after
-              // the last user message and anchor the still-streaming segment.
-              let lastAnchorIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (isGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
-              }
-
-              const visibleRefIndexByMessage = new Map<number, number>();
-              let refIdx = 0;
-              messages.forEach((msg, idx) => {
-                if (msg.role === "user" || msg.role === "assistant") {
-                  visibleRefIndexByMessage.set(idx, refIdx++);
-                }
-              });
-
-              const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
-                messageRefs.current[refIndex] = el;
-                if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
-              };
-
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean } = {}): ReactNode => {
-                const msg = options.messageOverride ?? messages[idx];
-                const prevAssistantEntryId =
-                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
-                    ? entryIds[idx - 1]
-                    : undefined;
-                const isVisible = msg.role === "user" || msg.role === "assistant";
-                const currentRefIdx = visibleRefIndexByMessage.get(idx);
-                const keyPrefix = options.keyPrefix ?? "message";
-                let showTimestamp = false;
-                if (msg.role === "assistant") {
-                  showTimestamp = true;
-                  for (let j = idx + 1; j < messages.length; j++) {
-                    const r = messages[j].role;
-                    if (r === "user") break;
-                    if (r === "assistant") { showTimestamp = false; break; }
-                  }
-                  // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
-                  if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
-                    showTimestamp = false;
+              // One renderer for the loaded window and for every expanded history
+              // turn. `refBase` offsets this segment's user/assistant messages into
+              // messageRefs at their position in displayedMessages (minimap order).
+              const renderSegment = (
+                segMessages: AgentMessage[],
+                segEntryIds: string[],
+                options: { refBase: number; live: boolean; branchStart: boolean; prevAssistantEntryId?: string },
+              ): ReactNode[] => {
+                const toolResultsMap = new Map<string, ToolResultMessage>();
+                for (const msg of segMessages) {
+                  if (msg.role === "toolResult") {
+                    toolResultsMap.set((msg as ToolResultMessage).toolCallId, msg as ToolResultMessage);
                   }
                 }
-                if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
-                const view = (
-                  <MessageView
-                    key={`${keyPrefix}-view-${idx}`}
-                    message={msg}
-                    toolResults={toolResultsMap}
-                    modelNames={modelNames}
-                    cwd={messageCwd}
-                    onOpenFile={onOpenFile}
-                    entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || !supportsExtendedChat(engine) || (idx === 0 && msg.role === "user" && !hasEarlierHistory) ? undefined : handleFork}
-                    forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy || engine !== "omp" ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy || engine !== "omp" ? undefined : prevAssistantEntryId}
-                    onEditContent={handleEditContent}
-                    showTimestamp={showTimestamp}
-                    prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
-                    sessionId={session?.id ?? sessionIdRef.current ?? undefined}
-                  />
-                );
-                if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
-                return (
-                  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
-                    {view}
-                  </div>
-                );
+
+                let lastUserIdx = -1;
+                if (options.live) {
+                  for (let i = segMessages.length - 1; i >= 0; i--) {
+                    if (segMessages[i].role === "user") { lastUserIdx = i; break; }
+                  }
+                }
+                // Anchor for live-tail detection: the last user message, or a
+                // compaction summary when compaction has replaced it mid-turn.
+                // Computed independently from lastUserIdx (which is kept for the
+                // scroll-to-user ref) because a compaction summary can sit after
+                // the last user message and anchor the still-streaming segment.
+                let lastAnchorIdx = -1;
+                for (let i = segMessages.length - 1; i >= 0; i--) {
+                  if (isTurnAnchor(segMessages[i])) { lastAnchorIdx = i; break; }
+                }
+
+                const visibleRefIndexByMessage = new Map<number, number>();
+                let refIdx = options.refBase;
+                segMessages.forEach((msg, idx) => {
+                  if (msg.role === "user" || msg.role === "assistant") {
+                    visibleRefIndexByMessage.set(idx, refIdx++);
+                  }
+                });
+
+                const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
+                  messageRefs.current[refIndex] = el;
+                  if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
+                };
+
+                const renderMessage = (idx: number, renderOptions: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean } = {}): ReactNode => {
+                  const msg = renderOptions.messageOverride ?? segMessages[idx];
+                  // The first prompt of a segment edits from the previous turn's final assistant entry.
+                  const prevAssistantEntryId = msg.role !== "user"
+                    ? undefined
+                    : idx > 0
+                      ? (segMessages[idx - 1].role === "assistant" ? segEntryIds[idx - 1] : undefined)
+                      : options.prevAssistantEntryId;
+                  const isVisible = msg.role === "user" || msg.role === "assistant";
+                  const currentRefIdx = visibleRefIndexByMessage.get(idx);
+                  const keyPrefix = renderOptions.keyPrefix ?? "message";
+                  let showTimestamp = false;
+                  if (msg.role === "assistant") {
+                    showTimestamp = true;
+                    for (let j = idx + 1; j < segMessages.length; j++) {
+                      const r = segMessages[j].role;
+                      if (r === "user") break;
+                      if (r === "assistant") { showTimestamp = false; break; }
+                    }
+                    // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
+                    if (showTimestamp && options.live && streamState.isStreaming && idx === segMessages.length - 1) {
+                      showTimestamp = false;
+                    }
+                  }
+                  if (renderOptions.showTimestamp !== undefined) showTimestamp = renderOptions.showTimestamp;
+                  const view = (
+                    <MessageView
+                      key={`${keyPrefix}-view-${idx}`}
+                      message={msg}
+                      toolResults={toolResultsMap}
+                      modelNames={modelNames}
+                      cwd={messageCwd}
+                      onOpenFile={onOpenFile}
+                      entryId={segEntryIds[idx]}
+                      onFork={sessionBusy || isNew || !supportsExtendedChat(engine) || (options.branchStart && idx === 0 && msg.role === "user") ? undefined : handleFork}
+                      forking={forkingEntryId === segEntryIds[idx]}
+                      onNavigate={sessionBusy || engine !== "omp" ? undefined : handleNavigate}
+                      prevAssistantEntryId={sessionBusy || engine !== "omp" ? undefined : prevAssistantEntryId}
+                      onEditContent={handleEditContent}
+                      showTimestamp={showTimestamp}
+                      prevTimestamp={idx > 0 ? (segMessages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
+                      sessionId={session?.id ?? sessionIdRef.current ?? undefined}
+                    />
+                  );
+                  if (!isVisible || renderOptions.attachRef === false || currentRefIdx === undefined) return view;
+                  return (
+                    <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+                      {view}
+                    </div>
+                  );
+                };
+
+                const rendered: ReactNode[] = [];
+                for (let idx = 0; idx < segMessages.length;) {
+                  const msg = segMessages[idx];
+                  if (!isTurnAnchor(msg)) {
+                    rendered.push(renderMessage(idx));
+                    idx += 1;
+                    continue;
+                  }
+
+                  const userIdx = idx;
+                  let endIdx = userIdx + 1;
+                  while (endIdx < segMessages.length && !isTurnAnchor(segMessages[endIdx])) endIdx += 1;
+
+                  const finalAssistantIdx = findFinalAssistantIndex(segMessages, userIdx, endIdx);
+
+                  if (finalAssistantIdx === -1) {
+                    for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+                      rendered.push(renderMessage(renderIdx));
+                    }
+                    idx = endIdx;
+                    continue;
+                  }
+
+                  const isLiveTail = options.live && (sessionBusy || streamState.isStreaming) && endIdx === segMessages.length && userIdx === lastAnchorIdx;
+                  if (isLiveTail) {
+                    for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+                      rendered.push(renderMessage(renderIdx));
+                    }
+                    idx = endIdx;
+                    continue;
+                  }
+
+                  rendered.push(renderMessage(userIdx));
+
+                  const processIndices: number[] = [];
+                  for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
+                    processIndices.push(processIdx);
+                  }
+                  const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(segMessages[processIdx]));
+                  const finalAssistant = segMessages[finalAssistantIdx] as AssistantMessage;
+                  const finalSplit = splitFinalAssistantBlocks(finalAssistant);
+                  const finalProcessMessage = finalSplit.processBlocks.length > 0
+                    ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
+                    : null;
+                  const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant)
+                    ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
+                    : null;
+
+                  const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
+                  if (processCount > 0) {
+                    const processRefIdx = visibleProcessIndices
+                      .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
+                      .find((value): value is number => typeof value === "number")
+                      ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
+                    const processGroup = (
+                      <ProcessDetailsGroup
+                        messageCount={processCount}
+                        t={t}
+                        toolCallCount={countToolCalls(segMessages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
+                      >
+                        {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
+                        {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
+                      </ProcessDetailsGroup>
+                    );
+                    rendered.push(
+                      <div
+                        key={`process-group-${userIdx}-${finalAssistantIdx}`}
+                        ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
+                      >
+                        {processGroup}
+                      </div>,
+                    );
+                  }
+
+                  if (finalAnswerMessage) {
+                    rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
+                  }
+                  for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
+                    rendered.push(renderMessage(renderIdx));
+                  }
+                  idx = endIdx;
+                }
+                return rendered;
               };
 
+              // Older turns, one per prompt: collapsed rows keep every prompt on
+              // the page (and in the minimap) for direct jumps; an opened turn is
+              // rendered whole, exactly like the recent window below.
               const rendered: ReactNode[] = [];
-              for (let idx = 0; idx < messages.length;) {
-                const msg = messages[idx];
-                if (!isGroupAnchor(msg)) {
-                  rendered.push(renderMessage(idx));
-                  idx += 1;
-                  continue;
+              let refCursor = 0;
+              historyTurns.forEach((turn, turnIndex) => {
+                const key = historyTurnKey(turn);
+                const state = historyTurnStates[key];
+                const toggle = () => { void toggleHistoryTurn(turn); };
+                if (state?.expanded && state.messages && state.entryIds) {
+                  const previous = historyTurns[turnIndex - 1];
+                  const nodes = renderSegment(state.messages, state.entryIds, {
+                    refBase: refCursor,
+                    live: false,
+                    branchStart: turnIndex === 0,
+                    prevAssistantEntryId: previous?.endsWithAssistant ? previous.lastId : undefined,
+                  });
+                  // The bar stays directly under the prompt, where it was while collapsed.
+                  nodes.splice(turn.kind === "user" ? 1 : 0, 0, <HistoryTurnToggle key="history-turn-toggle" turn={turn} state={state} onToggle={toggle} t={t} />);
+                  rendered.push(<div key={`history-turn-${key}`} data-history-turn={turn.id}>{nodes}</div>);
+                  refCursor += state.messages.filter((m) => m.role === "user" || m.role === "assistant").length;
+                  return;
                 }
-
-                const userIdx = idx;
-                let endIdx = userIdx + 1;
-                while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
-
-                const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
-
-                if (finalAssistantIdx === -1) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
-                if (isLiveTail) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                rendered.push(renderMessage(userIdx));
-
-                const processIndices: number[] = [];
-                for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
-                  processIndices.push(processIdx);
-                }
-                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
-                const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
-                const finalSplit = splitFinalAssistantBlocks(finalAssistant);
-                const finalProcessMessage = finalSplit.processBlocks.length > 0
-                  ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
-                  : null;
-                const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant)
-                  ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
-                  : null;
-
-                const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
-                if (processCount > 0) {
-                  const processRefIdx = visibleProcessIndices
-                    .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
-                    .find((value): value is number => typeof value === "number")
-                    ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
-                  const processGroup = (
-                    <ProcessDetailsGroup
-                       messageCount={processCount}
-                       t={t}
-                      toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
-                    >
-                      {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
-                      {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
-                    </ProcessDetailsGroup>
-                  );
-                  rendered.push(
-                    <div
-                      key={`process-group-${userIdx}-${finalAssistantIdx}`}
-                      ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
-                    >
-                      {processGroup}
-                    </div>,
-                  );
-                }
-
-                if (finalAnswerMessage) {
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
-                }
-                for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
-                  rendered.push(renderMessage(renderIdx));
-                }
-                idx = endIdx;
-              }
-              const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
+                const refIndex = turn.kind === "user" ? refCursor++ : undefined;
+                rendered.push(
+                  <CollapsedHistoryTurn
+                    key={`history-turn-${key}`}
+                    turn={turn}
+                    state={state}
+                    onToggle={toggle}
+                    t={t}
+                    rowRef={refIndex === undefined ? undefined : (el) => { messageRefs.current[refIndex] = el; }}
+                  />,
+                );
+              });
+              const lastHistoryTurn = historyTurns.at(-1);
+              rendered.push(...renderSegment(messages, entryIds, {
+                refBase: refCursor,
+                live: true,
+                branchStart: historyTurns.length === 0,
+                prevAssistantEntryId: lastHistoryTurn?.endsWithAssistant ? lastHistoryTurn.lastId : undefined,
+              }));
               return (
                 <>
-                  {hasEarlierHistory && <div style={{ textAlign: "center", padding: 12 }}>
-                    <button type="button" disabled={loadingEarlier} onClick={async () => {
-                      if (await loadEarlierHistory()) {
-                        const container = scrollContainerRef.current;
-                        if (container) prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
-                        setVisibleCount((count) => count + 60);
-                      } else prevScrollDistanceRef.current = null;
-                    }} style={{ padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", color: "var(--text)" }}>
-                      {loadingEarlier ? (locale === "zh-CN" ? "读取中…" : "Loading…") : (locale === "zh-CN" ? "加载更早消息" : "Load earlier messages")}
-                    </button>
-                    {historyPageError && <p role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>{locale === "zh-CN" ? "会话有更新或暂时无法读取，请重试。" : historyPageError}</p>}
-                  </div>}
-                  {hasMore && (
-                     <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
-                       {t("chat.loadEarlier", { count: startIndex })}
-                    </div>
-                  )}
-                  {rendered.slice(startIndex)}
+                  {historyPageError && <p role="status" style={{ margin: "0 0 12px", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>{locale === "zh-CN" ? "会话有更新或暂时无法读取，请重试。" : historyPageError}</p>}
+                  {rendered}
                 </>
               );
             })()}
@@ -763,11 +765,10 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
         </div>
         {isMobile ? null : (
           <ChatMinimap
-            messages={messages}
+            messages={displayedMessages}
             streamingMessage={streamState.streamingMessage}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}
-            onRevealHistory={revealHistoryForMinimap}
           />
         )}
       </div>

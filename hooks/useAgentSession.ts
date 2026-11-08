@@ -14,12 +14,28 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { hasActiveTasks, hasUnknownTasks, type AgentTaskSnapshot } from "@/lib/agent-task-types";
 import { createAgentSession, sendAgentCommand } from "@/lib/agent-client";
 import { resolveContextUsage } from "@/lib/context-usage";
-import { historyClientCache, historyUrl, HistoryRequestError } from "@/lib/history-client-cache";
+import { fetchHistoryTurn, historyClientCache, historyUrl, HistoryRequestError } from "@/lib/history-client-cache";
 import type { HistoryPage } from "@/lib/history-page";
+import { historyTurnKey, type HistoryTurnSummary } from "@/lib/history-turns";
 import { getDraft, setDraft } from "@/lib/draft-store";
 import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+
+/**
+ * Browser state of one outlined history turn, keyed by `historyTurnKey`.
+ * A turn is fetched whole the first time it is expanded and then kept, so
+ * collapsing and expanding again does not refetch.
+ */
+export interface HistoryTurnState {
+  expanded: boolean;
+  loading?: boolean;
+  error?: "changed" | "failed";
+  messages?: AgentMessage[];
+  entryIds?: string[];
+}
+
+const NO_HISTORY_TURNS: HistoryTurnSummary[] = [];
 
 export interface SessionData {
   page?: HistoryPage;
@@ -388,10 +404,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const [data, setData] = useState<SessionData | null>(null);
   const [historyPage, setHistoryPage] = useState<(HistoryPage & { leafId: string | null }) | null>(null);
-  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [historyPageError, setHistoryPageError] = useState<string | null>(null);
-  const historyLoadRevision = useRef(0), messageRevision = useRef(0), earlierPending = useRef(false);
-  const historyPrepending = useRef(false);
+  const [historyTurnStates, setHistoryTurnStates] = useState<Record<string, HistoryTurnState>>({});
+  const historyTurnStatesRef = useRef(historyTurnStates);
+  historyTurnStatesRef.current = historyTurnStates;
+  const historyPageRef = useRef(historyPage);
+  historyPageRef.current = historyPage;
+  // Last persisted window (entry IDs parallel to messages); streamed additions are not included.
+  const loadedWindowRef = useRef<{ messages: AgentMessage[]; entryIds: string[] }>({ messages: [], entryIds: [] });
+  const historyLoadRevision = useRef(0), messageRevision = useRef(0);
   const [loading, setLoading] = useState(!isNew);
   const [error, setError] = useState<string | null>(null);
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
@@ -515,7 +536,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (msg.role !== "assistant") continue;
       assistantMessages += 1;
       const u = (msg as import("@/lib/types").AssistantMessage).usage;
-      toolCalls += msg.historyToolCalls ?? (msg as import("@/lib/types").AssistantMessage).content.filter((c) => c.type === "toolCall").length;
+      toolCalls += (msg as import("@/lib/types").AssistantMessage).content.filter((c) => c.type === "toolCall").length;
       if (!u) continue;
       tokens.input += u.input ?? 0;
       tokens.output += u.output ?? 0;
@@ -549,6 +570,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } satisfies SessionStatsInfo;
   }, [messages, sessionStatsOverride, contextUsage, displayModel, modelList, data?.filePath, session?.id, session?.name, engine, historyPage]);
 
+  /**
+   * Install a freshly read window and outline. Turns that just left the
+   * loaded window (a newer turn pushed them out) stay open with the data
+   * already on screen; states for turns no longer outlined are dropped.
+   */
+  const applyHistoryWindow = useCallback((d: SessionData) => {
+    const previous = loadedWindowRef.current;
+    const nextEntryIds = d.context.entryIds ?? [];
+    loadedWindowRef.current = { messages: d.context.messages, entryIds: nextEntryIds };
+    setMessages(d.context.messages); setEntryIds(nextEntryIds);
+    setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null); setHistoryPageError(null);
+    const turns = d.page?.turns ?? NO_HISTORY_TURNS;
+    setHistoryTurnStates((current) => {
+      const next: Record<string, HistoryTurnState> = {};
+      for (const turn of turns) {
+        const key = historyTurnKey(turn), kept = current[key];
+        if (kept?.messages || kept?.loading) { next[key] = kept; continue; }
+        const start = previous.entryIds.indexOf(turn.id), end = start + turn.count;
+        if (start >= 0 && end <= previous.messages.length && previous.entryIds[end - 1] === turn.lastId) {
+          next[key] = { expanded: true, messages: previous.messages.slice(start, end), entryIds: previous.entryIds.slice(start, end) };
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
     let messagesLoaded = false;
     const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current, modelRevision = contextRevisionRef.current;
@@ -556,8 +603,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const url = historyUrl(sid);
     const apply = (d: SessionData) => {
       if (!current() || d.sessionId !== sid) return;
-      setData(d); setActiveLeafId(d.leafId); setMessages(d.context.messages); setEntryIds(d.context.entryIds ?? []);
-      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null); setHistoryPageError(null);
+      setData(d); setActiveLeafId(d.leafId); applyHistoryWindow(d);
       setCurrentModelOverride(null); setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
       messagesLoaded = true; if (showLoading) setLoading(false);
@@ -607,46 +653,52 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // A superseded request is not a history failure; the newer load applies.
       if (e instanceof DOMException && e.name === "AbortError") return null;
       if (current()) {
-        if (e instanceof HistoryRequestError && [401, 403, 404].includes(e.status)) { setData(null); setMessages([]); setEntryIds([]); setHistoryPage(null); }
+        if (e instanceof HistoryRequestError && [401, 403, 404].includes(e.status)) {
+          setData(null); setMessages([]); setEntryIds([]); setHistoryPage(null); setHistoryTurnStates({});
+          loadedWindowRef.current = { messages: [], entryIds: [] };
+        }
         setError(String(e));
       }
       return null;
     } finally {
       if (mountedRef.current && showLoading && !messagesLoaded && historyLoadRevision.current === revision) setLoading(false);
     }
-  }, []);
+  }, [applyHistoryWindow]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
     try {
       const d = await historyClientCache.load(historyUrl(sid, leafId ? { leafId } : {}));
       if (!mountedRef.current || sessionIdRef.current !== sid || historyLoadRevision.current !== revision || messageRevision.current !== streamRevision) return;
-      setMessages(d.context.messages); setEntryIds(d.context.entryIds ?? []);
-      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null); setHistoryPageError(null);
+      applyHistoryWindow(d);
     } catch { if (mountedRef.current && historyLoadRevision.current === revision) setHistoryPageError("History could not be loaded. Please retry."); }
-  }, []);
+  }, [applyHistoryWindow]);
 
-  const loadEarlierHistory = useCallback(async () => {
-    const sid = sessionIdRef.current, page = historyPage;
-    if (!sid || !page?.before || earlierPending.current) return false;
-    const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
-    earlierPending.current = true; setLoadingEarlier(true); setHistoryPageError(null);
+  /** Expand or collapse one outlined turn; the first expansion fetches it whole. */
+  const toggleHistoryTurn = useCallback(async (turn: HistoryTurnSummary) => {
+    const sid = sessionIdRef.current, key = historyTurnKey(turn);
+    const state = historyTurnStatesRef.current[key];
+    if (state?.loading) return;
+    if (state?.messages) {
+      setHistoryTurnStates((current) => current[key] ? { ...current, [key]: { ...current[key], expanded: !current[key].expanded } } : current);
+      return;
+    }
+    if (!sid) return;
+    setHistoryTurnStates((current) => ({ ...current, [key]: { expanded: true, loading: true } }));
     try {
-      const d = await historyClientCache.load(historyUrl(sid, { before: page.before, version: page.version, ...(page.leafId ? { leafId: page.leafId } : {}) }));
-      if (!mountedRef.current || sessionIdRef.current !== sid || revision !== historyLoadRevision.current || streamRevision !== messageRevision.current) return false;
-      historyPrepending.current = true;
-      setMessages((previous) => [...d.context.messages, ...previous]);
-      setEntryIds((previous) => [...d.context.entryIds, ...previous]);
-      setHistoryPage(d.page ? { ...d.page, leafId: d.leafId } : null);
-      return true;
+      const d = await fetchHistoryTurn(sid, turn, historyPageRef.current?.leafId ?? null);
+      if (!mountedRef.current || sessionIdRef.current !== sid) return;
+      // Only fill a request the current outline still contains.
+      setHistoryTurnStates((current) => current[key]?.loading ? { ...current, [key]: { expanded: true, messages: d.messages, entryIds: d.entryIds } } : current);
     } catch (failure) {
-      if (mountedRef.current && revision === historyLoadRevision.current) {
-        if (failure instanceof HistoryRequestError && failure.status === 409) { historyClientCache.invalidate(sid); await loadContext(sid, page.leafId); }
-        setHistoryPageError("History changed or could not be loaded. Please retry.");
-      }
-      return false;
-    } finally { earlierPending.current = false; if (mountedRef.current) setLoadingEarlier(false); }
-  }, [historyPage, loadContext]);
+      if (!mountedRef.current || sessionIdRef.current !== sid) return;
+      const changed = failure instanceof HistoryRequestError && failure.status === 409;
+      setHistoryTurnStates((current) => current[key]?.loading ? { ...current, [key]: { expanded: false, error: changed ? "changed" : "failed" } } : current);
+      // The outline is stale (branch moved or file replaced). Refresh it when idle;
+      // a running prompt reloads history itself once it settles.
+      if (changed && !agentRunningRef.current) { historyClientCache.invalidate(sid); void loadSession(sid); }
+    }
+  }, [loadSession]);
 
   const loadTools = useCallback(async (sid: string) => {
     if (engine !== "omp") return;
@@ -2225,7 +2277,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
 
   useEffect(() => {
-    if (historyPrepending.current) { historyPrepending.current = false; return; }
     if (messages.length > 0) {
       if (pendingScrollToUserRef.current) {
         pendingScrollToUserRef.current = false;
@@ -2300,7 +2351,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState, taskSnapshot, taskStatusStale,
-    hasEarlierHistory: Boolean(historyPage?.before), loadingEarlier, historyPageError, loadEarlierHistory,
+    historyPageError,
+    historyTurns: historyPage?.turns ?? NO_HISTORY_TURNS, historyTurnStates, toggleHistoryTurn,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, effortControlAvailable, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage: sessionStats?.contextUsage ?? contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,

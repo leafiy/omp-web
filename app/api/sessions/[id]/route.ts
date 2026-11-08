@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { sessionFileVersion } from "@/lib/session-file-cache";
-import { pageHistory, lightHistoryTree } from "@/lib/history-page";
+import { windowHistory, lightHistoryTree } from "@/lib/history-page";
 import { guardHistoryRequest, historyHeaders } from "@/lib/history-http";
 import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -134,12 +134,10 @@ export async function GET(
 
     const searchParams = new URL(req.url).searchParams;
     const windowed = searchParams.get("window") === "1";
-    const limit = Number(searchParams.get("limit") ?? 60);
-    if (windowed && (!Number.isInteger(limit) || limit < 1 || limit > 120)) return NextResponse.json({ error: "Invalid page size" }, { status: 400, headers: historyHeaders });
     const version = sessionFileVersion(filePath);
     if (windowed && searchParams.has("version") && searchParams.get("version") !== version) return NextResponse.json({ error: "History changed; refresh the latest page" }, { status: 409, headers: historyHeaders });
     const liveLeafId = getRpcSession(id)?.getActiveLeafId();
-    const etag = '"' + createHash("sha256").update(JSON.stringify(["history-v1", id, version, liveLeafId, searchParams.toString()])).digest("hex") + '"';
+    const etag = '"' + createHash("sha256").update(JSON.stringify(["history-v2", id, version, liveLeafId, searchParams.toString()])).digest("hex") + '"';
     const headers = { ...historyHeaders, ETag: etag };
     if (windowed && req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
     const sm = openSessionManager(filePath);
@@ -149,9 +147,8 @@ export async function GET(
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = !windowed && searchParams.has("deferMedia");
     const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
-    let paged;
-    try { paged = windowed ? pageHistory(context, id, version, limit, searchParams.get("before") || undefined) : undefined; }
-    catch { return NextResponse.json({ error: "History cursor changed" }, { status: 409, headers: historyHeaders }); }
+    // Recent turns arrive whole; older turns are outlined and fetched whole on expand.
+    const paged = windowed ? windowHistory(context, version) : undefined;
 
     const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();

@@ -73,6 +73,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - Poll agent state while active and reconcile on visibility/online events. Ignore late SSE or polling data from previous runs.
 - Normalize tool-call field names in `lib/normalize.ts`: stored `{ id, name, arguments }` versus UI `{ toolCallId, toolName, input }`.
 - `entryIds` and displayed history messages must stay parallel for Fork/navigation targets.
+- Long history is folded per user turn (`lib/history-turns.ts`): recent turns load whole, older turns are outlined rows that fetch the whole turn on expand. Never split a turn, and never reintroduce per-message placeholders or "load more" paging. See [history cache](./docs/history-cache.zh-CN.md).
 - OMP `manual_compaction_start/end` maps to web `compaction_start/end`; Pi's supported events are adapted separately. Auto-compaction must remain busy until the engine settles.
 - Browser prompts may arrive concurrently from tools/subagents. Keep dialog IDs and queue pending dialogs rather than losing earlier ones.
 - Completion audio requires a user gesture; preserve `useAudio` unlock behavior.

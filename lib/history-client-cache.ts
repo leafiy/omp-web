@@ -1,4 +1,6 @@
 import type { SessionData } from "../hooks/useAgentSession";
+import type { AgentMessage } from "./types";
+import type { HistoryTurnSummary } from "./history-turns";
 
 export class HistoryRequestError extends Error { constructor(readonly status: number) { super(`History HTTP ${status}`); } }
 type Entry = { data?: SessionData; etag?: string; bytes: number; pending?: Promise<SessionData> };
@@ -50,5 +52,22 @@ export function createHistoryClientCache(fetcher: typeof fetch = (...args) => fe
 }
 export const historyClientCache = createHistoryClientCache();
 export function historyUrl(id: string, extra: Record<string, string> = {}): string {
-  return `/api/sessions/${encodeURIComponent(id)}?${new URLSearchParams({ window: "1", limit: "60", deferThinking: "1", deferMedia: "1", ...extra })}`;
+  return `/api/sessions/${encodeURIComponent(id)}?${new URLSearchParams({ window: "1", deferThinking: "1", ...extra })}`;
+}
+
+export interface HistoryTurnData { sessionId: string; leafId: string | null; turn: HistoryTurnSummary; messages: AgentMessage[]; entryIds: string[] }
+
+/**
+ * Fetch one whole collapsed turn. Not added to the LRU above: the chat view
+ * keeps expanded turns, and the response must match the outline it came from.
+ */
+export async function fetchHistoryTurn(sessionId: string, turn: HistoryTurnSummary, leafId: string | null, fetcher: typeof fetch = (...args) => fetch(...args)): Promise<HistoryTurnData> {
+  const query = new URLSearchParams({ deferThinking: "1", leafId: leafId ?? "" });
+  const response = await fetcher(`/api/sessions/${encodeURIComponent(sessionId)}/entries/${encodeURIComponent(turn.id)}/turn?${query}`, { cache: "no-store" });
+  if (!response.ok) throw new HistoryRequestError(response.status);
+  const data = await response.json() as HistoryTurnData;
+  if (data.sessionId !== sessionId || !Array.isArray(data.messages) || !Array.isArray(data.entryIds)
+    || data.messages.length !== turn.count || data.entryIds.length !== turn.count
+    || data.entryIds[0] !== turn.id || data.entryIds.at(-1) !== turn.lastId) throw new HistoryRequestError(409);
+  return data;
 }
