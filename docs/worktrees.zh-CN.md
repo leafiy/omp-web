@@ -4,7 +4,7 @@ omp-web 会把同一个 Git 项目的 main checkout 和 linked worktree 放在�
 
 ## Worktree 控件在哪里
 
-worktree 在新建会话时选择。点击侧边栏的 **新建会话**，或项目行上的铅笔按钮，然后打开聊天输入框上方的目录按钮。当这个目录是 Git checkout 的顶层目录时，菜单里的 **Worktrees** 分组会列出这个项目的 worktree。
+worktree 在新建会话时选择。点击侧边栏顶部的 **+**（新建会话），或项目行上的铅笔按钮，然后打开聊天输入框上方的目录按钮。当这个目录是 Git checkout 的顶层目录时，菜单里的 **Worktrees** 分组会列出这个项目的 worktree。
 
 以下情况不会显示 Worktrees 分组：
 

@@ -4,7 +4,7 @@ omp-web groups all Git worktrees of one project under a single project in the si
 
 ## Where the Worktree Controls Are
 
-You choose a worktree when you start a session. Click **New session** in the sidebar, or the pencil button on a project row, then open the directory chip above the chat input. When that directory is a Git checkout's top level, the menu lists the project's worktrees under **Worktrees**.
+You choose a worktree when you start a session. Click the **+** (New session) button at the top of the sidebar, or the pencil button on a project row, then open the directory chip above the chat input. When that directory is a Git checkout's top level, the menu lists the project's worktrees under **Worktrees**.
 
 The Worktrees section is hidden when:
 

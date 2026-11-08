@@ -1710,7 +1710,8 @@ span.linenumber {
     display: none;
   }
 }
-.sidebar-new-session:hover {
+.sidebar-new-session:hover:not(:disabled) {
+  background: var(--bg-selected) !important;
   color: var(--accent) !important;
   border-color: rgba(37, 99, 235, 0.35) !important;
 }

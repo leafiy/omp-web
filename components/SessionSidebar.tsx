@@ -625,83 +625,79 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ padding: "12px 10px 8px", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+      <div style={{ padding: "12px 10px 10px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <PiWebTitle />
-          <button
-            onClick={() => loadSessions(false)}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
-              border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
-              color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
-              cursor: "pointer",
-              width: 32, height: 32,
-              borderRadius: 7,
-              padding: 0,
-              flexShrink: 0,
-              transition: "background 0.3s, color 0.3s, border-color 0.3s",
-            }}
-            onMouseEnter={(e) => {
-              if (sessionRefreshDone) return;
-              e.currentTarget.style.background = "var(--bg-selected)";
-              e.currentTarget.style.color = "var(--accent)";
-              e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-            }}
-            onMouseLeave={(e) => {
-              if (sessionRefreshDone) return;
-              e.currentTarget.style.background = "var(--bg-hover)";
-              e.currentTarget.style.color = "var(--text-muted)";
-              e.currentTarget.style.borderColor = "var(--border)";
-            }}
-            title={t("sidebar.refresh")}
-            aria-label={t("sidebar.refresh")}
-          >
-            {sessionRefreshDone ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            {/* New session: the directory is chosen in the chat (defaults to /tmp). */}
+            <button
+              type="button"
+              className="sidebar-new-session"
+              onClick={() => startNewSession(DEFAULT_NEW_SESSION_CWD)}
+              disabled={!onNewSession}
+              aria-current={newSessionActive ? "page" : undefined}
+              aria-label={t("sidebar.newSession")}
+              title={t("sidebar.newSessionDefaultTitle", { path: DEFAULT_NEW_SESSION_CWD })}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 32, height: 32,
+                padding: 0,
+                border: "1px solid var(--border)",
+                borderRadius: 7,
+                background: newSessionActive ? "var(--bg-selected)" : "var(--bg-hover)",
+                color: newSessionActive ? "var(--accent)" : "var(--text-muted)",
+                cursor: onNewSession ? "pointer" : "not-allowed",
+                flexShrink: 0,
+                transition: "background 0.12s, color 0.12s, border-color 0.12s",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
               </svg>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                <path d="M3 3v5h5" />
-              </svg>
-            )}
-          </button>
+            </button>
+            <button
+              onClick={() => loadSessions(false)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
+                border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
+                color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
+                cursor: "pointer",
+                width: 32, height: 32,
+                borderRadius: 7,
+                padding: 0,
+                flexShrink: 0,
+                transition: "background 0.3s, color 0.3s, border-color 0.3s",
+              }}
+              onMouseEnter={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-selected)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = "var(--text-muted)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+              title={t("sidebar.refresh")}
+              aria-label={t("sidebar.refresh")}
+            >
+              {sessionRefreshDone ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
-
-        {/* New session: the directory is chosen in the chat (defaults to /tmp). */}
-        <button
-          type="button"
-          className="sidebar-new-session"
-          onClick={() => startNewSession(DEFAULT_NEW_SESSION_CWD)}
-          disabled={!onNewSession}
-          aria-current={newSessionActive ? "page" : undefined}
-          title={t("sidebar.newSessionDefaultTitle", { path: DEFAULT_NEW_SESSION_CWD })}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            height: 34,
-            padding: "0 10px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            background: newSessionActive ? "var(--bg-selected)" : "var(--bg-hover)",
-            color: newSessionActive ? "var(--text)" : "var(--text-muted)",
-            cursor: onNewSession ? "pointer" : "not-allowed",
-            fontSize: 12.5,
-            fontWeight: 500,
-            textAlign: "left",
-            transition: "background 0.12s, color 0.12s, border-color 0.12s",
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-          </svg>
-          <span style={{ flex: 1, minWidth: 0 }}>{t("sidebar.newSession")}</span>
-        </button>
       </div>
 
       {/* Projects heading + filter */}
