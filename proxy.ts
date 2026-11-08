@@ -31,8 +31,14 @@ export function proxy(request: NextRequest) {
 
   if (!PUBLIC_API_PATHS.has(pathname) && !isRequestAuthenticated(request)) {
     if (!isApiRequest) {
-      // Relative Location keeps the public host/scheme behind reverse proxies.
-      return new NextResponse(null, { status: 307, headers: { Location: "/login", "Cache-Control": "no-store" } });
+      // Next's middleware adapter parses Location as an absolute URL (a bare
+      // "/login" throws ERR_INVALID_URL → 500), then rewrites same-host
+      // redirects back to a relative path, which keeps the public host/scheme
+      // behind reverse proxies.
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.search = "";
+      return NextResponse.redirect(loginUrl, { status: 307, headers: { "Cache-Control": "no-store" } });
     }
     return webAuthRequired({}, true);
   }
