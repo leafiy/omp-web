@@ -17,6 +17,7 @@ import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { FileSpinner } from "./FileSpinner";
 import { StarfieldEmblem } from "./StarfieldEmblem";
 import { useTheme } from "@/hooks/useTheme";
+import { useAudio } from "@/hooks/useAudio";
 
 function ToolbarIconButton({
   onClick,
@@ -382,7 +383,17 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  // Sessions with a question/approval dialog waiting for the user.
+  const [waitingSessionIds, setWaitingSessionIds] = useState<Set<string>>(() => new Set());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
+  // null until the first snapshot: questions already pending at page load get
+  // an icon but no chime.
+  const previousWaitingSessionIdsRef = useRef<Set<string> | null>(null);
+  const selectedSessionIdRef = useRef(selectedSessionId);
+  selectedSessionIdRef.current = selectedSessionId;
+  const { playDoneSound } = useAudio();
+  const playDoneSoundRef = useRef(playDoneSound);
+  playDoneSoundRef.current = playDoneSound;
   // Once polling has delivered a snapshot it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const runningPollAuthoritativeRef = useRef(false);
@@ -391,19 +402,34 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const sessionListRequestRef = useRef(0);
 
+  const applyWaitingSessionIds = useCallback((ids: string[] | undefined) => {
+    const next = new Set(ids ?? []);
+    const previous = previousWaitingSessionIdsRef.current;
+    previousWaitingSessionIdsRef.current = next;
+    // The open chat plays its own sound when its dialog arrives; chime here
+    // only for a new question in a background session.
+    if (previous && [...next].some((id) => !previous.has(id) && id !== selectedSessionIdRef.current)) {
+      playDoneSoundRef.current();
+    }
+    setWaitingSessionIds((current) => (
+      current.size === next.size && [...next].every((id) => current.has(id)) ? current : next
+    ));
+  }, []);
+
   const loadSessions = useCallback(async (showLoading = false) => {
     const request = ++sessionListRequestRef.current;
     try {
       if (showLoading) setLoading(true);
       const res = await fetch("/api/sessions");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
+      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; waitingSessionIds?: string[] };
       if (request !== sessionListRequestRef.current) return;
       setAllSessions(data.sessions);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
       if (!runningPollAuthoritativeRef.current) {
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        applyWaitingSessionIds(data.waitingSessionIds);
       }
       // Drop unread markers for sessions that no longer exist (e.g. deleted).
       const existingIds = new Set(data.sessions.map((s) => s.id));
@@ -426,7 +452,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
         setSessionsLoaded(true);
       }
     }
-  }, []);
+  }, [applyWaitingSessionIds]);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -472,10 +498,11 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
           signal: current.signal,
         });
         if (!res.ok) return;
-        const data = await res.json() as { runningSessionIds?: string[] };
+        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[] };
         if (stopped || controller !== current) return;
         runningPollAuthoritativeRef.current = true;
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        applyWaitingSessionIds(data.waitingSessionIds);
       } catch {
         // Keep the last known state; the next visible-tab poll retries.
       } finally {
@@ -502,7 +529,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [applyWaitingSessionIds]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
@@ -789,6 +816,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                 expanded={expanded}
                 active={group.root === activeProjectRoot}
                 running={group.sessions.some((s) => runningSessionIds.has(s.id))}
+                waiting={group.sessions.some((s) => waitingSessionIds.has(s.id))}
                 unread={group.sessions.some((s) => unreadSessionIds.has(s.id))}
                 sessionCount={group.sessions.length}
                 onToggle={() => toggleProject(group.root, expanded)}
@@ -803,6 +831,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                       node={node}
                       selectedSessionId={selectedSessionId}
                       runningSessionIds={runningSessionIds}
+                      waitingSessionIds={waitingSessionIds}
                       unreadSessionIds={unreadSessionIds}
                       onSelectSession={onSelectSession}
                       onRenamed={loadSessions}
@@ -969,6 +998,7 @@ function ProjectGroupHeader({
   expanded,
   active,
   running,
+  waiting,
   unread,
   sessionCount,
   onToggle,
@@ -982,6 +1012,7 @@ function ProjectGroupHeader({
   expanded: boolean;
   active: boolean;
   running: boolean;
+  waiting: boolean;
   unread: boolean;
   sessionCount: number;
   onToggle: () => void;
@@ -1036,8 +1067,9 @@ function ProjectGroupHeader({
         {detail && (
           <PathLabel text={detail} style={{ flex: 1, fontSize: 10.5, fontWeight: 400, fontFamily: "var(--font-mono)", color: "var(--text-dim)" }} />
         )}
-        {!expanded && running && <RunningSessionIndicator label={t("sidebar.projectRunning")} />}
-        {!expanded && !running && unread && <UnreadSessionIndicator label={t("sidebar.projectUnread")} />}
+        {!expanded && waiting && <WaitingSessionIndicator label={t("sidebar.projectWaiting")} />}
+        {!expanded && !waiting && running && <RunningSessionIndicator label={t("sidebar.projectRunning")} />}
+        {!expanded && !waiting && !running && unread && <UnreadSessionIndicator label={t("sidebar.projectUnread")} />}
       </button>
       <span
         className="sidebar-project-count"
@@ -1082,6 +1114,7 @@ function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  waitingSessionIds,
   unreadSessionIds,
   onSelectSession,
   onRenamed,
@@ -1091,6 +1124,7 @@ function SessionTreeItem({
   node: SessionTreeNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  waitingSessionIds: Set<string>;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
@@ -1118,6 +1152,7 @@ function SessionTreeItem({
           session={node.session}
           isSelected={node.session.id === selectedSessionId}
           isRunning={runningSessionIds.has(node.session.id)}
+          isWaiting={waitingSessionIds.has(node.session.id)}
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
@@ -1136,6 +1171,7 @@ function SessionTreeItem({
               node={child}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              waitingSessionIds={waitingSessionIds}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
@@ -1187,6 +1223,37 @@ function RunningSessionIndicator({ label }: { label?: string }) {
   );
 }
 
+/** A question/approval is waiting for the user: amber badge with a pulsing ring. */
+function WaitingSessionIndicator({ label }: { label?: string }) {
+  const { t } = useI18n();
+  return (
+    <span
+      role="img"
+      title={label ?? t("sidebar.agentWaiting")}
+      aria-label={label ?? t("sidebar.agentWaiting")}
+      style={{
+        width: 16,
+        height: 16,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        color: "#f59e0b",
+      }}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ display: "block", overflow: "visible" }}>
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.4" opacity="0.45">
+          <animate attributeName="r" values="6.5;8.5;6.5" dur="1.4s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0.45;0;0.45" dur="1.4s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="8" cy="8" r="6.5" fill="currentColor" />
+        <path d="M6.1 6.2a1.95 1.95 0 0 1 3.8.6c0 1.3-1.9 1.6-1.9 2.7" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="8" cy="11.6" r="0.9" fill="#fff" />
+      </svg>
+    </span>
+  );
+}
+
 function UnreadSessionIndicator({ label }: { label?: string }) {
   const { t } = useI18n();
   return (
@@ -1218,6 +1285,7 @@ function SessionItem({
   session,
   isSelected,
   isRunning,
+  isWaiting,
   isUnread,
   onClick,
   onRenamed,
@@ -1230,6 +1298,7 @@ function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  isWaiting?: boolean;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
@@ -1433,7 +1502,7 @@ function SessionItem({
               <path d="M18 9a9 9 0 0 1-9 9" />
             </svg>
           )}
-          {isRunning ? <RunningSessionIndicator /> : isUnread ? <UnreadSessionIndicator /> : null}
+          {isWaiting ? <WaitingSessionIndicator /> : isRunning ? <RunningSessionIndicator /> : isUnread ? <UnreadSessionIndicator /> : null}
           {deleteError ? (
             <span role="alert" title={deleteError} style={{ flex: 1, minWidth: 0, color: "#ef4444", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {deleteError}

@@ -56,6 +56,8 @@ SDK 采用官方 `query()`、`initializationResult()`、流式输入、`canUseTo
 
 权限使用 `default`，没有 `bypassPermissions`，也没有 `allowedTools` 全放行。安全读取等是否直接运行由 CC 原生规则决定，不能承诺“每一次工具都会弹窗”。需要提示的调用进入浏览器，允许仅本次或拒绝；取消、5 分钟超时和进程退出均拒绝。断线时不批准，重连重放未解决的请求。[4]
 
+提问（CC `AskUserQuestion`、Codex `requestUserInput`）每题一个输入弹窗：`title` 只放问题，`header` 与选项（`choices`：名称 + 说明）作为仅展示用的结构化字段分行显示；作答仍是自由文本。
+
 ### 数据与配置隔离
 
 默认使用 `~/.local/state/omp-web/claude-code/`：

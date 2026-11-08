@@ -14,6 +14,7 @@ import { ClaudeWebTranscript } from "./claude-code-store";
 import { forgetClaudeNativeTitle, readClaudeNativeTitle } from "./claude-native-title";
 import { readClaudeModels, readClaudeModelSettings, claudeEffortLevels, isClaudeEffort, type ClaudeModelSettings } from "./claude-models";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
+import { questionDisplay } from "./question-dialog";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
 
 type QueryFactory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => Query;
@@ -130,6 +131,7 @@ export class ClaudeCodeSession {
   getActiveLeafId(): undefined { return undefined; }
   isAlive(): boolean { return this.ready && !this.closed; }
   isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active); }
+  hasPendingDialog(): boolean { return this.isAlive() && this.dialogs.size > 0; }
   onDestroy(callback: () => void): void { this.onDestroyCallback = callback; }
   async waitUntilReady(): Promise<void> {
     if (!this.isAlive()) throw new Error(this.lastError || "Claude Code is not ready");
@@ -456,6 +458,7 @@ export class ClaudeCodeSession {
         signal.removeEventListener("abort", abort);
         this.dialogs.delete(event.id);
         this.emit({ type: "extension_ui_request", id: randomUUID(), method: "cancel", targetId: event.id });
+        this.changed();
         resolve(response);
       };
       const abort = () => finish({ cancelled: true });
@@ -465,7 +468,7 @@ export class ClaudeCodeSession {
       this.dialogs.set(event.id, { event, finish, background });
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
-      else this.emit(event);
+      else { this.emit(event); this.changed(); }
     });
   }
 
@@ -477,8 +480,7 @@ export class ClaudeCodeSession {
       const answers: Record<string, string> = {};
       for (const raw of input.questions) {
         if (!raw || typeof raw !== "object" || typeof raw.question !== "string") return deny;
-        const choices = Array.isArray(raw.options) ? raw.options.filter((o: unknown) => o && typeof o === "object").map((o: { label?: string; description?: string }) => `${o.label ?? ""}: ${o.description ?? ""}`).join("\n") : "";
-        const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: `${raw.question}\n${choices}`, placeholder: raw.multiSelect ? "Enter one or more answers" : "Enter your answer" }, signal, background);
+        const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: raw.question, ...questionDisplay(raw), placeholder: raw.multiSelect ? "Enter one or more answers" : "Enter your answer" }, signal, background);
         if (answer.cancelled || typeof answer.value !== "string" || !answer.value.trim()) return deny;
         answers[raw.question] = answer.value;
       }

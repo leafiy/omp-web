@@ -892,6 +892,15 @@ function NoticeShelf({ notices, floating = false, align = "left" }: { notices: N
 
 type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 
+/** First line is the dialog heading; the rest (e.g. approval JSON) is body text, monospaced when it is JSON. */
+function splitDialogTitle(raw: string): { heading: string; detail: string; code: boolean } {
+  const text = raw.trim();
+  const index = text.indexOf("\n");
+  if (index < 0) return { heading: text, detail: "", code: false };
+  const detail = text.slice(index + 1).replace(/^\s*\n/, "");
+  return { heading: text.slice(0, index), detail, code: /^\s*[[{]/.test(detail) };
+}
+
 function ExtensionDialog({
   request,
   onRespond,
@@ -901,6 +910,7 @@ function ExtensionDialog({
 }) {
   const { t } = useI18n();
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
+  const title = splitDialogTitle(request.title);
 
   useEffect(() => {
     setValue(request.method === "editor" ? request.prefill ?? "" : "");
@@ -940,11 +950,41 @@ function ExtensionDialog({
         }}
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "40vh", overflow: "auto" }}>{request.title}</div>
-          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat.extensionRequest")}</div>
+          <div style={{ maxHeight: "40vh", overflow: "auto" }}>
+            {request.method === "input" && request.header && (
+              <div style={{ marginBottom: 4, color: "var(--accent)", fontSize: 11, fontWeight: 650, overflowWrap: "anywhere" }}>{request.header}</div>
+            )}
+            <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{title.heading}</div>
+            {title.detail && (
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "var(--text-muted)",
+                  fontSize: title.code ? 12 : 13,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  ...(title.code ? { fontFamily: "var(--font-mono)", padding: "8px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-panel)" } : {}),
+                }}
+              >
+                {title.detail}
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat.extensionRequest")}</div>
         </div>
 
         <div style={{ padding: 14 }}>
+          {request.method === "input" && request.choices && request.choices.length > 0 && (
+            <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "grid", gap: 10, maxHeight: "36vh", overflow: "auto" }}>
+              {request.choices.map((choice, index) => (
+                <li key={index} style={{ paddingLeft: 10, borderLeft: "2px solid var(--border)", overflowWrap: "anywhere" }}>
+                  {choice.label && <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{choice.label}</div>}
+                  {choice.description && <div style={{ marginTop: choice.label ? 2 : 0, color: "var(--text-muted)", fontSize: 12.5, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{choice.description}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
           {request.method === "confirm" && (
             <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
           )}

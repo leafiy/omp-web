@@ -14,6 +14,8 @@ export interface FollowUpNativeSession {
   generateSessionTitle(prompt: string, signal: AbortSignal): Promise<string>;
   isAlive(): boolean;
   isRunning(): boolean;
+  /** A dialog (question/approval) is waiting for the browser user. */
+  hasPendingDialog?(): boolean;
   getActiveLeafId(): string | null | undefined;
   waitUntilReady(): Promise<void>;
   onEvent(listener: (event: AgentFrame) => void): () => void;
@@ -96,6 +98,7 @@ export class FollowUpSession implements FollowUpNativeSession {
   getActiveLeafId() { return this.native.getActiveLeafId(); }
   isAlive() { return !this.closed && this.native.isAlive(); }
   isRunning() { return this.isAlive() && (this.native.isRunning() || this.pending.length > 0 || this.manualRequests > 0 || Boolean(this.titleController)); }
+  hasPendingDialog() { return this.isAlive() && (this.native.hasPendingDialog?.() ?? false); }
   waitUntilReady() { return this.native.waitUntilReady(); }
   generateSessionTitle(prompt: string, signal: AbortSignal) { return this.native.generateSessionTitle(prompt, signal); }
   async start() { try { await this.native.start(); } catch (error) { this.destroy(); throw error; } }

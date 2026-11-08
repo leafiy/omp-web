@@ -21,6 +21,13 @@ function playTone(ctx: AudioContext) {
   });
 }
 
+// One AudioContext for every hook instance, so it can be resumed if the
+// browser autoplay policy suspends it (contexts created outside user gestures
+// start in "suspended" state and produce no sound). Sharing it lets a gesture
+// that unlocks audio in the chat also cover the sidebar's background chimes.
+let sharedCtx: AudioContext | null = null;
+const SOUND_TOGGLE_EVENT = "omp-web:sound-toggle";
+
 export function useAudio() {
   const [enabled, setEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -31,18 +38,25 @@ export function useAudio() {
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
 
-  // Reuse a single AudioContext so it can be resumed if the browser
-  // autoplay policy suspends it (contexts created outside user gestures
-  // start in "suspended" state and produce no sound).
-  const ctxRef = useRef<AudioContext | null>(null);
+  // Keep every instance in step with the user's sound toggle.
+  useEffect(() => {
+    const onToggle = (event: Event) => {
+      const next = (event as CustomEvent<boolean>).detail === true;
+      enabledRef.current = next;
+      setEnabled(next);
+    };
+    window.addEventListener(SOUND_TOGGLE_EVENT, onToggle);
+    return () => window.removeEventListener(SOUND_TOGGLE_EVENT, onToggle);
+  }, []);
+
   const getCtx = useCallback((): AudioContext | null => {
-    if (ctxRef.current && ctxRef.current.state !== "closed") return ctxRef.current;
+    if (sharedCtx && sharedCtx.state !== "closed") return sharedCtx;
     try {
-      ctxRef.current = new AudioContext();
+      sharedCtx = new AudioContext();
     } catch {
       return null;
     }
-    return ctxRef.current;
+    return sharedCtx;
   }, []);
 
   const unlockAudio = useCallback((force = false) => {
@@ -58,6 +72,7 @@ export function useAudio() {
     enabledRef.current = next;
     localStorage.setItem("pi-sound-enabled", String(next));
     setEnabled(next);
+    window.dispatchEvent(new CustomEvent(SOUND_TOGGLE_EVENT, { detail: next }));
   }, [unlockAudio]);
 
   const playDone = useCallback(() => {

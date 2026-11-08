@@ -12,6 +12,7 @@ import { codexTaskTranscript } from "./agent-task-messages";
 import { WebSessionTranscript } from "./web-session-transcript";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
 import { codexContextUsage } from "./context-usage";
+import { questionDisplay } from "./question-dialog";
 import type { ContextUsage } from "./pi-types";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
 
@@ -64,6 +65,7 @@ export class CodexSession {
   getActiveLeafId(): undefined { return undefined; }
   isAlive(): boolean { return this.ready && !this.closed; }
   isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active); }
+  hasPendingDialog(): boolean { return this.isAlive() && this.dialogs.size > 0; }
   onDestroy(callback: () => void): void { this.destroyed = callback; }
   async waitUntilReady(): Promise<void> { if (!this.isAlive()) throw new Error(this.lastError || "Codex CLI is not ready"); }
   onEvent(listener: (event: AgentFrame) => void): () => void {
@@ -237,13 +239,14 @@ export class CodexSession {
         clearTimeout(timer); signal.removeEventListener("abort", cancel);
         this.dialogs.delete(event.id);
         this.emit({ type: "extension_ui_request", id: randomUUID(), method: "cancel", targetId: event.id });
+        this.changed();
         resolveAnswer(answer);
       };
       const cancel = () => finish({ cancelled: true });
       const timer = setTimeout(cancel, 5 * 60_000); timer.unref();
       event = { ...event, timeout: 5 * 60_000, expiresAt: Date.now() + 5 * 60_000 };
       this.dialogs.set(event.id, { event, finish }); signal.addEventListener("abort", cancel, { once: true });
-      if (signal.aborted) cancel(); else this.emit(event);
+      if (signal.aborted) cancel(); else { this.emit(event); this.changed(); }
     });
   }
 
@@ -277,10 +280,9 @@ export class CodexSession {
         else for (const value of params.questions) {
           const q = object(value);
           if (typeof q.id !== "string" || typeof q.question !== "string" || q.isSecret || signal.aborted) { cancelled = true; break; }
-          const choices = Array.isArray(q.options) ? q.options.map(object).map((o) => `${o.label || ""}: ${o.description || ""}`).join("\n") : "";
-          const title = `${q.question}\n${choices}`;
-          if (title.length > 24_000) { cancelled = true; break; }
-          const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title, placeholder: "请输入回答 / Your answer" }, signal);
+          const display = questionDisplay(q);
+          if (q.question.length + JSON.stringify(display).length > 24_000) { cancelled = true; break; }
+          const answer = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: q.question, ...display, placeholder: "请输入回答 / Your answer" }, signal);
           if (answer.cancelled || signal.aborted || typeof answer.value !== "string" || !answer.value.trim()) { cancelled = true; break; }
           answers[q.id] = { answers: [answer.value] };
         }

@@ -116,6 +116,7 @@ export class AgentSessionWrapper {
   isRunning(): boolean {
     return this.isAlive() && (this.busy || this.tasks.active || this.bashRunning || this.compactionRunning || this.prompts.size > 0 || this.transitioning);
   }
+  hasPendingDialog(): boolean { return this.isAlive() && this.pendingUi.size > 0; }
 
   async start(): Promise<void> {
     try {
@@ -257,6 +258,7 @@ export class AgentSessionWrapper {
           this.uiTimers.delete(id);
           if (!this.pendingUi.delete(id)) return;
           this.emit({ type: "extension_ui_request", id: randomUUID(), method: "cancel", targetId: id });
+          notifyRunningChange();
         }, frame.timeout);
         timer.unref();
         this.uiTimers.set(id, timer);
@@ -269,6 +271,7 @@ export class AgentSessionWrapper {
       else this.widgets.delete(frame.widgetKey);
     }
     this.emit(frame);
+    if (frame.method === "cancel" || DIALOG_METHODS.has(String(frame.method))) notifyRunningChange();
   }
 
   private cancelUiRequests(respond = false): void {
@@ -279,6 +282,7 @@ export class AgentSessionWrapper {
     this.pendingUi.clear();
     for (const timer of this.uiTimers.values()) clearTimeout(timer);
     this.uiTimers.clear();
+    notifyRunningChange();
   }
 
   private async refreshPiContextUsage(): Promise<void> {
@@ -369,6 +373,7 @@ export class AgentSessionWrapper {
       this.pendingUi.delete(command.id);
       clearTimeout(this.uiTimers.get(command.id));
       this.uiTimers.delete(command.id);
+      notifyRunningChange();
       return null;
     }
     if (this.transitioning) throw new Error(`${this.label} session transition is in progress`);
@@ -538,7 +543,7 @@ declare global {
   var __ompWebSessions: Map<string, WebAgentSession> | undefined;
   var __ompWebStartLocks: Map<string, Promise<StartedSession>> | undefined;
   var __ompWebStartingCwds: Map<string, number> | undefined;
-  var __ompWebRunningListeners: Set<(ids: string[]) => void> | undefined;
+  var __ompWebRunningListeners: Set<(ids: string[], waitingIds: string[]) => void> | undefined;
 }
 
 function getRegistry(): Map<string, WebAgentSession> {
@@ -596,7 +601,12 @@ export function getRunningRpcSessionIds(): string[] {
   return [...getRegistry()].filter(([, session]) => session.isRunning()).map(([id]) => id);
 }
 
-export function subscribeRunningSessions(listener: (ids: string[]) => void): () => void {
+/** Sessions with a question/approval dialog waiting for the browser user. */
+export function getWaitingRpcSessionIds(): string[] {
+  return [...getRegistry()].filter(([, session]) => session.hasPendingDialog()).map(([id]) => id);
+}
+
+export function subscribeRunningSessions(listener: (ids: string[], waitingIds: string[]) => void): () => void {
   const listeners = globalThis.__ompWebRunningListeners ??= new Set();
   listeners.add(listener);
   return () => { listeners.delete(listener); };
@@ -607,10 +617,11 @@ export function notifyRunningChange(): void {
   const listeners = globalThis.__ompWebRunningListeners;
   if (!listeners?.size) { lastRunningSnapshot = ""; return; }
   const ids = getRunningRpcSessionIds();
-  const snapshot = JSON.stringify([...ids].sort());
+  const waitingIds = getWaitingRpcSessionIds();
+  const snapshot = JSON.stringify([[...ids].sort(), [...waitingIds].sort()]);
   if (snapshot === lastRunningSnapshot) return;
   lastRunningSnapshot = snapshot;
-  for (const listener of listeners) { try { listener(ids); } catch { /* disconnected subscriber */ } }
+  for (const listener of listeners) { try { listener(ids, waitingIds); } catch { /* disconnected subscriber */ } }
 }
 
 export async function startRpcSession(

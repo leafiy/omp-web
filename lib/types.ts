@@ -140,6 +140,9 @@ export type ExtensionUiRequest =
       secret?: boolean;
       title: string;
       placeholder?: string;
+      /** Display-only question context built by the web adapters (Claude Code / Codex); the answer stays free text. */
+      header?: string;
+      choices?: { label: string; description?: string }[];
       timeout?: number;
       expiresAt?: number;
     }
