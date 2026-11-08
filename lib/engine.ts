@@ -27,3 +27,6 @@ export function sessionKey(engine: AgentEngine, nativeId: string): string {
 
 /** Initial CC/Codex adapters expose basic chat, not OMP/Pi's extended controls. */
 export function supportsExtendedChat(engine: AgentEngine): boolean { return engine === "omp" || engine === "pi"; }
+
+/** Deletion has its own native-store support; it does not imply Fork/navigation. */
+export function supportsSessionDeletion(engine: AgentEngine): boolean { return engine !== "codex"; }

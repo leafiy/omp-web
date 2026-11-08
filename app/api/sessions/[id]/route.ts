@@ -15,8 +15,9 @@ import {
   openSessionManager,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
-import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { engineForSession, supportsExtendedChat } from "@/lib/engine";
+import { getRpcSession, startRpcSession, withIdleSessionDeletion, SessionDeletionConflict } from "@/lib/rpc-manager";
+import { engineForSession, supportsSessionDeletion } from "@/lib/engine";
+import { deleteClaudeSession } from "@/lib/claude-code-delete";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -218,12 +219,24 @@ export async function PATCH(
 
 // DELETE /api/sessions/[id]
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = guardHistoryRequest(req);
+  if (denied) return denied;
   const { id } = await params;
-  if (!supportsExtendedChat(engineForSession(id))) return NextResponse.json({ error: "Deletion is not enabled for this engine: native history and the web display projection must be handled together" }, { status: 409 });
+  if (!supportsSessionDeletion(engineForSession(id))) return NextResponse.json({ error: "Deletion is not enabled for this engine: native history and the web display projection must be handled together" }, { status: 409 });
   try {
+    if (engineForSession(id) === "claude") {
+      return await withIdleSessionDeletion(id, async () => {
+        const projectionPath = await resolveSessionPath(id);
+        if (!projectionPath) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+        await deleteClaudeSession(id, projectionPath);
+        invalidateSessionPathCache(id);
+        invalidateSessionListCache();
+        return NextResponse.json({ ok: true });
+      });
+    }
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
@@ -266,6 +279,6 @@ export async function DELETE(
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: error instanceof SessionDeletionConflict ? 409 : 500 });
   }
 }

@@ -541,6 +541,27 @@ function normalizeCwd(cwd: string): string {
 
 export function getRpcSession(id: string): WebAgentSession | undefined { return getRegistry().get(id); }
 
+// Shared across Next route bundles, like the session/start registries.
+const deletionState = globalThis as typeof globalThis & { __ompWebDeletingSessions?: Set<string> };
+function deletingSessions(): Set<string> { return deletionState.__ompWebDeletingSessions ??= new Set(); }
+
+export class SessionDeletionConflict extends Error {}
+
+export async function withIdleSessionDeletion<T>(id: string, remove: () => Promise<T>): Promise<T> {
+  const deleting = deletingSessions();
+  if (deleting.has(id)) throw new SessionDeletionConflict("Session deletion is already in progress");
+  if (globalThis.__ompWebStartLocks?.has(`${engineForSession(id)}:${id}`)) {
+    throw new SessionDeletionConflict("Session is starting; try deleting it again once idle");
+  }
+  const session = getRpcSession(id);
+  if (session?.isRunning()) throw new SessionDeletionConflict("Session is running; stop it and wait for tasks to finish before deleting");
+  deleting.add(id);
+  try {
+    await session?.shutdown();
+    return await remove();
+  } finally { deleting.delete(id); }
+}
+
 export function hasBusyRpcSessionForCwd(cwd: string): boolean {
   const target = normalizeCwd(cwd);
   if (globalThis.__ompWebStartingCwds?.has(target)) return true;
@@ -581,6 +602,7 @@ export async function startRpcSession(
   cwd: string | undefined,
   options: RpcSessionStartOptions = {},
 ): Promise<StartedSession> {
+  if (deletingSessions().has(sessionId)) throw new SessionDeletionConflict("Session deletion is in progress");
   const registry = getRegistry();
   const existing = registry.get(sessionId);
   const identityEngine = engineForSession(sessionId);

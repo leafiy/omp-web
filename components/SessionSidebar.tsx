@@ -4,7 +4,7 @@ import { historyClientCache } from "@/lib/history-client-cache";
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { engineForSession, engineLabel, supportsExtendedChat } from "@/lib/engine";
+import { engineForSession, engineLabel, supportsSessionDeletion } from "@/lib/engine";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -1880,6 +1880,7 @@ function SessionItem({
   const [renameValue, setRenameValue] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const title = session.name?.trim() || t("sidebar.untitledSession");
@@ -1911,13 +1912,18 @@ function SessionItem({
 
   const performDelete = useCallback(async () => {
     setConfirmDelete(false);
+    setDeleteError(null);
     setDeleting(true);
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-      if (!response.ok) throw new Error("Delete failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || "Delete failed");
+      }
       historyClientCache.invalidate(session.id);
       onDeleted?.(session.id);
-    } catch {
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Delete failed");
       setDeleting(false);
     }
   }, [session.id, onDeleted]);
@@ -2067,7 +2073,9 @@ function SessionItem({
               </span>
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
+              {deleteError ? (
+                <span role="alert" title={deleteError} style={{ color: "#ef4444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{deleteError}</span>
+              ) : isRunning ? (
                 <RunningSessionIndicator />
               ) : isUnread ? (
                 <UnreadSessionIndicator />
@@ -2112,8 +2120,8 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && (
+          {/* Selected rows also expose actions for touch/keyboard users. */}
+          {(hovered || isSelected) && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <button
                 onClick={startRename}
@@ -2141,8 +2149,9 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
-              {supportsExtendedChat(engineForSession(session.id)) && <button
+              {supportsSessionDeletion(engineForSession(session.id)) && <button
                 onClick={handleDeleteClick}
+                disabled={deleting}
                 title={t("sidebar.deleteWithShiftClick")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
