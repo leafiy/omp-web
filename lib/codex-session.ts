@@ -11,6 +11,8 @@ import { AgentTasks } from "./agent-tasks";
 import { codexTaskTranscript } from "./agent-task-messages";
 import { WebSessionTranscript } from "./web-session-transcript";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
+import { codexContextUsage } from "./context-usage";
+import type { ContextUsage } from "./pi-types";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
 
 type Dialog = Extract<ExtensionUiRequest, { method: "select" | "input" }>;
@@ -48,6 +50,8 @@ export class CodexSession {
   private idleTimer?: ReturnType<typeof setTimeout>;
   private destroyed?: () => void;
   private lastError?: string;
+  /** Latest native `thread/tokenUsage/updated` for this thread; unknown until Codex reports it. */
+  private contextUsage: ContextUsage | null = null;
 
   constructor(private readonly options: AgentProcessOptions & { nativeId?: string }, private readonly changed: () => void, client?: CodexTransport, private readonly createTitleClient?: () => CodexTransport) {
     this.cwd = options.cwd; this.nativeId = options.nativeId || "";
@@ -173,6 +177,15 @@ export class CodexSession {
     if (!this.closed && this.ready && typeof params.threadId === "string" && this.tasks.has(params.threadId)
       && frame.id === undefined && frame.method === "thread/status/changed") {
       this.tasks.codexStatus(params.threadId, params.status);
+      return;
+    }
+    // Thread-scoped metadata, not a turn event: it may follow turn/completed.
+    if (frame.id === undefined && frame.method === "thread/tokenUsage/updated" && params.threadId === this.nativeId) {
+      const usage = codexContextUsage(params.tokenUsage);
+      if (!this.closed && usage) {
+        this.contextUsage = usage;
+        this.emit({ type: "context_usage", sessionId: this.sessionId, contextUsage: usage });
+      }
       return;
     }
     if (frame.method === "serverRequest/resolved" && params.threadId === this.nativeId) {
@@ -307,7 +320,7 @@ export class CodexSession {
       case "get_state": return { sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript!.name, engine: this.engine,
         model: { id: this.model, provider: "codex-cli" }, isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active, tasks: this.tasks.snapshot(),
         isBashRunning: false, isCompacting: false, pendingMessageCount: 0, queuedMessages: { steering: [], followUp: [] },
-        extensionStatuses: [], extensionWidgets: [], systemPrompt: "", contextUsage: null };
+        extensionStatuses: [], extensionWidgets: [], systemPrompt: "", contextUsage: this.contextUsage };
       case "get_task_detail": {
         const id = String(command.taskId ?? "");
         this.tasks.detail(id); // Never read an arbitrary or unrelated thread.
@@ -324,7 +337,7 @@ export class CodexSession {
         const last = this.transcript!.getMessages().findLast((m) => m.role === "assistant");
         return { text: last?.role === "assistant" ? last.content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "" };
       }
-      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.transcript!.name, contextUsage: null };
+      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.transcript!.name, contextUsage: this.contextUsage };
       case "extension_ui_response": if (typeof command.id === "string") this.dialogs.get(command.id)?.finish(command); return null;
       case "abort":
         this.stopRequested = this.busy; this.cancelDialogs();
@@ -340,6 +353,7 @@ export class CodexSession {
         try {
           if (!(await listCodexModels(this.client)).some((m) => m.model === command.modelId)) throw new Error("Model is not in the Codex catalog");
           await this.waitUntilReady();
+          if (command.modelId !== this.model) this.contextUsage = null; // The next turn reports the new window.
           this.model = command.modelId; this.transcript!.setModel(this.model);
           return { id: this.model, provider: "codex-cli" }; // Applied to the next native turn.
         } finally { this.changingModel = false; }

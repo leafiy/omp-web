@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentFrame } from "./agent-rpc-client";
 import type { AgentEngine } from "./engine";
 import { buildSessionTitlePrompt, parseGeneratedSessionTitle } from "./session-title";
+import { rememberContextUsage } from "./context-usage-cache";
 
 export interface FollowUpNativeSession {
   readonly engine: AgentEngine;
@@ -63,6 +64,7 @@ export class FollowUpSession implements FollowUpNativeSession {
         }
       }
       if (event.type === "session_info_update" || event.type === "session_info_changed") this.suppressTitle();
+      if (event.type === "context_usage" && event.sessionId === this.sessionId) rememberContextUsage(this.sessionId, event.contextUsage);
       if (event.type === "prompt_error" && this.pending.length && !this.paused) {
         this.paused = true; this.queueChanged();
       }
@@ -119,6 +121,7 @@ export class FollowUpSession implements FollowUpNativeSession {
     const revision = this.nativeRevision;
     const state = object(await this.native.send({ type: "get_state" }));
     if (!this.native.isAlive() || state.sessionId !== this.sessionId || (typeof state.isStreaming !== "boolean" && typeof state.isPromptRunning !== "boolean")) throw new Error("Native session state is unavailable");
+    rememberContextUsage(this.sessionId, state.contextUsage);
     if (revision === this.nativeRevision) {
       const queue = object(state.queuedMessages);
       const next = { steering: strings(queue.steering), followUp: strings(queue.followUp), items: Array.isArray(state.queuedItems) ? state.queuedItems : [] };
@@ -271,6 +274,7 @@ export class FollowUpSession implements FollowUpNativeSession {
     try {
       const result = await this.native.send(command);
       if (type === "prompt" && this.paused) { this.paused = false; this.queueChanged(); }
+      if (type === "get_session_stats") rememberContextUsage(this.sessionId, object(result).contextUsage);
       return result;
     } finally { if (mutation) this.manualRequests--; this.schedule(); this.maybeNameSession(); }
   }

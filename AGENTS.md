@@ -37,6 +37,8 @@ GET /api/models     →      cache keyed by engine + cwd → ephemeral native RP
 - Completion is engine-specific: OMP `prompt_result` completes its accepted prompt; Pi's prompt response has its own lifecycle. Use each engine's settled event after queued work/retries/compaction; `agent_end` alone does not mean idle.
 - A late state snapshot or old prompt completion must not settle a newer run. Preserve the browser's monotonic run-ID checks.
 - OMP RPC `systemPrompt` is a list of blocks; join it for web display. Do not invent prompt/tool metadata that Pi RPC does not expose.
+- Context usage is native only: OMP `get_state`, Pi `get_session_stats` (its `get_state` has none), Claude `getContextUsage({ detail: "summary" })`, Codex `thread/tokenUsage/updated` `last`. Never estimate it from transcript usage. See [Claude Code context](./docs/claude-code-context.zh-CN.md).
+- Claude Code titles live in its native transcript (`ai-title`/`custom-title`, read via SDK `getSessionInfo().customTitle`); the web projection only stores web renames, which take precedence.
 - Keep each engine's native tool/config/auth decisions. The old Pi `none/default/full` allow-list is not an OMP tool inventory. Stale tool-preset requests must not silently enable tools.
 - OMP `rpc-ui` and Pi RPC enable supported tool dialogs. Startup dialogs arriving before a browser can attach are cancelled, never approved, and surfaced as warnings. Replay pending dialog requests on SSE reconnect; cancellations remove them.
 - Ordinary shell commands use native RPC `bash`. OMP refuses `!!` because its RPC has no exclude-from-context field; Pi supports its own wire field. The embedded terminal is independent.

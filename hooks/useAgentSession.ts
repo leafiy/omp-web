@@ -578,7 +578,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const contextRevision = contextRevisionRef.current;
         const stateRes = await fetch(`/api/sessions/${encodeURIComponent(sid)}/state`);
         if (!stateRes.ok) throw new Error(`HTTP ${stateRes.status}`);
-        const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse };
+        const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse; lastContextUsage?: AgentStateResponse["contextUsage"] };
         if (sessionIdRef.current !== sid) return null;
 
         const liveState = agentState.state;
@@ -592,6 +592,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages, liveState.queuedItems));
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
+          // The idle-closed native process reported this before exiting; no estimate.
+          const last = resolveContextUsage(agentState.lastContextUsage);
+          if (last && contextRevision === contextRevisionRef.current) setContextUsage(last);
         }
         return agentState;
       } catch (e) {
@@ -1212,6 +1215,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         historyClientCache.invalidate(sid);
         setSessionStatsOverride((prev) => prev ? { ...prev, sessionName: name } : prev);
         onSessionNameChange?.(sid, name);
+        break;
+      }
+      case "context_usage": {
+        // Native push after a turn settles; a one-shot state read may have timed out.
+        const sid = sessionIdRef.current;
+        const usage = resolveContextUsage(event.contextUsage as AgentStateResponse["contextUsage"]);
+        if (sid && event.sessionId === sid && usage) setContextUsage(usage);
         break;
       }
       case "task_snapshot":

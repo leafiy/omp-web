@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { lastContextUsage } from "@/lib/context-usage-cache";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath } from "@/lib/session-reader";
 
@@ -13,7 +14,11 @@ export async function GET(
     }
 
     const rpc = getRpcSession(id);
-    if (!rpc?.isAlive()) return NextResponse.json({ running: false });
+    if (!rpc?.isAlive()) {
+      // An idle-closed process cannot answer; expose only its last native report.
+      const usage = lastContextUsage(id);
+      return NextResponse.json({ running: false, ...(usage ? { lastContextUsage: usage } : {}) });
+    }
 
     const state = await rpc.send({ type: "get_state" });
     return NextResponse.json({ running: true, state });

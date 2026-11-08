@@ -57,6 +57,8 @@ export class AgentSessionWrapper {
   readonly engine: AgentEngine;
   private client: AgentRpcClient;
   private state: NativeState = { sessionId: "" };
+  /** Pi RPC get_state omits context usage; its native session stats carry it. */
+  private piContextUsage?: NativeState["contextUsage"];
   private listeners = new Set<EventListener>();
   private pendingUi = new Map<string, AgentEvent>();
   private uiTimers = new Map<string, NodeJS.Timeout>();
@@ -279,6 +281,16 @@ export class AgentSessionWrapper {
     this.uiTimers.clear();
   }
 
+  private async refreshPiContextUsage(): Promise<void> {
+    try {
+      const stats = await this.client.request<{ contextUsage?: NativeState["contextUsage"] }>({ type: "get_session_stats" }, 10_000);
+      this.piContextUsage = stats?.contextUsage;
+    } catch {
+      // Unknown, not a stale value that may belong to a previous model window.
+      this.piContextUsage = undefined;
+    }
+  }
+
   private async refreshState(): Promise<NativeState> {
     const revision = this.activityRevision;
     const nameRevision = this.sessionNameRevision;
@@ -339,6 +351,7 @@ export class AgentSessionWrapper {
       isPromptRunning: this.busy || this.prompts.size > 0,
       isBashRunning: this.bashRunning,
       isCompacting: this.compactionRunning,
+      contextUsage: this.engine === "pi" ? this.piContextUsage : this.state.contextUsage,
       pendingMessageCount: this.state.queuedMessageCount ?? 0,
       systemPrompt: Array.isArray(this.state.systemPrompt) ? this.state.systemPrompt.join("\n\n") : this.state.systemPrompt ?? "",
       extensionStatuses: [...this.statuses].map(([key, text]) => ({ key, text })),
@@ -377,6 +390,7 @@ export class AgentSessionWrapper {
       // A compact command holds OMP's serial command queue until completion.
       if (!this.compactionRunning) {
         await this.refreshState();
+        if (this.engine === "pi") await this.refreshPiContextUsage();
         try { await this.refreshTasks(); } catch { /* Keep last known tasks; query failure is not completion. */ }
       }
       return this.webState();
@@ -462,7 +476,10 @@ export class AgentSessionWrapper {
     if (type === "get_session_stats") {
       const stats = await this.client.request<Record<string, unknown>>(command);
       const state = await this.refreshState();
-      return { ...stats, sessionId: this.sessionId, sessionName: state.sessionName, contextUsage: state.contextUsage };
+      // Pi's get_state has no context field; its native session stats do.
+      const contextUsage = this.engine === "pi" ? stats.contextUsage as NativeState["contextUsage"] : state.contextUsage;
+      if (this.engine === "pi") this.piContextUsage = contextUsage;
+      return { ...stats, sessionId: this.sessionId, sessionName: state.sessionName, contextUsage };
     }
     if (type === "bash") {
       if (this.engine === "omp" && command.excludeFromContext === true) throw new Error("OMP RPC does not support !! (exclude from context). Use the embedded terminal instead.");

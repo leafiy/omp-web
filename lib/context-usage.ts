@@ -15,9 +15,25 @@ export function resolveContextUsage(native: ContextUsage | null | undefined, cat
   return capacity(catalogWindow) ? { contextWindow: catalogWindow, tokens: null, percent: null } : undefined;
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 /** SDK summary only; never return memory paths, tools, agents, or other private metadata. */
 export function claudeContextUsage(raw: unknown): ContextUsage | null {
   const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   if (!capacity(value.maxTokens)) return null;
   return { contextWindow: value.maxTokens, tokens: amount(value.totalTokens), percent: amount(value.percentage) };
+}
+
+/**
+ * Codex app-server `thread/tokenUsage/updated` → `tokenUsage`. `last` is the most
+ * recent native request (Codex's own tokens-in-context-window value); `total` is
+ * cumulative billing and must never be presented as the current context.
+ */
+export function codexContextUsage(raw: unknown): ContextUsage | null {
+  const value = record(raw);
+  if (!capacity(value.modelContextWindow)) return null;
+  const tokens = amount(record(value.last).totalTokens);
+  return { contextWindow: value.modelContextWindow, tokens, percent: tokens === null ? null : tokens / value.modelContextWindow * 100 };
 }

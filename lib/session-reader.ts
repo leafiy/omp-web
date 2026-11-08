@@ -14,6 +14,7 @@ import { readSessionSnapshot } from "./session-file-cache";
 import { resolveProject, type ProjectInfo } from "./worktree";
 
 import { getEngineAgentDir } from "./engine-paths";
+import { cachedClaudeNativeTitle } from "./claude-native-title";
 import { engineForSession, sessionKey, type AgentEngine } from "./engine";
 export { getOmpAgentDir as getAgentDir } from "./file-paths";
 
@@ -66,7 +67,7 @@ async function loadEngineSessions(engine: AgentEngine): Promise<SessionInfo[]> {
     projectByCwd.set(cwd, await resolveProject(cwd));
   }));
 
-  return piSessions.map((s) => {
+  const sessions: SessionInfo[] = piSessions.map((s) => {
     const id = sessionKey(engine, s.id);
     cacheSessionPath(id, s.path);
     const header = readSessionHeader(s.path);
@@ -87,6 +88,17 @@ async function loadEngineSessions(engine: AgentEngine): Promise<SessionInfo[]> {
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
     };
   });
+  if (engine === "claude") {
+    // The web projection only records web renames. Claude Code writes its own
+    // generated/renamed title into the native transcript, which the CLI owns.
+    await Promise.all(sessions.map(async (session, index) => {
+      const native = piSessions[index];
+      if (session.name?.trim() || !(native.messageCount > 0)) return;
+      const title = await cachedClaudeNativeTitle(session.id, native.id, native.cwd, Date.parse(session.modified));
+      if (title) session.name = title;
+    }));
+  }
+  return sessions;
 }
 
 async function loadAllSessions(): Promise<SessionInfo[]> {

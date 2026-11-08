@@ -11,6 +11,7 @@ import { ClaudeInputLedger, type ClaudeInputKind } from "./claude-input-ledger";
 import { interruptClaude, supportsClaudeSteering, canRecallClaudeInput, recallClaudeInput } from "./claude-steering";
 import { claudeSlashCommands, claudeSlashCommandRestriction } from "./claude-code-commands";
 import { ClaudeWebTranscript } from "./claude-code-store";
+import { forgetClaudeNativeTitle, readClaudeNativeTitle } from "./claude-native-title";
 import { readClaudeModels, readClaudeModelSettings, claudeEffortLevels, isClaudeEffort, type ClaudeModelSettings } from "./claude-models";
 import { validateAgentImages, type Base64ImageAttachment } from "./image-attachments";
 import type { AgentMessage, ExtensionUiRequest, UserMessage } from "./types";
@@ -99,13 +100,24 @@ export class ClaudeCodeSession {
   private readonly context = new ClaudeContextCache(() => {
     if (this.closed || this.busy || this.changingModel) throw new Error("Context summary is unavailable during a transition");
     return this.query!.getContextUsage({ detail: "summary" });
+  }, {
+    // A browser's one-shot read after a turn can time out; push the settled summary.
+    onUpdate: (contextUsage) => { if (!this.closed) this.emit({ type: "context_usage", sessionId: this.sessionId, contextUsage }); },
   });
+  /** Claude's own /rename or generated title, read from its native transcript. */
+  private nativeTitle?: string;
+  private nativeTitleRead?: Promise<void>;
+  private nativeTitleCheckedAt = 0;
+  /** Claude persists its transcript with the first turn; before that there is nothing to read. */
+  private nativeHistory = false;
 
   constructor(
     private readonly options: AgentProcessOptions & { nativeId?: string },
     private readonly changed: () => void,
     private readonly createQuery?: QueryFactory,
     private readonly readChildMessages: ChildMessagesReader = readNativeChildMessages,
+    // An injected query has no native transcript: never read the real ~/.claude for it.
+    private readonly readNativeTitle: (nativeId: string, cwd: string) => Promise<string | undefined> = createQuery ? async () => undefined : readClaudeNativeTitle,
   ) {
     this.nativeId = options.nativeId ?? randomUUID();
     this.sessionId = sessionKey("claude", this.nativeId);
@@ -128,10 +140,35 @@ export class ClaudeCodeSession {
       listener({ type: "queue_update", ...this.inputs.queued(), items: this.recallItems() });
     }
     for (const { event } of this.dialogs.values()) listener(event);
+    const name = this.sessionName();
+    if (name) listener({ type: "session_info_update", sessionId: this.sessionId, title: name });
     return () => { this.listeners.delete(listener); };
   }
   private emit(event: AgentFrame): void {
     for (const listener of this.listeners) { try { listener(event); } catch { /* disconnected browser */ } }
+  }
+  /** A web rename wins; otherwise show the title Claude Code generated or was given natively. */
+  private sessionName(): string | undefined {
+    return this.transcript?.name?.trim() || this.nativeTitle;
+  }
+  private refreshNativeTitle(force = false): Promise<void> {
+    if (this.options.catalogOnly || this.closed || !this.nativeHistory) return Promise.resolve();
+    if (this.nativeTitleRead) return this.nativeTitleRead;
+    if (!force && Date.now() - this.nativeTitleCheckedAt < 5000) return Promise.resolve();
+    const read = this.readNativeTitle(this.nativeId, this.cwd).then((title) => {
+      this.nativeTitleCheckedAt = Date.now();
+      if (this.closed || title === this.nativeTitle) return;
+      forgetClaudeNativeTitle(this.sessionId);
+      const before = this.sessionName();
+      this.nativeTitle = title;
+      const after = this.sessionName();
+      if (after === before) return;
+      this.emit({ type: "session_info_update", sessionId: this.sessionId, title: after ?? "" });
+      this.changed();
+    }).catch(() => { /* Title metadata never fails the chat. */ })
+      .finally(() => { if (this.nativeTitleRead === read) this.nativeTitleRead = undefined; });
+    this.nativeTitleRead = read;
+    return read;
   }
 
   async start(): Promise<void> {
@@ -192,6 +229,8 @@ export class ClaudeCodeSession {
       }
       this.ready = true;
       this.resetIdle();
+      this.nativeHistory = resume;
+      if (resume) void this.refreshNativeTitle(true);
     } catch (error) {
       this.destroy();
       throw error;
@@ -382,6 +421,11 @@ export class ClaudeCodeSession {
     this.emit({ type: "agent_settled" });
     this.changed();
     this.resetIdle();
+    if (!this.closed) {
+      this.nativeHistory = true;
+      void this.context.get();
+      void this.refreshNativeTitle(true);
+    }
   }
 
   private ask(event: Dialog, signal: AbortSignal, background = false): Promise<Record<string, unknown>> {
@@ -437,9 +481,9 @@ export class ClaudeCodeSession {
     switch (command.type) {
       case "get_state": {
         if (!this.isRunning() && !this.changingModel) await this.refreshModelSettings();
-        const contextUsage = await this.context.get(this.busy || this.changingModel);
+        const [contextUsage] = await Promise.all([this.context.get(this.busy || this.changingModel), this.refreshNativeTitle()]);
         return {
-          sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.transcript?.name,
+          sessionId: this.sessionId, sessionFile: this.sessionFile, sessionName: this.sessionName(),
           engine: this.engine, model: this.model ? { id: this.model, provider: "claude-code" } : undefined,
           thinkingLevel: this.modelSettings?.effort ?? "auto", effortControlAvailable: this.effortControlAvailable,
           isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active,
@@ -490,7 +534,7 @@ export class ClaudeCodeSession {
         const last = this.transcript!.getMessages().findLast((m) => m.role === "assistant");
         return { text: last?.role === "assistant" ? last.content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "" };
       }
-      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.transcript?.name, contextUsage: await this.context.get(this.busy || this.changingModel) };
+      case "get_session_stats": return { sessionId: this.sessionId, sessionName: this.sessionName(), contextUsage: await this.context.get(this.busy || this.changingModel) };
       case "extension_ui_response": {
         if (typeof command.id === "string") this.dialogs.get(command.id)?.finish(command);
         return null;
@@ -548,17 +592,22 @@ export class ClaudeCodeSession {
         }
         return null;
       }
-      case "set_session_name":
+      case "set_session_name": {
         if (typeof command.name !== "string") throw new Error("name must be a string");
+        const before = this.sessionName();
         this.transcript!.rename(command.name.trim());
+        const after = this.sessionName();
+        // Clearing the web name falls back to Claude's own title rather than "untitled".
+        if (after !== before) this.emit({ type: "session_info_update", sessionId: this.sessionId, title: after ?? "" });
         this.changed();
         return null;
+      }
       case "set_model": {
         if (this.isRunning() || this.changingModel) throw new Error("Wait for Claude Code to finish before switching models");
         if (command.provider !== "claude-code" || typeof command.modelId !== "string") throw new Error("Select a native Claude Code model");
         this.changingModel = true;
         this.settingsRevision++;
-        this.context.invalidate();
+        this.context.reset();
         try {
           const models = await readClaudeModels(this.query!);
           if (!models.some((model) => model.value === command.modelId || model.resolvedModel === command.modelId)) throw new Error("Model is not in the native Claude Code catalog");
@@ -649,7 +698,7 @@ export class ClaudeCodeSession {
     this.tasks.disconnected();
     this.stopping = false;
     clearTimeout(this.stopTimer);
-    this.context.invalidate();
+    this.context.reset();
     clearTimeout(this.idleTimer);
     this.cancelDialogs();
     this.finishTurn();
