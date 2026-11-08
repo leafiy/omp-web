@@ -1,6 +1,6 @@
-# Herdr、Orca 与远程浏览器工作流：README 对比依据
+# Herdr、Orca、Paseo 与远程浏览器工作流：README 对比依据
 
-查阅日期：2026-11-07。范围按维护者要求限定为 **Herdr 和 Orca**，不再罗列其他 Agent 整合工具。
+查阅日期：Herdr、Orca 为 2026-11-07，Paseo 为 2026-11-08。范围按维护者要求限定为 **Herdr、Orca 和 Paseo**，不再罗列其他 Agent 整合工具。
 
 本次只查阅官方仓库 README 和官方文档，没有安装、运行或实测竞品，也没有配置 Tailscale/EasyTier。以下是产品定位与公开功能的比较，不是配置耗时、稳定性、安全性或性能排名。
 
@@ -47,6 +47,27 @@
 本项目选择较窄的目标：在原有主机和项目上，提供一个浏览器入口访问 OMP/Pi/Claude Code/Codex，加上独立终端、文件管理和预览。无需为了普通对话采用协调者/worker 或新的 worktree 编排流程，但这不意味着 Orca 的所有使用方式都强制要求这些流程。
 
 不能把这种取舍夸大为完整功能替代、性能优势，或对 Orca 配置复杂度的客观测量。
+
+## Paseo
+
+对比对象：[`getpaseo/paseo`](https://github.com/getpaseo/paseo)，同时参考官方站点 [paseo.sh](https://paseo.sh/)。
+
+### 官方说明支持的事实
+
+- 官方 README 自述为 Claude Code、Codex、Copilot、OpenCode、Pi 等 Agent 的统一界面；仓库简介为在桌面和手机上编排多个 coding agent。站点 FAQ 另列出 OMP，并称可经 ACP 支持更多 Agent；README 与站点的 Agent 列表不完全一致。
+- 架构为本机守护进程（daemon）管理 Agent，桌面应用（Electron，内置 daemon）、手机应用（iOS/Android）、网页应用和 CLI 作为客户端连接；daemon 也可无界面运行在服务器、VM 或 Docker 中。
+- 远程设备可通过可选的端到端加密中继配对，也可不启用中继、直接经 TCP、Tailscale 或其他 VPN 连接。
+- 官方说明运行用户已安装并配置好凭据的 CLI，不修改其行为，不提取 token 或直接调用推理 API。因此不能把 Paseo 描述成要求迁移 Agent 登录或配置的系统。
+- 支持并行 Agent 各自使用 worktree、跨提供方编排（Agent 可创建 worktree、启动并与其他 Agent 通信），以及 MCP、CLI、TypeScript SDK 和插件；FAQ 说明 worktree 仅在使用 Git 时相关。
+- 桌面应用在一个窗口内提供 Agent、编辑器、终端、diff、PR 和内嵌浏览器。因此终端、文件编辑和多设备访问不是 omp-web 独有优势。
+
+来源：[官方 README](https://github.com/getpaseo/paseo/blob/main/README.md)、[官方站点与 FAQ](https://paseo.sh/)。
+
+### 本项目的区别
+
+本项目不提供多 Agent 编排、独立客户端应用、中继或设备配对：主机上的一个网页即为全部入口，范围限于对话、独立终端和文件管理。
+
+这是范围与形态的取舍，不是声称 Paseo 不能沿用原生 CLI、没有网页客户端或远程访问能力，也不是对其配置复杂度的客观测量。
 
 ## Tailscale 与 EasyTier
 
