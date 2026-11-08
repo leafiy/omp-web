@@ -1,6 +1,6 @@
 # omp-web
 
-[English](./README.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [项目主页](https://leafiy.github.io/omp-web/?lang=zh)
 
 **在同一个浏览器工作区使用你本地的 OMP、Pi、Claude Code 和 Codex CLI，旁边就是终端和文件管理器。不用重新配置工作流。**
 

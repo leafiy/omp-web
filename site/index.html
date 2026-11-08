@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>omp-web — your local coding agents in one browser tab</title>
+  <meta name="title-en" content="omp-web — your local coding agents in one browser tab">
+  <meta name="title-zh" content="omp-web — 在浏览器里使用本地的编程 Agent">
+  <meta name="description" content="Use your local OMP, Pi, Claude Code, and Codex CLI from one browser workspace, with a terminal and file manager right beside them. Self-hosted, MIT licensed.">
+  <meta name="theme-color" content="#0d0e10">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://leafiy.github.io/omp-web/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="omp-web — your local coding agents in one browser tab">
+  <meta property="og:description" content="OMP, Pi, Claude Code, and Codex CLI in one self-hosted browser workspace, with a terminal and file manager beside them.">
+  <meta property="og:url" content="https://leafiy.github.io/omp-web/">
+  <meta property="og:image" content="https://leafiy.github.io/omp-web/assets/og.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <script>
+    (function () {
+      var lang;
+      try { lang = localStorage.getItem("omp-web-site-lang"); } catch (e) {}
+      var query = new URLSearchParams(location.search).get("lang");
+      if (query === "zh" || query === "en") lang = query;
+      if (!lang) lang = /^zh/i.test(navigator.language || "") ? "zh" : "en";
+      document.documentElement.dataset.lang = lang;
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="preload" as="image" href="assets/shots/chat.webp" fetchpriority="high">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="omp-web home"><img src="assets/logo.svg" alt="" width="26" height="26">omp-web</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#setup"><span lang="en">My setup</span><span lang="zh-CN">使用环境</span></a>
+      <a href="#features"><span lang="en">Features</span><span lang="zh-CN">功能</span></a>
+      <a href="#install"><span lang="en">Install</span><span lang="zh-CN">安装</span></a>
+      <a href="#compare"><span lang="en">Compare</span><span lang="zh-CN">对比</span></a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="nav-actions">
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button type="button" data-set-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-set-lang="zh" aria-pressed="false">中文</button>
+      </div>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/leafiy/omp-web" aria-label="omp-web on GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
+        <span class="label">GitHub</span><span class="stars"></span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ── Hero ─────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="wrap">
+      <span class="eyebrow"><span class="dot"></span>
+        <span lang="en">Self-hosted · open source · MIT</span><span lang="zh-CN">自托管 · 开源 · MIT</span>
+      </span>
+      <h1>
+        <span lang="en"><span class="line">Your local coding agents,</span> <span class="line soft">in one browser tab.</span></span>
+        <span lang="zh-CN"><span class="line">本地编程 Agent，</span><span class="line soft">装进一个浏览器标签页。</span></span>
+      </h1>
+      <p class="lede">
+        <span lang="en">Use your local <strong>OMP, Pi, Claude Code, and Codex CLI</strong> from one browser workspace, with a terminal and file manager right beside them. <strong>No workflow to rebuild.</strong></span>
+        <span lang="zh-CN">在同一个浏览器工作区使用你本地的 <strong>OMP、Pi、Claude Code 和 Codex CLI</strong>，旁边就是终端和文件管理器。<strong>不用重新配置工作流。</strong></span>
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#install"><span lang="en">Install on your agent host</span><span lang="zh-CN">安装到 Agent 主机</span></a>
+        <a class="btn btn-ghost" href="https://github.com/leafiy/omp-web">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
+          <span lang="en">View on GitHub</span><span lang="zh-CN">查看源码</span>
+        </a>
+      </div>
+      <div class="cmd">
+        <span class="prompt">$</span>
+        <code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash</code>
+        <button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button>
+      </div>
+      <div class="agents">
+        <span lang="en">Works with the CLIs you already use:</span><span lang="zh-CN">直接使用你已安装的 CLI：</span>
+        <span class="agent-pill"><span class="tag">OMP</span>Oh My Pi</span>
+        <span class="agent-pill"><span class="tag">Pi</span>Pi</span>
+        <span class="agent-pill"><span class="tag">CC</span>Claude Code</span>
+        <span class="agent-pill"><span class="tag">CX</span>Codex CLI</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Showcase ─────────────────────────────────────────────── -->
+  <section class="showcase" aria-label="Screenshots">
+    <div class="wrap">
+      <div class="tabs" role="tablist" aria-label="Screens">
+        <button class="tab" role="tab" type="button" aria-selected="true" aria-controls="shot-chat" id="tab-chat"><span lang="en">Chat &amp; tool calls</span><span lang="zh-CN">对话与工具调用</span></button>
+        <button class="tab" role="tab" type="button" aria-selected="false" aria-controls="shot-files" id="tab-files" tabindex="-1"><span lang="en">Files &amp; diffs</span><span lang="zh-CN">文件与 Diff</span></button>
+        <button class="tab" role="tab" type="button" aria-selected="false" aria-controls="shot-terminal" id="tab-terminal" tabindex="-1"><span lang="en">Terminal</span><span lang="zh-CN">终端</span></button>
+      </div>
+      <div class="stage reveal">
+        <div class="window">
+          <div class="window-bar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="url"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>agent-box.tailnet.ts.net</div>
+          </div>
+          <div class="screens">
+            <img id="shot-chat" class="active" role="tabpanel" aria-labelledby="tab-chat" src="assets/shots/chat.webp" width="2880" height="1800" alt="omp-web chat: a Claude Code session with its tool calls and an inline diff, sessions grouped by project in the sidebar">
+            <img id="shot-files" role="tabpanel" aria-labelledby="tab-files" src="assets/shots/files.webp" width="2880" height="1800" alt="omp-web file panel showing the Git diff of a changed file next to the conversation">
+            <img id="shot-terminal" role="tabpanel" aria-labelledby="tab-terminal" src="assets/shots/terminal.webp" width="2880" height="1800" alt="omp-web built-in terminal under the conversation, running git commands in the project">
+          </div>
+        </div>
+        <div class="phone" aria-hidden="true">
+          <img src="assets/shots/mobile-chat.webp" width="1170" height="2532" alt="" loading="lazy">
+        </div>
+      </div>
+      <p class="caption"><span lang="en">Real screenshots of omp-web, taken with demo projects and conversations.</span><span lang="zh-CN">omp-web 实际界面截图，使用演示项目和对话。</span></p>
+    </div>
+  </section>
+
+  <!-- ── My setup ─────────────────────────────────────────────── -->
+  <section class="section" id="setup">
+    <div class="wrap">
+      <div class="kicker"><span lang="en">My setup</span><span lang="zh-CN">我的使用环境</span></div>
+      <h2>
+        <span lang="en">A small box at home runs the agents.<br>Whatever I have with me drives them.</span>
+        <span lang="zh-CN">家里一台小电脑跑 Agent，<br>手边有什么设备就用什么操作。</span>
+      </h2>
+      <div class="setup">
+        <div class="story reveal">
+          <p lang="en">I keep Claude Code, Codex, OMP, and Pi on a <strong>low-spec, always-on Linux machine</strong> at a remote home, with omp-web running next to them. The agents, their logins, and the projects all stay on that one machine.</p>
+          <p lang="zh-CN">我把 Claude Code、Codex、OMP 和 Pi 放在异地家里一台<strong>常开的低配 Linux 小电脑</strong>上，omp-web 也部署在同一台机器上。Agent、各自的登录和项目都只留在这一台机器上。</p>
+          <p lang="en">SSH got me connected, but copying long replies, scrolling back, reading diffs, and moving screenshots around were clumsy, <strong>especially on a phone</strong>. Now I open a page: read and copy, review changes, upload files, and when I need a shell, it's right there.</p>
+          <p lang="zh-CN">以前用 SSH 也能连上，但复制长回复、翻滚屏、看 diff、传截图都很别扭，<strong>手机上更难受</strong>。现在打开网页就能阅读和复制、检查改动、上传文件；需要命令行时，旁边就有终端。</p>
+
+          <div class="diagram" aria-label="Setup diagram">
+            <div class="node">
+              <div class="node-head">
+                <span class="node-title"><span lang="en">Agent host</span><span lang="zh-CN">Agent 主机</span></span>
+                <span class="node-sub"><span lang="en">remote home · Linux · always on</span><span lang="zh-CN">异地家中 · Linux · 常开</span></span>
+              </div>
+              <div class="chips">
+                <span class="chip">claude</span><span class="chip">codex</span><span class="chip">omp</span><span class="chip">pi</span>
+                <span class="chip">~/code/*</span>
+                <span class="chip hl">omp-web @ 127.0.0.1:30141</span>
+              </div>
+            </div>
+            <div class="link">Tailscale Serve (HTTPS) · EasyTier</div>
+            <div class="devices">
+              <div class="node">
+                <div class="node-title"><span lang="en">Laptop</span><span lang="zh-CN">笔记本</span></div>
+                <div class="node-sub"><span lang="en">just a browser</span><span lang="zh-CN">只需要浏览器</span></div>
+              </div>
+              <div class="node">
+                <div class="node-title"><span lang="en">Phone</span><span lang="zh-CN">手机</span></div>
+                <div class="node-sub"><span lang="en">home-screen app</span><span lang="zh-CN">添加到主屏幕</span></div>
+              </div>
+            </div>
+          </div>
+          <p class="footnote">
+            <span lang="en">The models run in the cloud, so the host never runs a large model. It still needs room for the CLIs and your builds. This is my setup, not a minimum spec.</span>
+            <span lang="zh-CN">模型在云端，主机不用跑大模型；但 CLI 和项目构建仍要占资源。这是我个人的配置，不是最低硬件要求。</span>
+          </p>
+        </div>
+        <div class="device-phone reveal">
+          <img src="assets/shots/mobile-sessions.webp" width="1170" height="2532" loading="lazy" alt="omp-web on a phone: sessions grouped by project with engine tags, and the file explorer">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────────────── -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="center">
+        <div class="kicker"><span lang="en">What the browser adds</span><span lang="zh-CN">网页多了什么</span></div>
+        <h2>
+          <span lang="en">The browser handles everything around your agents.</span>
+          <span lang="zh-CN">Agent 还是原来的，周边的事交给网页。</span>
+        </h2>
+        <p class="section-lede">
+          <span lang="en">The selected agent still makes every model call, runs its own tools, and decides permissions. omp-web adds what's awkward over SSH.</span>
+          <span lang="zh-CN">模型调用、工具执行和权限决定仍由所选 Agent 负责。omp-web 补上 SSH 里不顺手的部分。</span>
+        </p>
+      </div>
+      <div class="grid">
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></div>
+          <h3><span lang="en">Four agents, one sidebar</span><span lang="zh-CN">四个 Agent，一个侧边栏</span></h3>
+          <p lang="en">Sessions are grouped by project and tagged OMP, Pi, CC, or CX. A session always resumes on the engine that created it.</p>
+          <p lang="zh-CN">会话按项目分组，标注 OMP、Pi、CC 或 CX；已有会话总在原来的引擎上继续。</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></div>
+          <h3><span lang="en">Nothing to reconfigure</span><span lang="zh-CN">不用重新配置</span></h3>
+          <p lang="en">Each CLI keeps its own login, models, skills, and project instructions. There's no API key to paste into a web settings page.</p>
+          <p lang="zh-CN">每个 CLI 继续用自己的登录、模型、技能和项目指令，不用往网页设置里再填 API Key。</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></div>
+          <h3><span lang="en">A terminal beside the chat</span><span lang="zh-CN">对话旁边就是终端</span></h3>
+          <p lang="en">Tabbed shells open in the project directory, separate from the conversation. For TUI-only features, run <code>claude</code> or <code>codex</code> right there.</p>
+          <p lang="zh-CN">多标签终端在项目目录打开，与对话互不干扰。TUI 独有的功能，直接在里面运行 <code>claude</code>、<code>codex</code>。</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 11v6M9 14h6"/></svg></div>
+          <h3><span lang="en">Files and diffs</span><span lang="zh-CN">文件与 Diff</span></h3>
+          <p lang="en">Preview files and read Git diffs next to the conversation. Copy, move, rename, upload, or download without typing a path.</p>
+          <p lang="zh-CN">在对话旁预览文件、查看 Git diff；复制、移动、重命名、上传、下载都不用敲路径。</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
+          <h3><span lang="en">Made for the phone</span><span lang="zh-CN">为手机准备</span></h3>
+          <p lang="en">Add it to the home screen and it opens full-screen like an app. Touch layouts, with a "More" menu where desktop uses right-click.</p>
+          <p lang="zh-CN">添加到主屏幕后像 App 一样全屏打开；触屏布局，用「更多」菜单代替右键。</p>
+        </article>
+        <article class="card reveal">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></div>
+          <h3><span lang="en">Keep going while it works</span><span lang="zh-CN">它在跑，你也能继续</span></h3>
+          <p lang="en">Paste screenshots or drop files mid-run. Follow-ups queue up, and you can pull one back to edit before it's sent.</p>
+          <p lang="zh-CN">运行中也能粘贴截图、拖入文件；追加的消息进入队列，发送前还能取回修改。</p>
+        </article>
+      </div>
+      <div class="also" lang="en">
+        <span>Fork from any message</span><span>Git worktrees</span><span>Slash commands &amp; skills</span><span>Approval prompts</span><span>Day / week / month token totals</span><span>Completion sound</span><span>English &amp; 中文 UI</span>
+      </div>
+      <div class="also" lang="zh-CN">
+        <span>从任意消息 Fork</span><span>Git worktree</span><span>斜杠命令与技能</span><span>权限确认</span><span>日 / 周 / 月 Token 统计</span><span>完成提示音</span><span>中英文界面</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Install ──────────────────────────────────────────────── -->
+  <section class="section" id="install">
+    <div class="wrap">
+      <div class="center">
+        <div class="kicker"><span lang="en">Set up once</span><span lang="zh-CN">搭一次就好</span></div>
+        <h2><span lang="en">Three steps, then it's just a link.</span><span lang="zh-CN">三步之后，只剩一个链接。</span></h2>
+      </div>
+      <div class="steps">
+        <article class="step reveal">
+          <span class="step-num">1</span>
+          <h3><span lang="en">Install on the agent host</span><span lang="zh-CN">安装到 Agent 主机</span></h3>
+          <p lang="en">Run it as the user whose agents are already logged in. <code>--service</code> adds a systemd unit that starts on boot and listens on <code>127.0.0.1:30141</code>.</p>
+          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。<code>--service</code> 会安装开机自启的 systemd 服务，监听 <code>127.0.0.1:30141</code>。</p>
+          <div class="cmd"><code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
+        </article>
+        <article class="step reveal">
+          <span class="step-num">2</span>
+          <h3><span lang="en">Reach it privately</span><span lang="zh-CN">通过私有网络访问</span></h3>
+          <p lang="en"><b>Tailscale:</b> put HTTPS in front of loopback, then add the <code>*.ts.net</code> name to <code>PI_WEB_ALLOWED_HOSTS</code>. <b>EasyTier:</b> install with <code>--host &lt;virtual-ip&gt;</code> and open it by IP.</p>
+          <p lang="zh-CN"><b>Tailscale：</b>用 Serve 给回环地址套上 HTTPS，并把 <code>*.ts.net</code> 域名加入 <code>PI_WEB_ALLOWED_HOSTS</code>。<b>EasyTier：</b>安装时加 <code>--host &lt;虚拟IP&gt;</code>，直接用 IP 访问。</p>
+          <div class="cmd"><code>tailscale serve --bg 30141</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
+        </article>
+        <article class="step reveal">
+          <span class="step-num">3</span>
+          <h3><span lang="en">Add it to your home screen</span><span lang="zh-CN">添加到主屏幕</span></h3>
+          <p lang="en">Open the link on your phone, sign in, and use "Add to Home Screen". From then on it opens full-screen, like an app.</p>
+          <p lang="zh-CN">在手机上打开链接、登录，然后「添加到主屏幕」。之后它会像 App 一样全屏打开。</p>
+          <div class="cmd"><code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code></div>
+        </article>
+      </div>
+      <p class="req">
+        <span lang="en">Host: Linux · Node.js 22.19+ · npm · Git, plus at least one logged-in agent (<code>omp</code>, <code>pi</code>, <code>claude</code>, <code>codex</code>). The installer checks these but never installs runtimes.</span>
+        <span lang="zh-CN">主机要求：Linux · Node.js 22.19+ · npm · Git，以及至少一个已登录的 Agent（<code>omp</code>、<code>pi</code>、<code>claude</code>、<code>codex</code>）。安装脚本只检查，不会替你安装运行时。</span>
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Compare ──────────────────────────────────────────────── -->
+  <section class="section" id="compare">
+    <div class="wrap">
+      <div class="center">
+        <div class="kicker"><span lang="en">How it compares</span><span lang="zh-CN">与同类工具的区别</span></div>
+        <h2><span lang="en">A narrower tool, on purpose.</span><span lang="zh-CN">刻意做得更窄。</span></h2>
+      </div>
+      <blockquote class="quote reveal">
+        <span lang="en">"I've tried a number of agent integration tools. They do more, but for the workflow I already had, the extra configuration, terminal management, and workspace conventions often got in the way. I just wanted to keep using my existing agents from a browser."</span>
+        <span lang="zh-CN">“我试过不少 Agent 整合工具。它们功能更多，但对我已有的工作流来说，额外的配置、终端管理和工作区约定经常反而是干扰。我只想在浏览器里继续用原来的 Agent。”</span>
+        <cite><span lang="en">— the maintainer</span><span lang="zh-CN">—— 维护者</span></cite>
+      </blockquote>
+      <div class="compare">
+        <article class="cmp reveal">
+          <h3><a href="https://github.com/herdrdev/herdr">Herdr</a></h3>
+          <p lang="en">A terminal runtime for agents: background sessions, panes, agent status, local and SSH machines, plus a desktop app.</p>
+          <p lang="zh-CN">Agent 终端 runtime：后台会话、pane、Agent 状态、本地与 SSH 机器，另有桌面应用。</p>
+          <div class="fit"><b><span lang="en">Pick it if</span><span lang="zh-CN">适合</span></b><span lang="en">you want a persistent, terminal-centric environment.</span><span lang="zh-CN">想要持久、以终端为中心的工作环境。</span></div>
+        </article>
+        <article class="cmp reveal">
+          <h3><a href="https://github.com/stablyai/orca">Orca</a></h3>
+          <p lang="en">An agent orchestration workspace: parallel worktrees, Chat/Terminal modes, code review, remote runtimes, and a mobile companion.</p>
+          <p lang="zh-CN">Agent 编排工作区：并行 worktree、Chat/Terminal、代码审查、远程运行环境和手机伴侣应用。</p>
+          <div class="fit"><b><span lang="en">Pick it if</span><span lang="zh-CN">适合</span></b><span lang="en">you want a full multi-agent workspace.</span><span lang="zh-CN">想要完整的多 Agent 工作区。</span></div>
+        </article>
+        <article class="cmp reveal">
+          <h3><a href="https://github.com/getpaseo/paseo">Paseo</a></h3>
+          <p lang="en">A local daemon with desktop, mobile, web, and CLI clients. Parallel agents in their own worktrees, cross-provider orchestration, and device pairing over an encrypted relay or a VPN.</p>
+          <p lang="zh-CN">本机守护进程，加桌面、手机、网页和 CLI 客户端；并行 Agent 各用 worktree，可跨 Agent 编排；设备经加密中继或 VPN 连接。</p>
+          <div class="fit"><b><span lang="en">Pick it if</span><span lang="zh-CN">适合</span></b><span lang="en">you want to run and coordinate many agents across devices.</span><span lang="zh-CN">想在多设备上并行调度多个 Agent。</span></div>
+        </article>
+        <article class="cmp me reveal">
+          <h3>omp-web <span class="badge"><span lang="en">this project</span><span lang="zh-CN">本项目</span></span></h3>
+          <p lang="en">One web page on the host: your local OMP, Pi, Claude Code, and Codex CLI, plus a terminal and a file manager. No orchestration, no client to install, no pairing.</p>
+          <p lang="zh-CN">主机上的一个网页：本机的 OMP、Pi、Claude Code、Codex CLI，加上终端和文件管理。不做编排，不用装客户端，也不用配对。</p>
+          <div class="fit"><b><span lang="en">Pick it if</span><span lang="zh-CN">适合</span></b><span lang="en">you just want your existing agents in a browser.</span><span lang="zh-CN">只想在浏览器里继续用原来的 Agent。</span></div>
+        </article>
+      </div>
+      <p class="cmp-note">
+        <span lang="en">All four run the native CLIs, and each has its own remote, terminal, or file features, so none of those are unique to omp-web. Based on official documentation, checked 2026-11-07 and 2026-11-08 · <a href="https://github.com/leafiy/omp-web/blob/main/docs/agent-workspace-comparison-research.zh-CN.md">sources</a></span>
+        <span lang="zh-CN">这几个工具都运行原生 CLI，也都有各自的远程、终端或文件功能，这些都不是 omp-web 独有的。依据官方文档，查阅于 2026-11-07 与 2026-11-08 · <a href="https://github.com/leafiy/omp-web/blob/main/docs/agent-workspace-comparison-research.zh-CN.md">来源</a></span>
+      </p>
+    </div>
+  </section>
+
+  <!-- ── FAQ ──────────────────────────────────────────────────── -->
+  <section class="section" id="faq">
+    <div class="narrow">
+      <div class="center">
+        <div class="kicker">FAQ</div>
+        <h2><span lang="en">Questions</span><span lang="zh-CN">常见问题</span></h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary><span lang="en">Is omp-web another coding agent?</span><span lang="zh-CN">omp-web 是另一个编程 Agent 吗？</span></summary>
+          <div class="answer">
+            <p lang="en">No. The agent you pick (OMP, Pi, Claude Code, or Codex CLI) makes the model calls, runs the tools, and decides permissions. omp-web starts it through its native interface and shows the conversation, a terminal, and your files.</p>
+            <p lang="zh-CN">不是。模型调用、工具执行和权限决定都由你选的 OMP、Pi、Claude Code 或 Codex CLI 完成。omp-web 通过它们的原生接口启动会话，负责展示对话、终端和文件。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">Do I have to reconfigure my agents?</span><span lang="zh-CN">需要重新配置 Agent 吗？</span></summary>
+          <div class="answer">
+            <p lang="en">No. Install omp-web as the user whose agents are already logged in. Each CLI keeps reading its own configuration, and credentials are never copied between agents.</p>
+            <p lang="zh-CN">不需要。用已经登录好 Agent 的那个用户安装 omp-web，各 CLI 继续读取自己的配置，凭据也不会在 Agent 之间复制。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">Does the host need to run models?</span><span lang="zh-CN">主机需要自己跑模型吗？</span></summary>
+          <div class="answer">
+            <p lang="en">No. Each agent calls whatever provider it's configured for, usually in the cloud. A low-spec machine is fine as long as it has room for the CLIs and your builds.</p>
+            <p lang="zh-CN">不需要。每个 Agent 按自己的配置调用模型，一般在云端。只要放得下 CLI 和项目构建，低配机器也可以。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">What do my laptop and phone need?</span><span lang="zh-CN">笔记本和手机需要装什么？</span></summary>
+          <div class="answer">
+            <p lang="en">A browser and a route to the host, for example through Tailscale or EasyTier. No agent CLI, desktop app, or SSH client.</p>
+            <p lang="zh-CN">一个浏览器，加上能到达主机的网络，比如 Tailscale 或 EasyTier。不需要装 Agent CLI、桌面应用或 SSH 客户端。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">Can I expose it to the internet?</span><span lang="zh-CN">可以直接暴露到公网吗？</span></summary>
+          <div class="answer">
+            <p lang="en">Not over plain HTTP. Login is always required, but the page has the same access as the service account, and the terminal is a real shell. Keep it on loopback behind Tailscale Serve or another HTTPS proxy, or bind it to a private VPN address.</p>
+            <p lang="zh-CN">不要用明文 HTTP。虽然必须登录，但网页拥有服务账户的全部权限，终端就是真正的 Shell。建议只监听回环地址，通过 Tailscale Serve 等 HTTPS 代理访问，或者绑定到私有 VPN 地址。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">Can I still use the CLIs directly?</span><span lang="zh-CN">还能直接用 CLI 吗？</span></summary>
+          <div class="answer">
+            <p lang="en">Yes, nothing changes for the CLIs. For features only the TUI has, open the built-in terminal and run <code>claude</code>, <code>codex</code>, <code>omp</code>, or <code>pi</code>.</p>
+            <p lang="zh-CN">可以，原来的用法完全不变。TUI 独有的功能，在内置终端里运行 <code>claude</code>、<code>codex</code>、<code>omp</code> 或 <code>pi</code> 即可。</p>
+          </div>
+        </details>
+        <details>
+          <summary><span lang="en">What happens when the service restarts?</span><span lang="zh-CN">重启服务会怎样？</span></summary>
+          <div class="answer">
+            <p lang="en">Running agent turns and terminals are interrupted. Each agent stores its own conversations, so you can reopen them afterwards.</p>
+            <p lang="zh-CN">正在运行的 Agent 和终端会被中断。会话由各 Agent 自己保存，重启后可以重新打开继续。</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ────────────────────────────────────────────── -->
+  <section class="wrap">
+    <div class="final reveal">
+      <h2><span lang="en">Keep your agents. Change the interface.</span><span lang="zh-CN">Agent 不变，只换个操作界面。</span></h2>
+      <div class="cmd">
+        <span class="prompt">$</span>
+        <code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash</code>
+        <button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button>
+      </div>
+      <div class="hero-cta">
+        <a class="btn btn-ghost" href="https://github.com/leafiy/omp-web#readme"><span lang="en">Read the README</span><span lang="zh-CN">阅读 README</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div>
+      <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="22" height="22">omp-web</a>
+      <p style="margin:12px 0 0">
+        <span lang="en">MIT licensed. Grew out of <a href="https://github.com/17380936778/omp-web">17380936778/omp-web</a> and <a href="https://github.com/agegr/pi-web">agegr/pi-web</a>.</span>
+        <span lang="zh-CN">MIT 许可证。源自 <a href="https://github.com/17380936778/omp-web">17380936778/omp-web</a> 与 <a href="https://github.com/agegr/pi-web">agegr/pi-web</a>。</span>
+      </p>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/leafiy/omp-web">GitHub</a>
+      <a href="https://github.com/leafiy/omp-web/blob/main/README.md">README</a>
+      <a href="https://github.com/leafiy/omp-web/blob/main/README.zh-CN.md">中文 README</a>
+      <a href="https://github.com/leafiy/omp-web/tree/main/docs"><span lang="en">Docs</span><span lang="zh-CN">文档</span></a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js" defer></script>
+</body>
+</html>

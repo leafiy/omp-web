@@ -1,6 +1,6 @@
 # omp-web
 
-[English](./README.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [Website](https://leafiy.github.io/omp-web/)
 
 **Use your local OMP, Pi, Claude Code, and Codex CLI from one browser workspace, with a terminal and file manager right beside them. No workflow to rebuild.**
 
