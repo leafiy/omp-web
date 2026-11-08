@@ -1,5 +1,5 @@
 import type { AgentEngine } from "./engine";
-import type { AgentUsage, WeeklyUsage } from "./usage-types";
+import type { AgentUsage, DailyTokens, WeeklyUsage } from "./usage-types";
 
 function obj(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 export function tokenCount(value: unknown): string | null {
@@ -65,6 +65,24 @@ export function normalizeClaudeUsage(raw: unknown, actualSession: boolean): Agen
     checkedAt: new Date().toISOString() };
 }
 
+/**
+ * Codex `account/usage/read` `dailyUsageBuckets` ({ startDate, tokens }), keyed
+ * by Codex's own date. Null when not provided or when any bucket is malformed:
+ * an unreadable day must not turn into a smaller, plausible-looking total.
+ */
+export function normalizeCodexDailyTokens(usageRaw: unknown): DailyTokens[] | null {
+  const buckets = obj(usageRaw).dailyUsageBuckets;
+  if (!Array.isArray(buckets)) return null;
+  const days = new Map<string, bigint>();
+  for (const value of buckets) {
+    const bucket = obj(value), tokens = tokenCount(bucket.tokens);
+    const date = typeof bucket.startDate === "string" ? /^(\d{4}-\d{2}-\d{2})(?:$|T)/.exec(bucket.startDate)?.[1] : undefined;
+    if (!date || tokens === null) return null;
+    days.set(date, (days.get(date) ?? BigInt(0)) + BigInt(tokens));
+  }
+  return [...days].sort(([a], [b]) => a.localeCompare(b)).slice(-62).map(([date, tokens]) => ({ date, tokens: tokens.toString() }));
+}
+
 export function normalizeCodexUsage(accountRaw: unknown, limitsRaw: unknown, usageRaw: unknown): AgentUsage {
   const account = obj(obj(accountRaw).account), limits = obj(limitsRaw), byId = obj(limits.rateLimitsByLimitId);
   const buckets = Object.keys(byId).length ? Object.values(byId) : limits.rateLimits ? [limits.rateLimits] : [];
@@ -82,6 +100,7 @@ export function normalizeCodexUsage(accountRaw: unknown, limitsRaw: unknown, usa
   const plan = account.type === "chatgpt" && typeof account.planType === "string" ? account.planType.slice(0, 80) : null;
   return { engine: "codex", status: weekly.length || totalTokens !== null ? "ok" : "unavailable", plan, weekly, totalTokens,
     tokenScope: totalTokens === null ? null : "account", ordinaryUsageAllowed: typeof limits.ordinaryUsageAllowed === "boolean" ? limits.ordinaryUsageAllowed : null,
+    dailyTokens: normalizeCodexDailyTokens(usageRaw),
     note: account.type === "chatgpt" ? "账号累计，来自 Codex；周额度和短周期额度分别计算。" : "当前 Codex 未提供 ChatGPT 订阅信息，可能未登录或使用 API/其他提供方。",
     noteEn: account.type === "chatgpt" ? "Lifetime tokens reported by Codex. Weekly quota does not imply short-window availability." : "No ChatGPT subscription information was provided. The CLI may be signed out or using an API/cloud provider.",
     checkedAt: new Date().toISOString() };

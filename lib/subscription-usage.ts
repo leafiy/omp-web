@@ -3,8 +3,9 @@ import { ClaudeCodeSession } from "./claude-code-session";
 import { CodexRpcClient, denyCodexRequest } from "./codex-rpc-client";
 import { discoverAgent } from "./agent-executable";
 import { getRpcSession } from "./rpc-manager";
+import { localTokenSnapshot, LOCAL_TOKEN_RETENTION_MS, type LocalTokenSnapshot, type TokenParts } from "./local-token-usage";
 import { normalizeClaudeUsage, normalizeCodexUsage, normalizeSessionUsage, unavailableUsage } from "./usage-normalize";
-import type { AgentUsage, UsageOverview } from "./usage-types";
+import type { AgentUsage, PeriodTokens, TokenPeriodRow, TokenPeriods, UsageOverview } from "./usage-types";
 
 async function bounded<T>(work: Promise<T>, milliseconds = 15_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,13 +53,10 @@ async function codexUsage(): Promise<AgentUsage> {
 
 async function sessionUsage(sessionId?: string): Promise<AgentUsage | null> {
   const session = sessionId ? getRpcSession(sessionId) : undefined;
-  if (!session?.isAlive() || session.engine === "codex") return null;
+  // Claude Code and Codex show only their subscription cards; no separate current-session card.
+  if (!session?.isAlive() || session.engine === "codex" || session.engine === "claude") return null;
   if (session.isRunning()) return unavailableUsage(session.engine, "当前会话运行中，结束后再读取原生 Token 统计。");
   try {
-    if (session.engine === "claude") {
-      const result = normalizeClaudeUsage(await bounded(session.send({ type: "get_native_usage" }), 8000), true);
-      return { ...result, weekly: [], plan: null, note: "当前 Claude Code 会话累计，不是订阅账户总量。" };
-    }
     return normalizeSessionUsage(session.engine, await bounded(session.send({ type: "get_session_stats" }), 8000));
   }
   catch { return unavailableUsage(session.engine, "未能读取当前原生会话的 Token 统计。", "error"); }
@@ -101,4 +99,64 @@ export function getSubscriptionUsage(sessionId?: string, refresh = false): Promi
   cache.set(key, entry);
   while (cache.size > 16) cache.delete(cache.keys().next().value!);
   return entry.promise;
+}
+
+/** Browser-local period starts: today, this week (Monday) and this month, as instants and calendar dates. */
+export interface PeriodQuery { starts: [number, number, number]; dates: [string, string, string] }
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function parsePeriodQuery(since: string | null, dates: string | null, now = Date.now()): PeriodQuery | null {
+  const starts = (since ?? "").split(",").map((value) => /^\d{1,16}$/.test(value) ? Number(value) : NaN), days = (dates ?? "").split(",");
+  if (starts.length !== 3 || days.length !== 3) return null;
+  // A month start is at most 31 days plus a time-zone offset ago; the local summary keeps 40 days.
+  if (!starts.every((start) => Number.isSafeInteger(start) && start > now - LOCAL_TOKEN_RETENTION_MS + DAY_MS && start <= now + DAY_MS)) return null;
+  if (!days.every((day) => /^\d{4}-\d{2}-\d{2}$/.test(day))) return null;
+  return { starts: starts as PeriodQuery["starts"], dates: days as PeriodQuery["dates"] };
+}
+
+function localPeriod(parts: TokenParts): PeriodTokens {
+  const [input, output, cacheRead, cacheWrite] = parts;
+  return { total: String(input + output + cacheRead + cacheWrite), input: String(input), output: String(output), cacheRead: String(cacheRead), cacheWrite: String(cacheWrite) };
+}
+
+function codexPeriods(report: AgentUsage | undefined, dates: PeriodQuery["dates"]): TokenPeriodRow {
+  const daily = report?.dailyTokens;
+  if (!daily) return { engine: "codex", scope: "account", status: "unavailable", day: null, week: null, month: null };
+  // Codex dates are its own calendar days; they are compared with the browser's local dates as-is.
+  const [day, week, month] = dates.map((start): PeriodTokens => ({
+    total: daily.filter((bucket) => bucket.date >= start).reduce((sum, bucket) => sum + BigInt(bucket.tokens), BigInt(0)).toString(),
+  }));
+  const earliest = daily[0]?.date, oldest = [...dates].sort()[0];
+  return { engine: "codex", scope: "account", status: "ok", day, week, month, dataFrom: earliest && earliest > oldest ? earliest : null };
+}
+
+/** Pure: Codex native daily buckets plus this machine's summed session records, in a fixed row order. */
+export function buildTokenPeriods(subscriptions: AgentUsage[], local: LocalTokenSnapshot, query: PeriodQuery): TokenPeriods {
+  const rows: TokenPeriodRow[] = [];
+  for (const engine of ["claude", "codex", "omp", "pi"] as const) {
+    if (engine === "codex") { rows.push(codexPeriods(subscriptions.find((report) => report.engine === "codex"), query.dates)); continue; }
+    const row = local.rows.find((item) => item.engine === engine);
+    if (!row) continue;
+    if (!row.complete) { rows.push({ engine, scope: "local", status: "pending", day: null, week: null, month: null }); continue; }
+    const [day, week, month] = row.periods.map(localPeriod);
+    rows.push({ engine, scope: "local", status: "ok", day, week, month });
+  }
+  return { rows, pending: local.pending, scannedAt: local.scannedAt };
+}
+
+function publicReport(report: AgentUsage): AgentUsage {
+  const { dailyTokens, ...rest } = report;
+  void dailyTokens;
+  return rest;
+}
+
+/** Subscription/session cards (cached) plus, when requested, day/week/month token totals (computed per request). */
+export async function getUsageOverview(sessionId: string | undefined, refresh: boolean, query: PeriodQuery | null): Promise<UsageOverview> {
+  const [overview, local] = await Promise.all([
+    getSubscriptionUsage(sessionId, refresh),
+    query ? localTokenSnapshot(query.starts, refresh) : Promise.resolve(null),
+  ]);
+  const result: UsageOverview = { ...overview, subscriptions: overview.subscriptions.map(publicReport) };
+  if (query && local) result.tokens = buildTokenPeriods(overview.subscriptions, local, query);
+  return result;
 }

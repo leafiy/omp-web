@@ -3,7 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { engineLabel } from "@/lib/engine";
-import type { AgentUsage, UsageOverview } from "@/lib/usage-types";
+import type { AgentUsage, PeriodTokens, TokenPeriods, UsageOverview } from "@/lib/usage-types";
+
+const PERIODS = ["day", "week", "month"] as const;
+
+/** Local midnight today, Monday of this week and the 1st of this month, as instants and calendar dates. */
+function localPeriodParams(): { since: string; dates: string } {
+  const now = new Date(), day = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const starts = [day, new Date(day.getFullYear(), day.getMonth(), day.getDate() - (day.getDay() + 6) % 7), new Date(now.getFullYear(), now.getMonth(), 1)];
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { since: starts.map((d) => d.getTime()).join(","), dates: starts.map(ymd).join(",") };
+}
 
 export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; onClose: () => void }) {
   const { locale } = useI18n(), zh = locale === "zh-CN";
@@ -13,23 +23,26 @@ export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; 
   const dialog = useRef<HTMLElement>(null);
   useEffect(() => {
     let disposed = false, pending = false; let controller: AbortController | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     async function load(force = false) {
-      if (pending || disposed) return; pending = true; setBusy(true); setError(false);
+      if (pending || disposed) return; pending = true; setBusy(true); setError(false); clearTimeout(retry);
       controller = new AbortController(); const timer = setTimeout(() => controller?.abort(), 25_000);
-      const params = new URLSearchParams({ ...(sessionId ? { sessionId } : {}), ...(force ? { refresh: "1" } : {}) });
+      const params = new URLSearchParams({ ...(sessionId ? { sessionId } : {}), ...(force ? { refresh: "1" } : {}), ...localPeriodParams() });
       try {
         const response = await fetch(`/api/usage?${params}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error("Usage request failed");
         const result = await response.json() as UsageOverview;
         if (!Array.isArray(result.subscriptions)) throw new Error("Invalid usage response");
         if (!disposed) setData(result);
+        // The first scan of local session records runs in the background; pick up its totals soon.
+        if (!disposed && result.tokens?.pending) retry = setTimeout(() => { void load(); }, 3_000);
       } catch { if (!disposed) setError(true); }
       finally { clearTimeout(timer); pending = false; if (!disposed) setBusy(false); }
     }
     refresh.current = () => { void load(true); };
     void load();
     const interval = setInterval(() => { if (!document.hidden) void load(); }, 60_000);
-    return () => { disposed = true; controller?.abort(); clearInterval(interval); };
+    return () => { disposed = true; controller?.abort(); clearInterval(interval); clearTimeout(retry); };
   }, [sessionId]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -43,6 +56,38 @@ export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; 
   }, [onClose]);
   const buttonStyle = { padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", color: "var(--text)", fontSize: 13, cursor: "pointer" };
   function count(value: string | null) { try { return value === null ? (zh ? "未提供" : "Not provided") : new Intl.NumberFormat(locale).format(BigInt(value)); } catch { return zh ? "未提供" : "Not provided"; } }
+  function periodCell(value: PeriodTokens | null, pendingRow: boolean) {
+    if (!value) return <span style={{ color: "var(--text-dim)" }}>{pendingRow ? "…" : (zh ? "未提供" : "N/A")}</span>;
+    try {
+      const total = BigInt(value.total), parts = value.input !== undefined
+        ? [[zh ? "输入" : "Input", value.input], [zh ? "输出" : "Output", value.output], [zh ? "缓存读" : "Cache read", value.cacheRead], [zh ? "缓存写" : "Cache write", value.cacheWrite]]
+          .map(([label, n]) => `${label} ${count(n ?? null)}`).join(" · ")
+        : "";
+      return <span title={[count(value.total), parts].filter(Boolean).join("\n")}>{new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1 }).format(total)}</span>;
+    } catch { return <span style={{ color: "var(--text-dim)" }}>{zh ? "未提供" : "N/A"}</span>; }
+  }
+  function tokenPeriods(tokens: TokenPeriods) {
+    const labels = zh ? ["今日", "本周", "本月"] : ["Today", "This week", "This month"];
+    const cell = { padding: "6px 0 6px 8px", textAlign: "right" as const, whiteSpace: "nowrap" as const, fontVariantNumeric: "tabular-nums" as const };
+    return <section key="tokens" style={{ border: "1px solid var(--border)", borderRadius: 9, padding: 16, marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{zh ? "Token 统计" : "Token totals"}</h3>
+        {tokens.pending && <span role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>{zh ? "统计中…" : "Counting…"}</span>}
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8, fontSize: 13 }}>
+        <thead><tr><td />{labels.map((label) => <th key={label} scope="col" style={{ ...cell, fontSize: 12, fontWeight: 400, color: "var(--text-muted)" }}>{label}</th>)}</tr></thead>
+        <tbody>
+          {tokens.rows.map((row) => <tr key={row.engine} style={{ borderTop: "1px solid var(--border)" }}>
+            <th scope="row" style={{ textAlign: "left", fontWeight: 500, padding: "6px 0", overflowWrap: "anywhere" }}>
+              {engineLabel(row.engine)} <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-dim)" }}>{row.scope === "account" ? (zh ? "账号" : "account") : (zh ? "本机" : "local")}{row.dataFrom ? ` · ${zh ? "自" : "from"} ${row.dataFrom.slice(5)}` : ""}</span>
+            </th>
+            {PERIODS.map((key) => <td key={key} style={cell}>{periodCell(row[key], row.status === "pending")}</td>)}
+          </tr>)}
+        </tbody>
+      </table>
+      {tokens.scannedAt && <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{zh ? "统计于 " : "Counted at "}{new Date(tokens.scannedAt).toLocaleTimeString(locale)}</span>}
+    </section>;
+  }
   function card(report: AgentUsage, session = false) {
     return <section key={session ? "session" : report.engine} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: 16, marginTop: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
@@ -77,6 +122,7 @@ export function SubscriptionUsage({ sessionId, onClose }: { sessionId?: string; 
       </header>
       {error && <p role="alert" style={{ fontSize: 13 }}>{zh ? "用量读取失败" : "Could not load usage"}</p>}
       {!data && busy && <p role="status">{zh ? "正在向原生工具查询…" : "Querying native tools…"}</p>}
+      {data?.tokens && tokenPeriods(data.tokens)}
       {data?.subscriptions.map(r => card(r))}
       {data?.session && card(data.session, true)}
     </section>
