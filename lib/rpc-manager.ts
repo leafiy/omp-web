@@ -12,6 +12,7 @@ import { FollowUpSession } from "./follow-up-session";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { cacheSessionPath, invalidateSessionListCache, readSessionHeader } from "./session-reader";
+import { generateRpcSessionTitle } from "./rpc-session-title";
 
 export type AgentEvent = AgentFrame;
 type EventListener = (event: AgentEvent) => void;
@@ -74,6 +75,7 @@ export class AgentSessionWrapper {
   private startupNotices: AgentEvent[] = [];
   private activeLeafId: string | null | undefined;
   private activityRevision = 0;
+  private sessionNameRevision = 0;
   private readonly tasks: AgentTasks;
   private tasksSupported = false;
 
@@ -101,6 +103,12 @@ export class AgentSessionWrapper {
   private get label(): string { return this.engine === "pi" ? "Pi" : "OMP"; }
   get sessionFile(): string { return this.state.sessionFile ?? ""; }
   get cwd(): string { return this.options.cwd; }
+  generateSessionTitle(prompt: string, signal: AbortSignal): Promise<string> {
+    return generateRpcSessionTitle({
+      engine: this.engine, cwd: this.cwd,
+      ...(this.state.model ? { initialModel: { provider: this.state.model.provider, modelId: this.state.model.id } } : {}),
+    }, prompt, signal);
+  }
   getActiveLeafId(): string | null | undefined { return this.activeLeafId; }
   isAlive(): boolean { return this.client.isAlive() && !this.shuttingDown; }
   isRunning(): boolean {
@@ -136,6 +144,9 @@ export class AgentSessionWrapper {
   onEvent(listener: EventListener): () => void {
     this.listeners.add(listener);
     listener({ type: "task_snapshot", snapshot: this.tasks.snapshot() });
+    if (this.sessionId && (this.sessionNameRevision > 0 || this.state.sessionName !== undefined)) {
+      listener({ type: "session_info_update", sessionId: this.sessionId, title: this.state.sessionName ?? "" });
+    }
     for (const event of this.pendingUi.values()) listener(event);
     for (const event of this.startupNotices.splice(0)) listener(event);
     return () => { this.listeners.delete(listener); };
@@ -187,6 +198,14 @@ export class AgentSessionWrapper {
         this.acceptedPiPrompts.clear();
       }
       if (this.engine === "omp" || this.prompts.size === 0) this.emit({ type: "agent_settled" });
+    } else if (frame.type === "session_info_update" || this.engine === "pi" && frame.type === "session_info_changed") {
+      if (frame.type === "session_info_update" && frame.sessionId !== nativeSessionId(this.sessionId)) return;
+      const title = frame.type === "session_info_changed" ? frame.name : frame.title;
+      if (title !== undefined && typeof title !== "string") return;
+      this.sessionNameRevision++;
+      this.state.sessionName = title;
+      invalidateSessionListCache();
+      this.emit({ type: "session_info_update", sessionId: this.sessionId, title: title ?? "" });
     } else if (frame.type === "queue_update") {
       this.state.queuedMessages = {
         steering: Array.isArray(frame.steering) ? frame.steering as string[] : [],
@@ -262,11 +281,13 @@ export class AgentSessionWrapper {
 
   private async refreshState(): Promise<NativeState> {
     const revision = this.activityRevision;
+    const nameRevision = this.sessionNameRevision;
     const native = await this.client.request<NativeState>({ type: "get_state" });
     if (!native || typeof native.sessionId !== "string" || !native.sessionId) throw new Error(`Invalid local ${this.label} session state`);
     const state = {
       ...native,
       sessionId: sessionKey(this.engine, native.sessionId),
+      sessionName: nameRevision === this.sessionNameRevision ? native.sessionName : this.state.sessionName,
       ...(this.engine === "pi" ? {
         queuedMessageCount: native.pendingMessageCount ?? 0,
         queuedMessages: this.state.queuedMessages ?? { steering: [], followUp: [] },
@@ -277,7 +298,14 @@ export class AgentSessionWrapper {
       this.destroy();
       throw new Error(`${this.label} changed sessions outside the web controls. Reopen the new session from the sidebar.`);
     }
+    const nameChanged = this.state.sessionId === state.sessionId
+      && (this.state.sessionName ?? "") !== (state.sessionName ?? "");
     this.state = state;
+    if (nameChanged) {
+      this.sessionNameRevision++;
+      invalidateSessionListCache();
+      this.emit({ type: "session_info_update", sessionId: state.sessionId, title: state.sessionName ?? "" });
+    }
     // Events can arrive in the same stdout read AFTER the response but BEFORE
     // this await resumes. Never let that older snapshot overwrite live activity.
     if (revision === this.activityRevision) {
@@ -583,7 +611,7 @@ export async function startRpcSession(
       : engine === "claude"
         ? new ClaudeCodeSession({ ...processOptions, nativeId: header?.id }, changed)
         : new AgentSessionWrapper(processOptions);
-    const session = new FollowUpSession(native, changed);
+    const session = new FollowUpSession(native, changed, !sessionFile);
     await session.start();
     const realSessionId = session.sessionId;
     if (sessionFile && realSessionId !== sessionId) {

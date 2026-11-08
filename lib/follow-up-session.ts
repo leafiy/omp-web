@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentFrame } from "./agent-rpc-client";
 import type { AgentEngine } from "./engine";
+import { buildSessionTitlePrompt, parseGeneratedSessionTitle } from "./session-title";
 
 export interface FollowUpNativeSession {
   readonly engine: AgentEngine;
@@ -9,6 +10,7 @@ export interface FollowUpNativeSession {
   readonly cwd: string;
   start(): Promise<void>;
   send(command: Record<string, unknown>): Promise<unknown>;
+  generateSessionTitle(prompt: string, signal: AbortSignal): Promise<string>;
   isAlive(): boolean;
   isRunning(): boolean;
   getActiveLeafId(): string | null | undefined;
@@ -42,9 +44,25 @@ export class FollowUpSession implements FollowUpNativeSession {
   private closed = false;
   private destroyed?: () => void;
   private detach: () => void;
+  private titleInput?: string;
+  private titleReply = "";
+  private titleAttempted = false;
+  private titleSuppressed = false;
+  private titleController?: AbortController;
+  private titleWork?: Promise<void>;
+  private titleEvent?: AgentFrame;
 
-  constructor(private readonly native: FollowUpNativeSession, private readonly changed: () => void) {
+  constructor(private readonly native: FollowUpNativeSession, private readonly changed: () => void, private readonly autoTitle = false) {
     this.detach = native.onEvent(event => {
+      if (this.autoTitle && !this.titleAttempted && event.type === "message_end") {
+        const message = object(event.message);
+        if (message.role === "assistant") {
+          this.titleReply = message.stopReason === "error" || message.stopReason === "aborted" ? ""
+            : (typeof message.content === "string" ? message.content
+              : Array.isArray(message.content) ? message.content.map(object).filter(block => block.type === "text" && typeof block.text === "string").map(block => block.text).join("\n") : "").slice(0, 3000);
+        }
+      }
+      if (event.type === "session_info_update" || event.type === "session_info_changed") this.suppressTitle();
       if (event.type === "prompt_error" && this.pending.length && !this.paused) {
         this.paused = true; this.queueChanged();
       }
@@ -53,10 +71,14 @@ export class FollowUpSession implements FollowUpNativeSession {
         this.nativeQueue = { steering: strings(event.steering), followUp: strings(event.followUp), items: Array.isArray(event.items) ? event.items : [] };
         this.queueChanged();
       } else this.emit(event);
-      if (["agent_settled", "prompt_done", "task_snapshot", "compaction_end"].includes(event.type)) this.schedule();
+      if (["agent_settled", "prompt_done", "task_snapshot", "compaction_end"].includes(event.type)) {
+        this.schedule();
+        this.maybeNameSession();
+      }
     });
     native.onDestroy(() => {
       this.closed = true; clearTimeout(this.timer);
+      this.suppressTitle();
       if (this.pending.length) {
         // Preserve a visible copy, but do not promise cancellation after process loss.
         this.pending = this.pending.map(item => ({ ...item, state: "unconfirmed" }));
@@ -71,8 +93,9 @@ export class FollowUpSession implements FollowUpNativeSession {
   get cwd() { return this.native.cwd; }
   getActiveLeafId() { return this.native.getActiveLeafId(); }
   isAlive() { return !this.closed && this.native.isAlive(); }
-  isRunning() { return this.isAlive() && (this.native.isRunning() || this.pending.length > 0 || this.manualRequests > 0); }
+  isRunning() { return this.isAlive() && (this.native.isRunning() || this.pending.length > 0 || this.manualRequests > 0 || Boolean(this.titleController)); }
   waitUntilReady() { return this.native.waitUntilReady(); }
+  generateSessionTitle(prompt: string, signal: AbortSignal) { return this.native.generateSessionTitle(prompt, signal); }
   async start() { try { await this.native.start(); } catch (error) { this.destroy(); throw error; } }
   onDestroy(callback: () => void) { this.destroyed = callback; }
   private mergedQueue() {
@@ -88,6 +111,7 @@ export class FollowUpSession implements FollowUpNativeSession {
     // consume startup notices early or retain private native transcript events.
     const stopReplay = this.native.onEvent(event => { if (event.type !== "queue_update") listener(event); });
     stopReplay();
+    if (this.titleEvent) listener(this.titleEvent);
     listener({ type: "queue_update", ...this.mergedQueue(), webFollowUpPending: this.pending.length });
     return () => { this.listeners.delete(listener); };
   }
@@ -101,6 +125,54 @@ export class FollowUpSession implements FollowUpNativeSession {
       if (JSON.stringify(next) !== JSON.stringify(this.nativeQueue)) { this.nativeQueue = next; this.queueChanged(); }
     }
     return state;
+  }
+  private captureTitleInput(message: unknown) {
+    if (!this.autoTitle || this.titleInput || this.titleSuppressed || typeof message !== "string") return;
+    const text = message.trim();
+    if (text && !text.startsWith("/") && !text.startsWith("!")) this.titleInput = text.slice(0, 3000);
+  }
+  private suppressTitle() {
+    this.titleSuppressed = true;
+    this.titleEvent = undefined;
+    this.titleController?.abort();
+  }
+  private maybeNameSession() {
+    if (!this.autoTitle || this.titleAttempted || this.titleSuppressed || !this.titleInput || !this.titleReply
+      || !this.isAlive() || this.native.isRunning() || this.manualRequests || this.pending.length) return;
+    this.titleAttempted = true;
+    const controller = new AbortController();
+    this.titleController = controller;
+    const timeout = setTimeout(() => controller.abort(new Error("Session title generation timed out")), 90_000);
+    timeout.unref();
+    this.changed();
+    this.titleWork = this.nameSession(controller).catch(() => {
+      if (this.isAlive() && !this.titleSuppressed) this.emit({
+        type: "extension_ui_request", id: randomUUID(), method: "notify", notifyType: "warning",
+        message: "Automatic session naming failed. You can set a title with Rename.",
+      });
+    }).finally(() => {
+      clearTimeout(timeout);
+      this.titleController = undefined;
+      this.titleInput = undefined;
+      this.titleReply = "";
+      this.changed();
+    });
+  }
+  private async nameSession(controller: AbortController) {
+    const sessionId = this.sessionId;
+    const mayWrite = () => !controller.signal.aborted && !this.titleSuppressed && this.isAlive() && this.sessionId === sessionId;
+    const before = object(await this.native.send({ type: "get_state" }));
+    if (!mayWrite() || before.sessionId !== sessionId || typeof before.sessionName === "string" && before.sessionName.trim()) return;
+    const prompt = buildSessionTitlePrompt(this.titleInput!, this.titleReply);
+    const title = parseGeneratedSessionTitle(await this.native.generateSessionTitle(prompt, controller.signal));
+    if (!mayWrite()) return;
+    const after = object(await this.native.send({ type: "get_state" }));
+    if (!mayWrite() || after.sessionId !== sessionId || typeof after.sessionName === "string" && after.sessionName.trim()) return;
+    await this.native.send({ type: "set_session_name", name: title });
+    if (!this.isAlive() || this.sessionId !== sessionId) return;
+    this.titleEvent = { type: "session_info_update", sessionId, title };
+    this.emit(this.titleEvent);
+    this.changed();
   }
   private schedule(delay = 30) {
     if (this.closed || !this.pending.length || this.pumping) return;
@@ -123,6 +195,7 @@ export class FollowUpSession implements FollowUpNativeSession {
       // and cannot report a cancellation that did not happen.
       item.state = "sending"; this.queueChanged();
       try {
+        this.captureTitleInput(item.text);
         await this.native.send({ type: "prompt", message: item.text });
         this.pending = this.pending.filter(candidate => candidate !== item);
         this.queueChanged();
@@ -135,7 +208,7 @@ export class FollowUpSession implements FollowUpNativeSession {
         }
       }
     } catch { /* An unavailable state never authorizes sending. Retry state only. */ }
-    finally { this.pumping = false; this.schedule(2000); }
+    finally { this.pumping = false; this.schedule(2000); this.maybeNameSession(); }
   }
   async send(command: Record<string, unknown>): Promise<unknown> {
     await this.waitUntilReady();
@@ -165,10 +238,11 @@ export class FollowUpSession implements FollowUpNativeSession {
     }
     if (type === "get_state") {
       const state = await this.state(), queue = this.mergedQueue();
-      return { ...state, supportsFollowUp: true, webFollowUpPending: this.pending.length,
+      const isNamingSession = Boolean(this.titleController);
+      return { ...state, supportsFollowUp: true, webFollowUpPending: this.pending.length, isNamingSession,
         queuedMessages: { steering: queue.steering, followUp: queue.followUp, queueEpoch: queue.queueEpoch, queueRevision: queue.queueRevision, followUpPaused: queue.followUpPaused }, queuedItems: queue.items,
         pendingMessageCount: Number(state.pendingMessageCount ?? 0) + this.pending.length,
-        isSettled: state.isSettled !== false && !state.isStreaming && !state.isPromptRunning && !state.isBashRunning && !state.isCompacting && !this.pending.length };
+        isSettled: state.isSettled !== false && !state.isStreaming && !state.isPromptRunning && !state.isBashRunning && !state.isCompacting && !this.pending.length && !isNamingSession };
     }
     if (type === "clear_queue") {
       this.manualRequests++;
@@ -191,12 +265,15 @@ export class FollowUpSession implements FollowUpNativeSession {
     if (type === "prompt" && this.pending.some(item => item.state === "sending")) throw new Error("A follow-up is being handed to the agent; retry shortly");
     const mutation = ["prompt", "steer", "abort", "bash", "compact", "set_model", "fork", "navigate_tree"].includes(type);
     if (mutation) this.manualRequests++;
+    if (["set_session_name", "fork", "navigate_tree", "abort"].includes(type)
+      || type === "prompt" && typeof command.message === "string" && /^\s*\/name(?:\s|$)/.test(command.message)) this.suppressTitle();
+    if (type === "prompt") this.captureTitleInput(command.message);
     try {
       const result = await this.native.send(command);
       if (type === "prompt" && this.paused) { this.paused = false; this.queueChanged(); }
       return result;
-    } finally { if (mutation) this.manualRequests--; this.schedule(); }
+    } finally { if (mutation) this.manualRequests--; this.schedule(); this.maybeNameSession(); }
   }
-  destroy() { this.closed = true; clearTimeout(this.timer); this.native.destroy(); }
-  async shutdown() { this.closed = true; clearTimeout(this.timer); await this.native.shutdown(); }
+  destroy() { this.closed = true; this.suppressTitle(); clearTimeout(this.timer); this.native.destroy(); }
+  async shutdown() { this.closed = true; this.suppressTitle(); clearTimeout(this.timer); await this.native.shutdown(); await this.titleWork; }
 }

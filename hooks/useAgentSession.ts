@@ -82,6 +82,7 @@ type AgentStateResponse = {
   isStreaming?: boolean;
   supportsSteering?: boolean;
   webFollowUpPending?: number;
+  isNamingSession?: boolean;
   isPromptRunning?: boolean;
   isBashRunning?: boolean;
   isCompacting?: boolean;
@@ -177,6 +178,7 @@ export interface UseAgentSessionOptions {
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
+  onSessionNameChange?: (sessionId: string, name: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
@@ -368,6 +370,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const { t } = useI18n();
   const {
     session, newSessionCwd, engine: newChatEngine = "omp", onNewSession, onAgentEnd, onSessionCreated, onSessionForked,
+    onSessionNameChange,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   } = opts;
 
@@ -1020,7 +1023,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return;
         }
 
-        if (data.running && ((state?.webFollowUpPending ?? 0) > 0 || hasActiveTasks(state?.tasks))) {
+        if (data.running && (state?.isNamingSession || (state?.webFollowUpPending ?? 0) > 0 || hasActiveTasks(state?.tasks))) {
           eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), PROMPT_SETTLE_POLL_MS);
           return;
         }
@@ -1197,6 +1200,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
+      case "session_info_update": {
+        const sid = sessionIdRef.current;
+        if (!sid || event.sessionId !== sid || typeof event.title !== "string") break;
+        const name = event.title;
+        historyClientCache.invalidate(sid);
+        setSessionStatsOverride((prev) => prev ? { ...prev, sessionName: name } : prev);
+        onSessionNameChange?.(sid, name);
+        break;
+      }
       case "task_snapshot":
         applyTaskSnapshot(event.snapshot as AgentTaskSnapshot);
         break;
@@ -1396,7 +1408,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, closeEvents, handleExtensionUiRequest, loadSession, notifyPromptStage, notifyCompletion, scheduleEventStreamClose, settleUiStage, engine, applyTaskSnapshot]);
+  }, [addNotice, cancelEventStreamGrace, closeEvents, handleExtensionUiRequest, loadSession, notifyPromptStage, notifyCompletion, scheduleEventStreamClose, settleUiStage, engine, applyTaskSnapshot, onSessionNameChange]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {

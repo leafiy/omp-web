@@ -229,8 +229,10 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
     if (bytesRead === 0) return null;
     const text = buffer.subarray(0, bytesRead).toString("utf8");
     const lines = text.split("\n");
-    let sessionHeader: (SessionHeader & { name?: string; title?: string }) | null = null;
+    let sessionHeader: SessionHeader | null = null;
     let slotTitle: string | undefined;
+    // session_info is append-only; the full index, not this bounded prefix,
+    // owns its latest value (including explicit clears).
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
@@ -239,11 +241,6 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
           slotTitle = entry.title;
         } else if (entry && entry.type === "session" && !sessionHeader) {
           sessionHeader = entry as unknown as SessionHeader;
-        } else if (entry && entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) {
-          if (sessionHeader) {
-            sessionHeader.name = entry.name.trim();
-            sessionHeader.title = entry.name.trim();
-          }
         }
       } catch {
         // continue scanning

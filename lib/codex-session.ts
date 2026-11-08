@@ -6,6 +6,7 @@ import { sessionKey } from "./engine";
 import { getCodexHome, getCodexWebDir } from "./codex-config";
 import { CodexRpcClient, denyCodexRequest, listCodexModels, object, type CodexFrame, type CodexObject, type CodexTransport } from "./codex-rpc-client";
 import { CodexEventProjector } from "./codex-events";
+import { generateCodexSessionTitle } from "./codex-session-title";
 import { AgentTasks } from "./agent-tasks";
 import { codexTaskTranscript } from "./agent-task-messages";
 import { WebSessionTranscript } from "./web-session-transcript";
@@ -25,6 +26,9 @@ export class CodexSession {
   private transcript?: WebSessionTranscript;
   private projector = new CodexEventProjector("");
   private model = "";
+  private modelProvider = "";
+  private permissionProfile?: string;
+  private readonly titleRequests = new Set<AbortController>();
   private readonly tasks = new AgentTasks("codex", event => { this.emit(event); this.changed(); });
   private taskPoll?: ReturnType<typeof setInterval>;
   private taskPolling = false;
@@ -45,7 +49,7 @@ export class CodexSession {
   private destroyed?: () => void;
   private lastError?: string;
 
-  constructor(private readonly options: AgentProcessOptions & { nativeId?: string }, private readonly changed: () => void, client?: CodexTransport) {
+  constructor(private readonly options: AgentProcessOptions & { nativeId?: string }, private readonly changed: () => void, client?: CodexTransport, private readonly createTitleClient?: () => CodexTransport) {
     this.cwd = options.cwd; this.nativeId = options.nativeId || "";
     this.client = client ?? new CodexRpcClient(this.cwd);
     this.client.onFrame((frame) => { try { this.receive(frame); } catch (error) { this.fail(error); } });
@@ -90,6 +94,9 @@ export class CodexSession {
       if (typeof result.model !== "string" || !result.model) throw new Error("Codex did not return a model");
       if (this.closed) throw new Error(this.lastError || "Codex exited during initialization");
       this.nativeId = thread.id; this.model = result.model;
+      this.modelProvider = typeof result.modelProvider === "string" ? result.modelProvider : "";
+      const profile = object(result.activePermissionProfile).id;
+      this.permissionProfile = typeof profile === "string" ? profile : undefined;
       if (!this.options.sessionFile) await this.materializeEmptyThread(thread);
       if (this.closed) throw new Error(this.lastError || "Codex exited while persisting the thread");
       this.transcript ??= new WebSessionTranscript(this.nativeId, this.cwd, getCodexWebDir(), "codex-cli");
@@ -98,6 +105,28 @@ export class CodexSession {
       this.taskPoll = setInterval(() => void this.refreshTasks(), 5000);
       this.taskPoll.unref();
     } catch (error) { this.destroy(); throw error; }
+  }
+
+  /** Isolated native inference, without main-thread projection or name persistence. */
+  async generateSessionTitle(prompt: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
+    if (!this.isAlive() || this.changingModel || !this.model || !this.modelProvider) throw new Error("Codex title generation requires a ready native model and provider");
+    const controller = new AbortController();
+    const cancel = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", cancel, { once: true });
+    if (signal.aborted) cancel();
+    this.titleRequests.add(controller);
+    try {
+      controller.signal.throwIfAborted();
+      const client = this.createTitleClient?.() ?? (this.client instanceof CodexRpcClient ? this.client.createTitleClient() : undefined);
+      if (!client || client === this.client) throw new Error("Codex title generation requires a separate native transport");
+      return await generateCodexSessionTitle(client, {
+        cwd: this.cwd, model: this.model, modelProvider: this.modelProvider, permissionProfile: this.permissionProfile,
+      }, prompt, controller.signal);
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      this.titleRequests.delete(controller);
+    }
   }
 
   private async materializeEmptyThread(thread: CodexObject): Promise<void> {
@@ -353,6 +382,7 @@ export class CodexSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true; clearTimeout(this.idleTimer); clearInterval(this.taskPoll);
+    for (const request of this.titleRequests) request.abort(new Error("Codex session closed"));
     this.tasks.disconnected(); this.cancelDialogs(); this.finishTurn();
     this.client.destroy(); this.destroyed?.(); this.changed();
   }

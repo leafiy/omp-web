@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Options, PermissionResult, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as nativeClaudeQuery, type Options, type PermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentFrame, AgentProcessOptions } from "./agent-rpc-client";
 import { sessionKey } from "./engine";
 import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
@@ -52,6 +52,9 @@ export class ClaudeCodeSession {
   private readonly input = new PromptInput();
   private readonly nativeId: string;
   private query?: Query;
+  private nativeEnvironment?: NodeJS.ProcessEnv;
+  private nativeExecutable?: string;
+  private readonly titleRequests = new Set<AbortController>();
   private transcript?: ClaudeWebTranscript;
   private projector?: ClaudeEventProjector;
   private model = "";
@@ -122,10 +125,12 @@ export class ClaudeCodeSession {
       if (this.options.initialModel && this.options.initialModel.provider !== "claude-code") throw new Error("Select a native Claude Code model");
       const env = claudeChildEnvironment();
       this.model = this.options.initialModel?.modelId || "";
+      this.nativeEnvironment = env;
+      this.nativeExecutable = config.executable;
       this.projector = new ClaudeEventProjector(this.model);
       if (this.options.sessionFile) this.transcript = new ClaudeWebTranscript(this.nativeId, this.cwd, this.options.sessionFile);
       const resume = Boolean(this.options.sessionFile && this.transcript?.getMessages().some((m) => m.role === "user"));
-      const factory = this.createQuery ?? (await import("@anthropic-ai/claude-agent-sdk")).query;
+      const factory = this.createQuery ?? nativeClaudeQuery;
       this.query = factory({
         prompt: this.input,
         options: {
@@ -165,6 +170,86 @@ export class ClaudeCodeSession {
     } catch (error) {
       this.destroy();
       throw error;
+    }
+  }
+
+  /** A separate, nonpersistent native query; never enters this conversation. */
+  async generateSessionTitle(prompt: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
+    if (!this.isAlive() || this.changingModel || !this.model) throw new Error("Claude Code title generation requires a ready native model");
+    const controller = new AbortController(), input = new PromptInput();
+    const model = this.model;
+    let query: Query | undefined;
+    const cancel = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", cancel, { once: true });
+    if (signal.aborted) cancel();
+    this.titleRequests.add(controller);
+    const { promise: cancelled, reject: rejectCancelled } = Promise.withResolvers<never>();
+    const stop = () => {
+      rejectCancelled(controller.signal.reason);
+      input.close();
+      query?.close();
+    };
+    controller.signal.addEventListener("abort", stop, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error("Claude Code title generation timed out")), 90_000);
+    timer.unref();
+    try {
+      controller.signal.throwIfAborted();
+      const run = async () => {
+        const factory = this.createQuery ?? nativeClaudeQuery;
+        controller.signal.throwIfAborted();
+        query = factory({
+          prompt: input,
+          options: {
+            cwd: this.cwd, env: this.nativeEnvironment, pathToClaudeCodeExecutable: this.nativeExecutable,
+            model, abortController: controller, persistSession: false, maxTurns: 1, verbatimPrompts: true,
+            tools: [], mcpServers: {}, strictMcpConfig: true, skills: [],
+            settingSources: ["user", "project", "local"],
+            settings: { disableAllHooks: true, disableClaudeAiConnectors: true, disableBundledSkills: true },
+            enableFileCheckpointing: false,
+            canUseTool: async () => {
+              controller.abort(new Error("Claude Code title generation requested an unexpected tool"));
+              return { behavior: "deny", message: "Session title generation has no tools" };
+            },
+          },
+        });
+        await query.initializationResult();
+        controller.signal.throwIfAborted();
+        input.push({
+          type: "user", session_id: "", parent_tool_use_id: null, uuid: randomUUID(),
+          message: { role: "user", content: prompt },
+        });
+        let initialized = false;
+        for await (const frame of query) {
+          controller.signal.throwIfAborted();
+          if (frame.type === "tool_progress" || frame.type === "tool_use_summary") throw new Error("Claude Code title generation emitted an unexpected tool event");
+          if (frame.type === "system" && frame.subtype === "permission_denied") throw new Error("Claude Code title generation attempted an unexpected tool");
+          if (frame.type === "assistant" && frame.error) throw new Error(`Claude Code title generation failed: ${frame.error}`);
+          if (frame.type === "system" && frame.subtype === "init") {
+            if (!Array.isArray(frame.tools) || frame.tools.length) throw new Error("Claude Code did not disable every title-generation tool");
+            if (frame.model !== model) throw new Error("Claude Code title generation changed the selected model");
+            if (initialized) throw new Error("Claude Code title query initialized more than once");
+            initialized = true;
+          } else if (frame.type === "assistant" && frame.message.content.some(block => block.type === "tool_use" || block.type === "server_tool_use")) {
+            throw new Error("Claude Code title generation emitted an unexpected tool call");
+          } else if (frame.type === "result") {
+            if (!initialized || frame.subtype !== "success" || frame.is_error) {
+              throw new Error("errors" in frame ? frame.errors.join("\n") || "Claude Code title generation failed" : "Claude Code title generation failed");
+            }
+            if (!frame.result?.trim() || Buffer.byteLength(frame.result) > 8192) throw new Error("Claude Code title generation returned empty or oversized text");
+            return frame.result;
+          }
+        }
+        throw new Error("Claude Code title query closed without a result");
+      };
+      return await Promise.race([run(), cancelled]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", cancel);
+      controller.signal.removeEventListener("abort", stop);
+      this.titleRequests.delete(controller);
+      input.close();
+      query?.close();
     }
   }
 
@@ -503,6 +588,7 @@ export class ClaudeCodeSession {
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
+    for (const request of this.titleRequests) request.abort(new Error("Claude Code session closed"));
     this.tasks.disconnected();
     this.stopping = false;
     clearTimeout(this.stopTimer);

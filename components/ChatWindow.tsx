@@ -34,6 +34,7 @@ interface Props {
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
+  onSessionNameChange?: (sessionId: string, name: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
@@ -176,7 +177,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNewSession, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef: externalChatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenTask }: Props) {
+export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNewSession, onAgentEnd, onSessionCreated, onSessionForked, onSessionNameChange, modelsRefreshKey, chatInputRef: externalChatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenTask }: Props) {
   const { t, locale } = useI18n();
   const engine = session ? session.engine ?? engineForSession(session.id) : newChatEngine;
   const engineLabel = getEngineLabel(engine);
@@ -226,6 +227,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     handleThinkingLevelChange, loadSlashCommands,
   } = useAgentSession({
     session, newSessionCwd, engine, onNewSession, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
+    onSessionNameChange,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning;

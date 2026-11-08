@@ -18,6 +18,8 @@ export interface CodexTransport {
   destroy(): void;
 }
 
+type CodexLaunchOptions = { experimentalApi?: boolean; executable?: string; env?: NodeJS.ProcessEnv };
+
 /** Codex app-server JSON-RPC. It never enters the OMP/Pi RPC decoder. */
 export class CodexRpcClient implements CodexTransport {
   private child?: ChildProcessWithoutNullStreams;
@@ -26,14 +28,21 @@ export class CodexRpcClient implements CodexTransport {
   private listener: (frame: CodexFrame) => void = () => {};
   private closedListener: (error: Error) => void = () => {};
   private closed = false;
-  constructor(private readonly cwd: string, private readonly spawnProcess: typeof spawn = spawn) {}
+  private launch?: { executable: string; env: NodeJS.ProcessEnv };
+  constructor(private readonly cwd: string, private readonly spawnProcess: typeof spawn = spawn, private readonly options: CodexLaunchOptions = {}) {}
   onFrame(callback: (frame: CodexFrame) => void): void { this.listener = callback; }
   onClose(callback: (reason: Error) => void): void { this.closedListener = callback; }
+  /** Reuse the actual native launch identity, with a separate JSON-RPC/event stream. */
+  createTitleClient(): CodexTransport {
+    if (!this.launch || this.closed) throw new Error("Codex title transport requires a running native session");
+    return new CodexRpcClient(this.cwd, this.spawnProcess, { ...this.launch, experimentalApi: true });
+  }
 
   async start(): Promise<void> {
     if (this.child || this.closed) throw new Error("Codex transport cannot be started twice");
-    this.child = this.spawnProcess(getCodexExecutable(), CODEX_ARGS, {
-      cwd: this.cwd, env: codexChildEnvironment(), shell: false, detached: process.platform !== "win32", stdio: "pipe",
+    this.launch = { executable: this.options.executable ?? getCodexExecutable(), env: this.options.env ?? codexChildEnvironment() };
+    this.child = this.spawnProcess(this.launch.executable, CODEX_ARGS, {
+      cwd: this.cwd, env: this.launch.env, shell: false, detached: process.platform !== "win32", stdio: "pipe",
     }) as ChildProcessWithoutNullStreams;
     this.child.on("error", (e) => this.fail(new Error(`Cannot start Codex CLI: ${e.message}`)));
     this.child.on("close", (code) => this.fail(new Error(`Codex app-server exited (${code ?? "signal"})`)));
@@ -61,7 +70,7 @@ export class CodexRpcClient implements CodexTransport {
     });
     this.child.stdout.on("end", () => this.fail(new Error(this.buffer.length ? "Incomplete Codex RPC record" : "Codex RPC stream ended")));
     try {
-      await this.request("initialize", { clientInfo: { name: "omp_web", title: "OMP Web", version: "0.1.0" }, capabilities: { experimentalApi: false, requestAttestation: false } });
+      await this.request("initialize", { clientInfo: { name: "omp_web", title: "OMP Web", version: "0.1.0" }, capabilities: { experimentalApi: this.options.experimentalApi ?? false, requestAttestation: false } });
       this.write({ method: "initialized", params: {} });
     } catch (error) { this.destroy(); throw error; }
   }

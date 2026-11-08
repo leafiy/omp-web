@@ -1,5 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getAgentExecutable } from "./agent-executable";
 import { nativeAgentEnvironment } from "./native-agent-environment";
 import { TextDecoder } from "node:util";
@@ -106,6 +109,41 @@ export interface AgentProcessOptions {
   thinkingLevel?: string;
   /** Catalog queries never persist sessions. */
   catalogOnly?: boolean;
+  /** Isolated, ephemeral title generation with a native tool-denial guard. */
+  titleOnly?: boolean;
+}
+
+type TitleGuard = {
+  directory: string;
+  marker: string;
+  ready: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
+function createTitleGuard(): TitleGuard {
+  const directory = mkdtempSync(join(tmpdir(), "omp-web-title-"));
+  const marker = `omp-web:title-tools:${randomUUID()}:`;
+  const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
+  void ready.catch(() => {});
+  try {
+    // Both installed engines expose these native extension controls. Merely
+    // hiding built-in tools is insufficient in OMP: custom/MCP tools can remain.
+    writeFileSync(join(directory, "guard.mjs"), `export default function (pi) {
+  const lock = async (_event, ctx) => {
+    await pi.setActiveTools([]);
+    ctx.ui.notify(${JSON.stringify(marker)} + JSON.stringify(pi.getActiveTools()), "info");
+  };
+  pi.on("session_start", lock);
+  pi.on("before_agent_start", lock);
+  pi.on("tool_call", () => ({ block: true, reason: "Tools are disabled for conversation title generation." }));
+}
+`, { mode: 0o600 });
+    return { directory, marker, ready, resolve, reject };
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Owns native subprocesses and transport; model/auth decisions stay in each CLI. */
@@ -126,6 +164,7 @@ export class AgentRpcClient {
   private closePromise: Promise<void>;
   private stderrTail = "";
   private shutdownPromise?: Promise<void>;
+  private titleGuard?: TitleGuard;
 
   constructor(options: AgentProcessOptions, spawnProcess: typeof spawn = spawn) {
     this.engine = parseEngine(options.engine);
@@ -134,10 +173,15 @@ export class AgentRpcClient {
     this.decoder = new AgentFrameDecoder(!pi);
     // Pi has no readiness negotiation or chunk extension; bound its complete JSONL records.
     if (pi) this.decoder.maxFrameBytes = MAX_LOGICAL_BYTES;
-    const args = ["--mode", pi ? "rpc" : options.catalogOnly ? "rpc" : "rpc-ui"];
-    if (options.catalogOnly) args.push(...(pi ? ["--no-session"] : ["--no-session", "--no-ui"]));
+    const args = ["--mode", pi || options.catalogOnly || options.titleOnly ? "rpc" : "rpc-ui"];
+    if (options.titleOnly) {
+      args.push("--no-session", "--no-tools", "--no-extensions", "--no-skills");
+      if (pi) args.push("--no-mcp", "--no-prompt-templates", "--exclude-tools", "*");
+      else args.push("--no-rules", "--no-context-files", "--no-lsp", "--no-pty", "--no-prewalk", "--no-title");
+    } else if (options.catalogOnly) args.push(...(pi ? ["--no-session"] : ["--no-session", "--no-ui"]));
+    // Title generation must never resume a caller's transcript, even by accident.
     // Pi --resume opens an interactive picker; --session is its exact-path option.
-    if (options.sessionFile) args.push(pi ? "--session" : "--resume", options.sessionFile);
+    if (options.sessionFile && !options.titleOnly) args.push(pi ? "--session" : "--resume", options.sessionFile);
     if (options.initialModel) args.push("--model", `${options.initialModel.provider}/${options.initialModel.modelId}`);
     if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const agentDir = pi ? getPiAgentDir() : getOmpAgentDir();
@@ -151,7 +195,16 @@ export class AgentRpcClient {
     this.ready = new Promise((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
     void this.ready.catch(() => {});
     const executable = pi ? getPiExecutable() : getOmpExecutable();
-    this.child = spawnProcess(executable, args, { cwd: options.cwd, env, stdio: "pipe", shell: false, detached: process.platform !== "win32" });
+    if (options.titleOnly) {
+      this.titleGuard = createTitleGuard();
+      args.push(pi ? "--extension" : "--trusted-extension", join(this.titleGuard.directory, "guard.mjs"));
+    }
+    try {
+      this.child = spawnProcess(executable, args, { cwd: options.cwd, env, stdio: "pipe", shell: false, detached: process.platform !== "win32" });
+    } catch (error) {
+      if (this.titleGuard) rmSync(this.titleGuard.directory, { recursive: true, force: true });
+      throw error;
+    }
     this.readyTimer = setTimeout(() => this.fail(new Error(`Timed out waiting for local ${this.label} RPC. Check the installed engine and its configuration.`)), START_TIMEOUT_MS);
     this.closePromise = new Promise((resolve) => this.child.once("close", () => resolve()));
     this.child.on("error", (error) => this.fail(new Error(`Cannot start local ${this.label} (${executable}): ${error.message}`)));
@@ -167,13 +220,20 @@ export class AgentRpcClient {
       let error = new Error(`Local ${this.label} exited (${signal ?? code ?? "unknown"}). ${this.stderrTail.trim()}`);
       try { this.decoder.finish(); } catch (failure) { error = failure instanceof Error ? failure : error; }
       this.finish(error);
+      if (this.titleGuard) rmSync(this.titleGuard.directory, { recursive: true, force: true });
     });
   }
 
   private get label(): string { return this.engine === "pi" ? "Pi" : "OMP"; }
 
   start(): Promise<void> {
-    return this.startPromise ??= this.initialize();
+    return this.startPromise ??= (async () => {
+      await this.initialize();
+      if (this.titleGuard) {
+        await this.titleGuard.ready;
+        clearTimeout(this.readyTimer);
+      }
+    })();
   }
 
   private async initialize(): Promise<void> {
@@ -182,7 +242,7 @@ export class AgentRpcClient {
       try {
         const state = await this.request<{ sessionId: string }>({ type: "get_state" }, START_TIMEOUT_MS);
         if (!state || typeof state.sessionId !== "string") throw new Error("Invalid local Pi session state");
-        clearTimeout(this.readyTimer);
+        if (!this.titleGuard) clearTimeout(this.readyTimer);
         this.readyResolve({ type: "response", command: "get_state", success: true, data: state });
       } catch (error) {
         this.fail(error instanceof Error ? error : new Error(String(error)));
@@ -235,8 +295,26 @@ export class AgentRpcClient {
   }
 
   private receive(frame: AgentFrame): void {
+    if (this.titleGuard) {
+      if (frame.type === "extension_error") {
+        this.fail(new Error(`Native title guard failed: ${String(frame.error ?? "unknown extension error")}`));
+        return;
+      }
+      if (frame.type === "extension_ui_request" && frame.method === "notify"
+        && typeof frame.message === "string" && frame.message.startsWith(this.titleGuard.marker)) {
+        let tools: unknown;
+        try { tools = JSON.parse(frame.message.slice(this.titleGuard.marker.length)); }
+        catch { this.fail(new Error("Invalid native title tool attestation")); return; }
+        if (!Array.isArray(tools) || tools.length !== 0) {
+          this.fail(new Error("Native title process still exposes tools"));
+          return;
+        }
+        this.titleGuard.resolve();
+        return;
+      }
+    }
     if (this.engine === "omp" && frame.type === "ready") {
-      clearTimeout(this.readyTimer);
+      if (!this.titleGuard) clearTimeout(this.readyTimer);
       if (typeof frame.maxFrameBytes === "number" && frame.maxFrameBytes > 0) {
         this.decoder.maxFrameBytes = Math.min(frame.maxFrameBytes, MAX_LOGICAL_BYTES);
       }
@@ -265,6 +343,7 @@ export class AgentRpcClient {
     this.dead = true;
     clearTimeout(this.readyTimer);
     this.readyReject(error);
+    this.titleGuard?.reject(error);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);

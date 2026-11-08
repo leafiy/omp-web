@@ -440,13 +440,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  const sessionListRequestRef = useRef(0);
 
   const loadSessions = useCallback(async (showLoading = false) => {
+    const request = ++sessionListRequestRef.current;
     try {
       if (showLoading) setLoading(true);
       const res = await fetch("/api/sessions");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
+      if (request !== sessionListRequestRef.current) return;
       setAllSessions(data.sessions);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
@@ -467,9 +470,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
       }
     } catch (e) {
-      setError(String(e));
+      if (request === sessionListRequestRef.current) setError(String(e));
     } finally {
-      if (showLoading) setLoading(false);
+      if (request === sessionListRequestRef.current) setLoading(false);
     }
   }, []);
 
@@ -1879,7 +1882,7 @@ function SessionItem({
   const [deleting, setDeleting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const title = session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12);
+  const title = session.name?.trim() || t("sidebar.untitledSession");
 
   const startRename = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
