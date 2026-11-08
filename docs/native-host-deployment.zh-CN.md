@@ -41,19 +41,9 @@ PI_WEB_PASSWORD_FILE=/etc/omp-web/access-password
 
 Basic Auth 本身不加密传输。公网使用必须加 HTTPS；私有部署只绑定可信隧道地址，或绑定 loopback 后通过 SSH 转发。不要监听公网通配地址。
 
-## 本机统一目录：开发和正式运行
-
-2026-11-08 用户要求本机仅使用一个 GitHub 检出，统一放在 `~/code/omp-web`，不维护开发版、发布版或机器专用代码副本。
-
-- GitHub `leafiy/omp-web` 的 `main` 是唯一代码来源，`origin` 指向该仓库。源码、`node_modules` 和 `.next` 都位于同一个检出内。
-- 本机的 `~` 为 `/root/2/devbox-distrobox`；服务工作目录和启动脚本都使用 `/root/2/devbox-distrobox/code/omp-web`。`/usr/local/bin/omp-web` 也指向该目录的 `bin/omp-web.js`。
-- 开发直接使用此目录的 `npm run dev`。正式更新先确认会话、后台任务和终端空闲，停止 `omp-web.service`，在同一目录 `git pull --ff-only`、按锁文件处理依赖并 `npm run build`，再启动服务。不要覆盖正在运行的生产 `.next`，也不再创建 `stage` / `release` 源码副本。
-- 目录迁移后必须在新目录重新构建，避免产物中的应用目录和文件追踪根仍指向旧构建目录。迁移成功后删除旧安装路径与无运行依赖的历史构建／回滚副本，不保留 `/opt/omp-web` 兼容软链接。
-- Agent 配置、登录、会话和上传文件不是应用副本，不随清理删除。独立的 Claude API 代理同样不是 omp-web 安装；只要仍被服务使用，就不能按目录前缀误删。
-
 ## 历史归档发布方式
 
-以下保留早期部署记录。本机及 `192.168.52.3` 均以各自唯一的 GitHub 检出为准，不再通过本机归档包、额外源码副本或单独发布脚本更新。
+以下保留早期部署记录。`192.168.52.3` 已按用户要求改为直接安装 GitHub 源码，使用下一节的标准 Git 更新流程，不再通过本机归档包或单独发布脚本更新。
 
 1. 在独立目录测试、构建，不能覆盖运行中的 `.next`。
 2. 用 `scripts/package-native-host.sh <构建目录> <新归档路径>` 打包。脚本只读取已构建产物和依赖，白名单不包括 `.env`、Agent 用户目录、凭据、原生历史或网页消息投影。
