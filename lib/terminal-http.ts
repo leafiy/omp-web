@@ -1,17 +1,12 @@
 import { isApiRequestAllowed, hasJsonContentType } from "./request-security";
-import { isValidBasicAuthorization, isWebPasswordEnabled } from "./web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "./web-auth";
 import { TERMINAL_MAX_BODY } from "./terminal-contract";
 
 // Check every endpoint locally: the app proxy intentionally skips /events.
 export function guardTerminalRequest(req: Request): Response | null {
   if (process.env.OMP_WEB_TERMINAL === "0") return Response.json({ error: "Terminal is disabled" }, { status: 403 });
   if (!isApiRequestAllowed(req)) return Response.json({ error: "Untrusted terminal request" }, { status: 403 });
-  if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
-    return new Response("Authentication required", {
-      status: 401,
-      headers: { "WWW-Authenticate": 'Basic realm="Pi Web", charset="UTF-8"', "Cache-Control": "no-store" },
-    });
-  }
+  if (!isRequestAuthenticated(req)) return webAuthRequired();
   if (req.method === "POST" && !hasJsonContentType(req)) return Response.json({ error: "Expected JSON" }, { status: 415 });
   return null;
 }

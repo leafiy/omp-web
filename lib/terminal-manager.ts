@@ -17,7 +17,7 @@ function spawnShell(cwd: string, size: TerminalSize): Pty {
   // Shells run as the web service user, NOT in a sandbox. Do not expose the
   // web password or agent session metadata to programs launched here.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) =>
-    value !== undefined && !key.startsWith("PI_WEB_") && !key.startsWith("PI_SESSION_")
+    value !== undefined && !key.startsWith("PI_WEB_") && !key.startsWith("PI_SESSION_") && !key.startsWith("OMP_WEB_AUTH")
   )) as Record<string, string>;
   return spawn(process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash", [], {
     name: "xterm-256color", cwd, cols: size.cols, rows: size.rows,
@@ -99,6 +99,12 @@ export class TerminalSession {
     if (!this.alive || this.disposed) throw new TerminalError("Terminal has exited", 409);
     if (typeof data !== "string" || data.length > TERMINAL_MAX_INPUT) throw new TerminalError("Invalid terminal input", 400);
     this.pty.write(data);
+  }
+
+  /** Defers detached expiry for a live shell shown in an inactive browser tab. */
+  keepAlive() {
+    if (this.disposed) throw new TerminalError("Terminal has closed", 404);
+    if (this.alive && this.listeners.size === 0) this.armExpiry();
   }
 
   resize(size: TerminalSize) {

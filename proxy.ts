@@ -3,16 +3,17 @@ import {
   isApiRequestAllowed,
   isApiRequestHostAllowed,
 } from "@/lib/request-security";
-import {
-  isValidBasicAuthorization,
-  isWebPasswordEnabled,
-  getWebPassword,
-} from "@/lib/web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "@/lib/web-auth";
+
+// Reachable before login. Everything else requires a valid session cookie;
+// there is no unauthenticated mode.
+const PUBLIC_API_PATHS = new Set(["/api/web-auth/login", "/api/web-auth/status"]);
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   // Bypass SSE streams and long-polling event connections to prevent the
-  // proxy/middleware from buffering or timing them out.
+  // proxy/middleware from buffering or timing them out. Those routes check
+  // host/origin and the login session themselves.
   if (/^\/api\/(?:agent|terminal)\/[^/]+\/events$/.test(pathname)) {
     return NextResponse.next();
   }
@@ -28,18 +29,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
 
-  const password = getWebPassword();
-  if (
-    isWebPasswordEnabled(password)
-    && !isValidBasicAuthorization(request.headers.get("authorization"), password)
-  ) {
-    return new NextResponse("Authentication required", {
-      status: 401,
-      headers: {
-        "Cache-Control": "no-store",
-        "WWW-Authenticate": 'Basic realm="Pi Web", charset="UTF-8"',
-      },
-    });
+  if (!PUBLIC_API_PATHS.has(pathname) && !isRequestAuthenticated(request)) {
+    if (!isApiRequest) {
+      // Relative Location keeps the public host/scheme behind reverse proxies.
+      return new NextResponse(null, { status: 307, headers: { Location: "/login", "Cache-Control": "no-store" } });
+    }
+    return webAuthRequired({}, true);
   }
 
   // These legacy panels write Pi auth/settings or invoke Pi model tests. Do

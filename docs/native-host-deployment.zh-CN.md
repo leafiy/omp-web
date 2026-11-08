@@ -26,7 +26,19 @@
 
 现有 `OMP_WEB_EXECUTABLE`、`OMP_WEB_PI_EXECUTABLE`、`OMP_WEB_CC_EXECUTABLE`、`OMP_WEB_CODEX_EXECUTABLE` 仅用于特殊安装路径覆盖，不包含模型或凭据。
 
-## 访问密码
+## 网页登录
+
+> 更新：网页改为登录页 + 会话 Cookie，**必须设置用户名和密码**，不再弹出浏览器 Basic Auth 对话框，也没有免密模式。
+
+- 设置／重置：`node ~/code/omp-web/bin/omp-web.js passwd`；登录后也可在“设置 → 网页账户”修改用户名和密码或退出登录。修改会轮换签名密钥，使其他浏览器全部退出。
+- 凭据文件：`OMP_WEB_AUTH_FILE`，默认 `~/.config/omp-web/credentials.json`；0600、scrypt 哈希、不得为符号链接。文件无效时失败关闭。
+- 兼容：凭据文件不存在时，仍读取 `PI_WEB_PASSWORD_FILE`/`PI_WEB_PASSWORD`（用户名 `OMP_WEB_USERNAME` 或 `pi`）。保存新凭据后以凭据文件为准，旧环境变量可从服务配置中移除。`OMP_WEB_REQUIRE_PASSWORD` 已无必要（始终要求登录）。
+- 命令行健康检查：`curl -c jar -H 'Content-Type: application/json' -d '{"username":"…","password":"…"}' http://127.0.0.1:30141/api/web-auth/login`，之后用 `-b jar` 访问。未登录访问首页返回 307 跳转 `/login`，API 返回 401。
+- 登录失败按来源限流（15 分钟内 10 次）。HTTP 明文不加密登录信息；公网使用必须加 HTTPS（Cookie 在 HTTPS 下带 `Secure`）。
+
+以下为旧版本记录：
+
+### 旧版访问密码（历史）
 
 推荐在每台机器独立创建私有文件：
 

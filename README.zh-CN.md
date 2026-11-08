@@ -130,9 +130,32 @@ Herdr 和 Orca 同样支持原生 Agent，Orca 也已有文件浏览、预览和
 
 同时需要 **Node.js 22.19.0+**、npm 和 Git。当前验证的部署平台为 Linux；文件复制、移动、删除等修改操作目前要求 Linux。
 
-### 2. 启动网页
+### 2. 一键安装
 
-在新的源码目录中执行：
+```bash
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
+```
+
+安装脚本会检查 Git、Node.js 22.19+ 和 npm（不会替你安装运行时），克隆或更新 `~/code/omp-web`，执行 `npm ci` 和 `npm run build`，并要求你**设置网页登录用户名和密码**。可选参数：
+
+```bash
+# 同时安装开机自启的 systemd 服务
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
+```
+
+无人值守安装时，在环境变量中设置 `OMP_WEB_USERNAME` 和 `OMP_WEB_PASSWORD`。再次执行同一命令即可更新已有目录（存在未提交改动时会拒绝；若 `omp-web.service` 正在运行，会先询问是否停止再构建）。
+
+不安装服务时，这样启动：
+
+```bash
+cd ~/code/omp-web
+node bin/omp-web.js --hostname 127.0.0.1 --port 30141
+```
+
+打开 **[http://127.0.0.1:30141](http://127.0.0.1:30141)**，登录后选择项目和已安装的 Agent，即可开始对话。
+
+<details>
+<summary>手动安装</summary>
 
 ```bash
 mkdir -p ~/code
@@ -140,33 +163,28 @@ git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
 cd ~/code/omp-web
 npm ci --include=dev
 npm run build
+npm run passwd   # 设置网页用户名和密码
 npm start
 ```
 
-打开 **[http://127.0.0.1:30141](http://127.0.0.1:30141)**，选择项目和已安装的 Agent，即可开始对话。
+</details>
 
 本分支从源码运行。npm 上名为 `omp-web` 的包可能对应其他上游版本，不等于本仓库。
 
 **开发、构建、发布和运行只使用 `~/code/omp-web` 这一个工作区**，依赖和 `.next` 也保存在其中。执行 `npm run build` 或 `npm run dev` 前先停止生产服务；常规启动和构建命令会拒绝其他目录。更新与回滚见[唯一工作区流程](./docs/workspace.zh-CN.md)。
 
-### 3. 从其他设备安全访问
+### 3. 登录与远程访问
 
-默认只监听本机回环地址。在开放远程访问之前：
+网页**必须登录**，不存在免密访问模式。
 
-1. 创建由服务账户独占的密码文件，权限设为 **0600**，文件中存放单行网页访问密码。
-2. 启动时强制启用认证：
+- 在服务器上运行 `node ~/code/omp-web/bin/omp-web.js passwd`（或 `npm run passwd`）设置或重置登录。尚未设置时，启动器首次启动会提示设置，登录页也会显示这条命令。
+- 凭据以加盐 scrypt 哈希保存在 `~/.config/omp-web/credentials.json`（权限 0600，可用 `OMP_WEB_AUTH_FILE` 指定其他路径），与各 Agent 自己的登录互不相关。
+- 在 **设置 → 网页账户** 中可修改用户名和密码，或**退出登录**。修改后其他浏览器的登录全部失效。
+- 旧部署使用的 `PI_WEB_PASSWORD_FILE`（用户名 `pi`，或 `OMP_WEB_USERNAME`）在保存新凭据之前继续有效；保存后以凭据文件为准。
 
-   ```bash
-   OMP_WEB_REQUIRE_PASSWORD=1 \
-   PI_WEB_PASSWORD_FILE=/absolute/path/to/web-password \
-   node bin/omp-web.js --hostname 127.0.0.1 --port 30141 --no-open
-   ```
+默认只监听本机回环地址。开放远程访问前，请使用 **HTTPS 反向代理**或 **Tailscale、EasyTier 等可信私有网络**。直接通过 VPN 访问时，绑定机器的私有 VPN 地址，不要使用公网通配监听；使用自定义域名时配置 `PI_WEB_ALLOWED_HOSTS`。
 
-3. 使用 **HTTPS 反向代理**或 **Tailscale、EasyTier 等可信私有网络**。直接通过 VPN 访问时，绑定机器的私有 VPN 地址，不要使用公网通配监听；使用自定义域名时配置 `PI_WEB_ALLOWED_HOSTS`。
-
-网页登录用户名固定为 **`pi`**。这个密码只保护网页，与各 Agent 自己的登录互不混用。
-
-**请把网页访问权限当作开发机器的访问权限。** Agent 和终端具有服务账户的权限；终端不是沙箱，Basic Auth 也不会加密 HTTP 流量。建议使用低权限账户，绝不要把未认证的服务直接暴露到公网。
+**请把网页访问权限当作开发机器的访问权限。** Agent 和终端具有服务账户的权限；终端不是沙箱，HTTP 明文也不会加密登录信息。建议使用低权限账户，未配置 HTTPS 时不要把服务暴露到公网。
 
 ## 几个重要边界
 

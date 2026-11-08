@@ -83,6 +83,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - The embedded terminal uses its own registry/stream endpoints and can run independently of chat. Its security switches must not disable agent RPC accidentally.
 - Preserve local upload work in `ChatInput`, `useDragDrop`, `file-upload-limits` and the files route. Image attachments and persisted ordinary files have different limits/handling.
 - The Next proxy bypasses `/events`; SSE routes must enforce their own authentication/origin checks before exposing data or starting processes.
+- Web login is mandatory (no anonymous mode, no Basic Auth prompt). `bin/web-credentials.js` owns the credentials file and signed session tokens; `lib/web-auth.ts` checks the `omp_web_session` cookie. Guards return `webAuthRequired()` (401 + `X-OMP-Web-Auth`) so the browser redirects to `/login`; never send `WWW-Authenticate`.
 
 ## Source map and checks
 

@@ -18,6 +18,8 @@ export async function POST(req: Request, { params }: Context) {
       terminal.write(body.data);
     } else if (body.type === "resize" && isTerminalSize(body)) {
       terminal.resize(body);
+    } else if (body.type === "keepalive") {
+      terminal.keepAlive();
     } else throw new TerminalError("Invalid terminal command", 400);
     return new Response(null, { status: 204 });
   } catch (error) { return terminalErrorResponse(error); }

@@ -1,7 +1,7 @@
 import { parseToolUpdateRequest, type ToolUpdatesSnapshot, type UpdatableTool } from "./tool-update-types";
 import { ToolUpdateError } from "./tool-update";
 import { hasJsonContentType, isApiRequestAllowed } from "./request-security";
-import { isValidBasicAuthorization, isWebPasswordEnabled } from "./web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "./web-auth";
 
 const headers = { "Cache-Control": "no-store" };
 type UpdateService = {
@@ -13,9 +13,7 @@ type UpdateService = {
 export function createToolUpdateHandlers(service: UpdateService) {
   function guard(req: Request): Response | undefined {
     if (!isApiRequestAllowed(req)) return Response.json({ error: "Untrusted update request" }, { status: 403, headers });
-    if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
-      return new Response("Authentication required", { status: 401, headers: { ...headers, "WWW-Authenticate": 'Basic realm="Pi Web", charset="UTF-8"' } });
-    }
+    if (!isRequestAuthenticated(req)) return webAuthRequired(headers);
   }
   function failure(error: unknown): Response {
     if (error instanceof ToolUpdateError) return Response.json({ error: error.message }, { status: error.status, headers });

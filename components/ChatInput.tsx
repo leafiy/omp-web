@@ -65,9 +65,7 @@ interface Props {
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
   queuedMessages?: QueuedMessages | null;
   inputHistory?: string[];
-  onRecallQueue?: () => void;
   onRecallQueuedMessage?: (item: QueuedMessageItem) => Promise<void>;
-  onWithdrawQueuedMessage?: (item: { id?: string; kind: "steer" | "follow_up"; text: string }) => Promise<void>;
   recallingQueue?: boolean;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
@@ -269,7 +267,7 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled, state }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; onWithdraw?: () => void; disabled?: boolean; state?: QueuedMessageItem["state"] }) {
+function QueuedMessageRow({ kind, text, onEdit, disabled, state }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; disabled?: boolean; state?: QueuedMessageItem["state"] }) {
   const { locale } = useI18n();
   return (
     <div
@@ -300,7 +298,6 @@ function QueuedMessageRow({ kind, text, onEdit, onWithdraw, disabled, state }: {
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
       {state === "unconfirmed" && <span>{locale === "zh-CN" ? "发送未确认" : "Delivery unconfirmed"}</span>}
       {state === "sending" && <span>{locale === "zh-CN" ? "发送中" : "Sending"}</span>}
-      <button type="button" disabled={disabled || !onWithdraw} onClick={onWithdraw} title={state === "unconfirmed" ? (locale === "zh-CN" ? "交付结果未确认，不能确认撤回" : "Delivery is uncertain; withdrawal cannot be confirmed") : !onWithdraw ? (locale === "zh-CN" ? "原生引擎未提供撤回接口" : "Native recall unavailable") : undefined} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onWithdraw ? .5 : 1 }}>{locale === "zh-CN" ? "撤回" : "Withdraw"}</button>
       <button type="button" disabled={disabled || !onEdit} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onEdit ? .5 : 1 }}>{state === "unconfirmed" ? (locale === "zh-CN" ? "取回副本" : "Recover copy") : (locale === "zh-CN" ? "取回编辑" : "Recall to edit")}</button>
     </div>
   );
@@ -373,7 +370,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], onRecallQueue, onRecallQueuedMessage, onWithdrawQueuedMessage, recallingQueue,
+  retryInfo, queuedMessages, inputHistory = [], onRecallQueuedMessage, recallingQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
@@ -1387,45 +1384,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {t("chat.queued", { count: (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0) })}
                 {queuedMessages?.followUpPaused && <span style={{ marginLeft: 8 }} title={t("chat.followUpPausedHint")}>{t("chat.followUpPaused")}</span>}
               </span>
-              {onRecallQueue && (
-                <button
-                  onClick={onRecallQueue}
-                  disabled={recallingQueue}
-                   title={t("chat.recallTitle")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "4px 12px",
-                    fontSize: 12,
-                    color: "var(--text)",
-                    background: "transparent",
-                    border: "1px solid var(--border)",
-                    borderRadius: 7,
-                    cursor: "pointer",
-                    transition: "background 0.12s, border-color 0.12s",
-                    whiteSpace: "nowrap",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 45%, var(--border))";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.borderColor = "var(--border)";
-                  }}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="9 14 4 9 9 4" />
-                    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
-                  </svg>
-                   {t("chat.recall")}
-                </button>
-              )}
             </div>
-            {queuedMessages?.items?.length ? queuedMessages.items.map((item, index) => <QueuedMessageRow key={item.id ?? `${item.kind}-${index}`} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} state={item.state} disabled={recallingQueue || item.state === "sending"} onEdit={onRecallQueuedMessage && (item.id || engine === "omp") ? () => { void onRecallQueuedMessage(item); } : undefined} onWithdraw={onWithdrawQueuedMessage && item.state !== "unconfirmed" && (item.id || engine === "omp") ? () => { void onWithdrawQueuedMessage(item); } : undefined} />) : <>
-              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "steer", text }); } : undefined} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "steer", text }); } : undefined} />)}
-              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "follow_up", text }); } : undefined} onWithdraw={engine === "omp" && onWithdrawQueuedMessage ? () => { void onWithdrawQueuedMessage({ kind: "follow_up", text }); } : undefined} />)}
+            {queuedMessages?.items?.length ? queuedMessages.items.map((item, index) => <QueuedMessageRow key={item.id ?? `${item.kind}-${index}`} kind={item.kind === "steer" ? "steer" : "follow-up"} text={item.text} state={item.state} disabled={recallingQueue || item.state === "sending"} onEdit={onRecallQueuedMessage && (item.id || engine === "omp") ? () => { void onRecallQueuedMessage(item); } : undefined} />) : <>
+              {queuedMessages?.steering.map((text, i) => <QueuedMessageRow key={`steer-${i}`} kind="steer" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "steer", text }); } : undefined} />)}
+              {queuedMessages?.followUp.map((text, i) => <QueuedMessageRow key={`followup-${i}`} kind="follow-up" text={text} disabled={recallingQueue} onEdit={engine === "omp" && onRecallQueuedMessage ? () => { void onRecallQueuedMessage({ kind: "follow_up", text }); } : undefined} />)}
             </>}
           </div>
         )}

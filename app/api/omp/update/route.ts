@@ -1,6 +1,6 @@
 import { getOmpUpdateView, OmpUpdateError, startOmpUpdate } from "@/lib/omp-update";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { isValidBasicAuthorization, isWebPasswordEnabled } from "@/lib/web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "@/lib/web-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,9 +9,7 @@ const headers = { "Cache-Control": "no-store" };
 // Keep the destructive endpoint protected even if the proxy matcher changes.
 function guardRequest(req: Request): Response | undefined {
   if (!isApiRequestAllowed(req)) return Response.json({ error: "Untrusted update request" }, { status: 403, headers });
-  if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
-    return new Response("Authentication required", { status: 401, headers: { ...headers, "WWW-Authenticate": 'Basic realm="Pi Web", charset="UTF-8"' } });
-  }
+  if (!isRequestAuthenticated(req)) return webAuthRequired(headers);
 }
 
 function errorResponse(error: unknown): Response {

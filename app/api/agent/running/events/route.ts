@@ -1,6 +1,6 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { isValidBasicAuthorization, isWebPasswordEnabled } from "@/lib/web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   // This exact SSE endpoint bypasses proxy buffering, not authentication.
   if (!isApiRequestAllowed(req)) return new Response("Untrusted request", { status: 403 });
-  if (isWebPasswordEnabled() && !isValidBasicAuthorization(req.headers.get("authorization"))) {
-    return new Response("Authentication required", { status: 401, headers: { "Cache-Control": "no-store" } });
-  }
+  if (!isRequestAuthenticated(req)) return webAuthRequired();
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();

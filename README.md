@@ -130,9 +130,32 @@ Run omp-web under the OS account that has those agents configured. The web serve
 
 You also need **Node.js 22.19.0+**, npm, and Git. Linux is the tested deployment platform; file-management mutations currently require Linux.
 
-### 2. Run the web app
+### 2. Install with one command
 
-In a fresh checkout:
+```bash
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
+```
+
+The installer checks for Git, Node.js 22.19+ and npm (it never installs runtimes), clones or updates `~/code/omp-web`, runs `npm ci` and `npm run build`, and asks you to **choose a web username and password**. Optional flags:
+
+```bash
+# Also install a systemd service that starts on boot
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
+```
+
+For unattended installs, set `OMP_WEB_USERNAME` and `OMP_WEB_PASSWORD` in the environment. Running the same command again updates an existing checkout (it refuses if there are uncommitted changes, and offers to stop a running `omp-web.service` before rebuilding).
+
+Without a service, start it with:
+
+```bash
+cd ~/code/omp-web
+node bin/omp-web.js --hostname 127.0.0.1 --port 30141
+```
+
+Open **[http://127.0.0.1:30141](http://127.0.0.1:30141)**, sign in, choose a project, select an installed agent, and start a conversation.
+
+<details>
+<summary>Manual installation</summary>
 
 ```bash
 mkdir -p ~/code
@@ -140,33 +163,28 @@ git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
 cd ~/code/omp-web
 npm ci --include=dev
 npm run build
+npm run passwd   # choose the web username and password
 npm start
 ```
 
-Open **[http://127.0.0.1:30141](http://127.0.0.1:30141)**, choose a project, select an installed agent, and start a conversation.
+</details>
 
 This fork is run from source. An npm package named `omp-web` may refer to a different upstream release.
 
 Use **`~/code/omp-web` as the single checkout for development, builds, deployment and runtime**. Keep dependencies and `.next` there; stop the production service before `npm run build` or `npm run dev`. The normal launch/build commands reject other locations. See the [single-workspace maintenance procedure](./docs/workspace.zh-CN.md).
 
-### 3. Access it securely from another device
+### 3. Sign-in and remote access
 
-The default listener is loopback-only. Before exposing the app beyond your machine:
+A web login is **always required**; there is no unauthenticated mode.
 
-1. Create a password file owned by the service user, with mode **0600**, containing a single-line web access password.
-2. Require authentication when starting the app:
+- Set or reset the login on the server with `node ~/code/omp-web/bin/omp-web.js passwd` (or `npm run passwd`). If none is configured, the launcher asks for one on first start, and the login page shows this command.
+- Credentials are stored as a salted scrypt hash in `~/.config/omp-web/credentials.json` (mode 0600; override with `OMP_WEB_AUTH_FILE`). They are separate from every agent's own login.
+- Change the username and password, or **sign out**, from **Settings → Web account**. Changing them signs out every other browser.
+- Older deployments that use `PI_WEB_PASSWORD_FILE` (username `pi`, or `OMP_WEB_USERNAME`) keep working until you save new credentials, which then take precedence.
 
-   ```bash
-   OMP_WEB_REQUIRE_PASSWORD=1 \
-   PI_WEB_PASSWORD_FILE=/absolute/path/to/web-password \
-   node bin/omp-web.js --hostname 127.0.0.1 --port 30141 --no-open
-   ```
+The default listener is loopback-only. Before exposing the app beyond your machine, use an **HTTPS reverse proxy** or a **trusted private network** such as Tailscale or EasyTier. For direct VPN access, bind to the machine's private VPN address rather than a public wildcard address. If using a custom hostname, configure `PI_WEB_ALLOWED_HOSTS`.
 
-3. Use an **HTTPS reverse proxy** or a **trusted private network**, such as Tailscale or EasyTier. For direct VPN access, bind to the machine's private VPN address rather than a public wildcard address. If using a custom hostname, configure `PI_WEB_ALLOWED_HOSTS`.
-
-The web login username is **`pi`**. This password protects the website; it is separate from every agent's own login.
-
-**Treat access to this page like access to your development machine.** Agents and the terminal run with the service account's permissions. The terminal is not a sandbox, and Basic Auth does not encrypt HTTP traffic. Prefer a least-privileged account and never expose an unauthenticated instance to the public internet.
+**Treat access to this page like access to your development machine.** Agents and the terminal run with the service account's permissions. The terminal is not a sandbox, and plain HTTP does not encrypt the login. Prefer a least-privileged account and never expose the service to the public internet without HTTPS.
 
 ## A few important boundaries
 

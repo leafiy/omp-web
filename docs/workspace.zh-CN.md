@@ -50,7 +50,7 @@ fi
 1. `git status --short` 为空，`git rev-parse --show-toplevel` 为 `~/code/omp-web`。
 2. `node_modules`、`.next` 不再链接到旧发布目录。
 3. `systemctl show omp-web -p WorkingDirectory -p ExecStart` 使用新目录；主进程的 `/proc/<PID>/cwd` 为新目录。
-4. 未认证首页为 401、认证访问及静态资源为 200；`https://omp.leafiy.com` 可用。
+4. 未登录首页 307 跳转 `/login`、未登录 API 为 401，登录后访问及静态资源为 200；`https://omp.leafiy.com` 可用。
 5. `/opt/omp-web*` 不再保留活动目录或兼容入口；旧版本只存在于 `.local/archive/` 内的归档文件。
 
 其他文档中的旧发布路径属于历史记录，以本页为当前唯一操作流程。

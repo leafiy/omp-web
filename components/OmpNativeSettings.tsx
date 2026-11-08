@@ -4,8 +4,9 @@ import { useEffect, useRef } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { engineLabel, type AgentEngine } from "@/lib/engine";
 import { ToolUpdateControl } from "./ToolUpdateControl";
+import { WebAccountSettings } from "./WebAccountSettings";
 
-/** One settings entry for every tool; credential editors remain disabled. */
+/** One settings entry for every tool; agent credential editors remain disabled. */
 export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; onClose: () => void }) {
   const { locale } = useI18n();
   const zh = locale === "zh-CN";
@@ -15,7 +16,7 @@ export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; on
       if (event.defaultPrevented) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
       if (event.key !== "Tab") return;
-      const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, [tabindex="0"]') || [])
+      const buttons = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, [tabindex="0"]') || [])
         .filter((element) => element.getClientRects().length > 0);
       const first = buttons[0], last = buttons[buttons.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -32,6 +33,7 @@ export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; on
           <button type="button" autoFocus onClick={onClose} style={{ padding: "5px 12px", background: "var(--bg-panel)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>{zh ? "关闭" : "Close"}</button>
         </div>
         <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>{engineLabel(engine)}</div>
+        <WebAccountSettings />
         <ToolUpdateControl zh={zh} />
       </section>
     </div>

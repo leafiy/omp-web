@@ -1,11 +1,11 @@
 import { hasJsonContentType, isApiRequestAllowed } from "./request-security";
-import { isValidBasicAuthorization, isWebPasswordEnabled } from "./web-auth";
+import { isRequestAuthenticated, webAuthRequired } from "./web-auth";
 import { FileOperationError, parseFileOperation, performFileOperation } from "./file-operations";
 
 const headers = { "Cache-Control": "private, no-store" };
 export function guardFileMutation(request: Request): Response | undefined {
   if (!isApiRequestAllowed(request)) return Response.json({ error: "Untrusted request" }, { status: 403, headers });
-  if (isWebPasswordEnabled() && !isValidBasicAuthorization(request.headers.get("authorization"))) return Response.json({ error: "Authentication required" }, { status: 401, headers });
+  if (!isRequestAuthenticated(request)) return webAuthRequired(headers, true);
 }
 export function createFileOperationHandler(getRoots: () => Promise<Set<string>>) {
   return async (request: Request): Promise<Response> => {

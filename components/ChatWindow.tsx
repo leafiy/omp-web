@@ -222,7 +222,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue, handleRecallQueuedMessage, handleWithdrawQueuedMessage, recallingQueue,
+    handleRecallQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
     handleThinkingLevelChange, loadSlashCommands,
   } = useAgentSession({
@@ -382,9 +382,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
       inputHistory={inputHistory}
-      onRecallQueue={engine === "omp" ? handleRecallQueue : undefined}
       onRecallQueuedMessage={handleRecallQueuedMessage}
-      onWithdrawQueuedMessage={handleWithdrawQueuedMessage}
       recallingQueue={recallingQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}

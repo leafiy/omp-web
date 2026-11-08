@@ -40,6 +40,7 @@
     "start": "next start -H 127.0.0.1 -p 30141",
     "start:lan": "next start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",
+    "passwd": "node bin/omp-web.js passwd",
     "test:terminal": "node --test lib/terminal-manager.test.mjs lib/terminal-http.test.mjs"
   },
   "dependencies": {
