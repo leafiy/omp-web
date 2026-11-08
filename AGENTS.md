@@ -1,5 +1,11 @@
 # omp-web — Development Notes
 
+## Canonical workspace
+
+Develop, test, commit, build, deploy and run this fork only from `~/code/omp-web` (on 192.168.52.3: `/root/code/omp-web`). Keep `.git`, `node_modules` and `.next` in that directory. Use its existing checkout; do not create another checkout, worktree or external release/build directory. Local logs and inactive rollback archives belong under its git-ignored `.local/`; credentials and native agent data remain in their existing protected locations.
+
+For migration, builds, deployment, rollback or service-path changes, read [the single-workspace procedure](./docs/workspace.zh-CN.md). Historical `/opt/omp-web*` deployment records are not current instructions. Stop the production service before building into its `.next`; a conversation hosted by that service must finish before a separately supervised maintenance task stops it.
+
 ## Execution and verification
 
 Chat uses a **local OMP or Pi executable over JSONL RPC**, selected when a session is created. Before changing engine selection, agent commands, model/auth discovery, session persistence, tool selection, or deployment, read [docs/native-omp.zh-CN.md](./docs/native-omp.zh-CN.md). It records protocol differences, data isolation, and rollout status.

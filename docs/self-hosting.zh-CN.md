@@ -46,24 +46,25 @@
 
 要求 Node.js **22.19.0+**、npm、Git，以及可用的 Shell。当前已验证的 PTY 运行环境为 Linux x64；其他平台需自行验证。PTY 使用固定版本的 `@lydell/node-pty`（node-pty 的预编译分发），避免在支持的平台上本地编译 PTY 模块。
 
-以下是**手动部署步骤**，不是本次开发已执行的操作：
+唯一工作区及更新/回滚流程见 [目录约定](./workspace.zh-CN.md)。首次安装使用同一固定目录：
 
 ```bash
 # 首次取得私有仓库；也可以使用已配置的 HTTPS 凭据
-git clone git@github.com:leafiy/omp-web.git
-cd omp-web
+mkdir -p ~/code
+git clone git@github.com:leafiy/omp-web.git ~/code/omp-web
+cd ~/code/omp-web
 
 # 包括构建需要的开发依赖；以 package-lock.json 为准
 npm ci --include=dev
 
-# 在独立发布目录中构建，不要覆盖正在运行的 dev server 的 .next
+# 更新已有部署时先停止服务；仅在本目录构建
 npm run build
 
 # 默认仅监听回环地址；配置认证后再按需开放网络访问
 node bin/omp-web.js --hostname 127.0.0.1 --port 2225 --no-open
 ```
 
-不要在生产目录直接执行不经审查的 `git pull` / `npm install` / 构建。建议使用独立发布目录，备份会话与配置，审查依赖和差异，完成验证后再由操作者切换服务。此仓库不包含模型凭据、用户会话、`.env` 或 systemd 密码配置。
+审查依赖和差异后，在唯一工作区提交、停服、备份 `.next`、构建并重启；不建立独立源码/发布副本。当前网页对话结束后才能停止承载它的服务。此仓库不包含模型凭据、用户会话、`.env` 或 systemd 密码配置。
 
 ## 开发检查
 

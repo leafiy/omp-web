@@ -20,6 +20,9 @@
 # production
 /build
 
+# Local deployment logs, rollback artifacts and compressed historical archives
+/.local/
+
 # misc
 .DS_Store
 *.pem

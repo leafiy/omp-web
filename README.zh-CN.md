@@ -135,8 +135,9 @@ Herdr 和 Orca 同样支持原生 Agent，Orca 也已有文件浏览、预览和
 在新的源码目录中执行：
 
 ```bash
-git clone https://github.com/leafiy/omp-web.git
-cd omp-web
+mkdir -p ~/code
+git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
+cd ~/code/omp-web
 npm ci --include=dev
 npm run build
 npm start
@@ -146,7 +147,7 @@ npm start
 
 本分支从源码运行。npm 上名为 `omp-web` 的包可能对应其他上游版本，不等于本仓库。
 
-开发时使用 `npm run dev`，无需先构建生产版本。发布构建应在独立源码或发布目录中进行，不要覆盖运行中实例的 `.next`。
+**开发、构建、发布和运行只使用 `~/code/omp-web` 这一个工作区**，依赖和 `.next` 也保存在其中。执行 `npm run build` 或 `npm run dev` 前先停止生产服务；常规启动和构建命令会拒绝其他目录。更新与回滚见[唯一工作区流程](./docs/workspace.zh-CN.md)。
 
 ### 3. 从其他设备安全访问
 

@@ -21,6 +21,8 @@ const { parseLaunchOptions } = require("./omp-web-options");
 const { loadWebPassword } = require("./web-password");
 
 const pkgDir = path.join(__dirname, "..");
+try { require("./workspace-location").assertWorkspaceLocation(pkgDir); }
+catch (error) { console.error(error.message); process.exit(1); }
 const nextDir = path.join(pkgDir, ".next");
 
 // Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
@@ -49,7 +51,7 @@ if (process.env.OMP_WEB_REQUIRE_PASSWORD === "1" && !passwordEnabled) {
 }
 
 if (!fs.existsSync(nextDir)) {
-  console.error("Build artifacts not found. Run `npm run build` first, or install via `npm install -g omp-web` to get a pre-built package.");
+  console.error("Build artifacts not found. Stop the web service and run `npm run build` in ~/code/omp-web.");
   process.exit(1);
 }
 

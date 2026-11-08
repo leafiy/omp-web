@@ -135,8 +135,9 @@ You also need **Node.js 22.19.0+**, npm, and Git. Linux is the tested deployment
 In a fresh checkout:
 
 ```bash
-git clone https://github.com/leafiy/omp-web.git
-cd omp-web
+mkdir -p ~/code
+git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
+cd ~/code/omp-web
 npm ci --include=dev
 npm run build
 npm start
@@ -146,7 +147,7 @@ Open **[http://127.0.0.1:30141](http://127.0.0.1:30141)**, choose a project, sel
 
 This fork is run from source. An npm package named `omp-web` may refer to a different upstream release.
 
-For development, use `npm run dev` instead of building and starting production. Build releases in a separate checkout or release directory; do not overwrite the `.next` directory of a running instance.
+Use **`~/code/omp-web` as the single checkout for development, builds, deployment and runtime**. Keep dependencies and `.next` there; stop the production service before `npm run build` or `npm run dev`. The normal launch/build commands reject other locations. See the [single-workspace maintenance procedure](./docs/workspace.zh-CN.md).
 
 ### 3. Access it securely from another device
 

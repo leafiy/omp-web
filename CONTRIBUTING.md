@@ -4,8 +4,8 @@ Thank you for considering contributing to `omp-web`!
 
 ## Getting Started
 
-1. Fork the repository and clone your fork locally.
-2. Ensure Node.js >= 18.3.0 is installed.
+1. Use the single checkout at `~/code/omp-web` for development, commits, builds and runtime. Keep dependencies and build artifacts there; follow the [workspace procedure](./docs/workspace.zh-CN.md) when deploying.
+2. Ensure Node.js >= 22.19.0 is installed.
 3. Install dependencies:
    ```bash
    npm install
@@ -22,7 +22,7 @@ Thank you for considering contributing to `omp-web`!
   npx tsc --noEmit
   npm run lint
   ```
-- **Dev Server Caution**: Do NOT run `next build` during development as it pollutes `.next/` and breaks `npm run dev`.
+- **Service Caution**: Stop production and development servers before building `.next` in this workspace. Use `npm run build`; its preflight checks the canonical location and managed service state.
 - **Code Style**: Follow existing project conventions. Keep components clean, modular, and performance-conscious.
 
 ## Submitting a Pull Request

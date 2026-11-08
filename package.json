@@ -29,6 +29,11 @@
     "package.json"
   ],
   "scripts": {
+    "predev": "node bin/workspace-location.js --offline",
+    "predev:lan": "node bin/workspace-location.js --offline",
+    "prebuild": "node bin/workspace-location.js --offline",
+    "prestart": "node bin/workspace-location.js --offline",
+    "prestart:lan": "node bin/workspace-location.js --offline",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
     "build": "next build --webpack",
