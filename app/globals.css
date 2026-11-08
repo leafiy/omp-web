@@ -1681,3 +1681,59 @@ span.linenumber {
     font-size: 16px !important;
   }
 }
+
+/* Session sidebar: project → session groups */
+.sidebar-project-row:hover,
+.sidebar-project-row:focus-within {
+  background: var(--bg-hover);
+}
+.sidebar-project-new {
+  display: none;
+}
+.sidebar-project-row:hover .sidebar-project-new,
+.sidebar-project-row:focus-within .sidebar-project-new {
+  display: flex;
+}
+.sidebar-project-row:hover .sidebar-project-count,
+.sidebar-project-row:focus-within .sidebar-project-count {
+  display: none;
+}
+.sidebar-project-new:hover {
+  color: var(--accent) !important;
+  background: var(--bg-selected) !important;
+}
+@media (hover: none) {
+  .sidebar-project-new {
+    display: flex;
+  }
+  .sidebar-project-count {
+    display: none;
+  }
+}
+.sidebar-new-session:hover {
+  color: var(--accent) !important;
+  border-color: rgba(37, 99, 235, 0.35) !important;
+}
+.sidebar-show-more:hover {
+  color: var(--text-muted) !important;
+}
+
+/* New-session directory picker */
+.new-session-dir-chip:hover {
+  border-color: rgba(37, 99, 235, 0.35) !important;
+}
+.new-session-dir-option:hover:not(:disabled) {
+  background: var(--bg-hover) !important;
+}
+.new-session-dir-remove:hover:not(:disabled) {
+  color: #ef4444 !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+}
+@media (pointer: coarse) {
+  .sidebar-session-row {
+    height: 40px !important;
+  }
+  .sidebar-project-row {
+    height: 38px !important;
+  }
+}

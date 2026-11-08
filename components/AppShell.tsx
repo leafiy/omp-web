@@ -29,6 +29,7 @@ import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
+import { DEFAULT_NEW_SESSION_CWD } from "@/lib/session-projects";
 import { engineForSession, engineLabel, parseEngine, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import {
   getDefaultRightPanelWidth,
@@ -294,12 +295,21 @@ export function AppShell() {
   }, []);
 
   const initialSessionId = initialNavigation.sessionId;
-  const [activeCwd, setActiveCwd] = useState<string | null>(null);
-  const activeProjectRootRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
-  // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
-  const suppressCwdBumpRef = useRef(false);
+  // With nothing selected the shell shows an empty chat in the default
+  // directory; the user can pick another directory in that chat.
+  const effectiveNewSessionCwd = newSessionCwd ?? (
+    selectedSession === null
+      && initialSessionRestored
+      && initialCwdStatus !== "validating"
+      && initialCwdStatus !== "error"
+      ? DEFAULT_NEW_SESSION_CWD
+      : null
+  );
+  const activeCwd = selectedSession?.cwd || effectiveNewSessionCwd;
+  // Project of the open chat; switching projects closes project-scoped file tabs.
+  const activeProjectRootRef = useRef<string | null>(null);
 
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
@@ -321,9 +331,6 @@ export function AppShell() {
           throw new Error(data.error ?? `HTTP ${response.status}`);
         }
 
-        // The sidebar will notify us when it adopts this cwd. Avoid remounting
-        // the just-created empty chat during that initial synchronization.
-        suppressCwdBumpRef.current = true;
         setNewSessionCwd(data.cwd);
         setInitialCwdStatus("ready");
       })
@@ -336,75 +343,63 @@ export function AppShell() {
     return () => controller.abort();
   }, [initialNavigation]);
 
-  const handleCwdChange = useCallback((cwd: string | null, projectRoot?: string | null) => {
-    setActiveCwd(cwd);
-    // Skip if cwd is null (initial mount).
-    if (!cwd) return;
-    const newProject = projectRoot ?? cwd;
-    const currentProject = activeProjectRootRef.current
-      ?? (selectedSession ? (selectedSession.projectRoot ?? selectedSession.cwd) : null);
-    activeProjectRootRef.current = newProject;
+  // The default directory is not chosen through /api/cwd/validate, so register
+  // it once for file access (explorer, uploads) before the first session exists.
+  const defaultCwdRegisteredRef = useRef(false);
+  useEffect(() => {
+    if (activeCwd !== DEFAULT_NEW_SESSION_CWD || defaultCwdRegisteredRef.current) return;
+    defaultCwdRegisteredRef.current = true;
+    void fetch("/api/cwd/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: DEFAULT_NEW_SESSION_CWD }),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setExplorerRefreshKey((key) => key + 1);
+      })
+      .catch(() => {
+        defaultCwdRegisteredRef.current = false;
+      });
+  }, [activeCwd]);
 
-    // Keep the project identity in sync during the initial URL restore without
-    // remounting the just-created or restored chat.
-    if (suppressCwdBumpRef.current) {
-      suppressCwdBumpRef.current = false;
-      return;
-    }
-    // Worktrees of one repo share a project root. Moving the effective cwd
-    // within the same project (e.g. switching worktree, or clicking a session
-    // that lives in another worktree) must not close the open session.
-    if (currentProject === newProject) {
-      return;
-    }
-    // Close any session that belongs to a different project — it no longer
-    // matches the selected project directory.
-    setSelectedSession(null);
-    setNewSessionCwd((prev) => {
-      if (prev && prev !== cwd) return null;
-      return prev;
-    });
+  // File tabs are keyed by absolute path, so tabs opened in another project
+  // would otherwise linger. Worktrees of one repo share a project root and
+  // keep their tabs.
+  const syncActiveProject = useCallback((projectRoot: string | null) => {
+    const previous = activeProjectRootRef.current;
+    activeProjectRootRef.current = projectRoot;
+    if (!previous || !projectRoot || previous === projectRoot) return;
+    setFileTabs([]);
+    setActiveFileTabId(null);
+    setRightPanelOpen(false);
+  }, []);
+
+  const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
+    syncActiveProject(session.projectRoot || session.cwd || null);
+    setNewSessionCwd(null);
+    setSelectedSession(session);
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
     setActiveTopPanel(null);
-    // File tabs are keyed by absolute path, so tabs opened in the previous
-    // project would otherwise linger after switching to a different project.
-    // Reached only past the same-project early return above, so worktrees of
-    // one repo keep their open tabs. Mirror handleCloseFileTab and close the
-    // now-empty right panel.
-    setFileTabs([]);
-    setActiveFileTabId(null);
-    setRightPanelOpen(false);
-    router.replace("/", { scroll: false });
-  }, [router, selectedSession]);
-
-  const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
-    setNewSessionCwd(null);
-    setSelectedSession(session);
-    setSessionKey((k) => k + 1);
-    setSystemPrompt(null);
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
-    if (isRestore) {
-      // Suppress the redundant sessionKey bump that would come from the
-      // onCwdChange effect firing after setSelectedCwd in the sidebar
-      suppressCwdBumpRef.current = true;
-    }
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
     if (!isRestore) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [router, isMobile]);
+  }, [router, isMobile, syncActiveProject]);
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string, engine?: AgentEngine) => {
     if (engine) {
       setNewSessionEngine(engine);
       try { localStorage.setItem("omp-web:new-chat-engine", engine); } catch {}
     }
+    syncActiveProject(cwd);
     setSelectedSession(null);
     setProjectTrustSaved(false);
     setNewSessionCwd(cwd);
@@ -415,7 +410,7 @@ export function AppShell() {
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace(`?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
-  }, [router, isMobile]);
+  }, [router, isMobile, syncActiveProject]);
 
   const handleEngineChange = useCallback((engine: AgentEngine) => {
     if (engine === activeEngine || installedEngines[engine] !== true) return;
@@ -431,16 +426,17 @@ export function AppShell() {
     handleNewSession("", cwd, engine);
   }, [handleNewSession]);
 
-  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
+  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.). Like the sidebar
+  // button, a new session starts in the default directory and can be moved
+  // in the chat.
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
-    activeCwd,
+    activeCwd: DEFAULT_NEW_SESSION_CWD,
   });
 
   // Client-built transient SessionInfo (new session / fork) lacks the
-  // server-computed projectRoot, which the same-project check in
-  // handleCwdChange relies on. Hydrate it from the session list so switching
-  // worktrees right after creating a session doesn't close the chat.
+  // server-computed projectRoot used by the sidebar's project grouping and the
+  // same-project file-tab check. Hydrate it from the session list.
   const hydrateSelectedSession = useCallback((sessionId: string) => {
     void fetch("/api/sessions")
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
@@ -498,7 +494,7 @@ export function AppShell() {
     if (selectedSession?.id === sessionId) {
       const cwd = selectedSession.cwd;
       setSelectedSession(null);
-      setNewSessionCwd(cwd ?? null);
+      setNewSessionCwd(cwd || null);
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
@@ -581,7 +577,6 @@ export function AppShell() {
   }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
-  const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
   const projectTrustScope = JSON.stringify([activeEngine, projectTrustCwd]);
@@ -660,12 +655,10 @@ export function AppShell() {
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
-        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
-        selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
-        onCwdChange={handleCwdChange}
+        activeCwd={activeCwd}
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}

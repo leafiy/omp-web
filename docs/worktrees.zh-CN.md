@@ -2,33 +2,27 @@
 
 omp-web 会把同一个 Git 项目的 main checkout 和 linked worktree 放在同一个项目下。你可以用它在不同分支之间切换工作目录，同时保留统一的会话列表。
 
-## 什么时候会看到 Worktree 控件
+## Worktree 控件在哪里
 
-当左上角选择的是 Git 仓库根目录时，项目选择器下面会出现 worktree 切换控件。
+worktree 在新建会话时选择。点击侧边栏的 **新建会话**，或项目行上的铅笔按钮，然后打开聊天输入框上方的目录按钮。当这个目录是 Git checkout 的顶层目录时，菜单里的 **Worktrees** 分组会列出这个项目的 worktree。
 
-以下情况不会显示：
+以下情况不会显示 Worktrees 分组：
 
-- 当前目录不是 Git 仓库。
-- 当前目录在某个 Git 仓库里面，但不是仓库根目录。
+- 目录不是 Git 仓库（例如默认的 `/tmp`）。
+- 目录在某个 Git 仓库里面，但不是 checkout 的顶层目录。
 - Git 无法读取这个仓库的 worktree 列表。
 
-如果你在仓库子目录里，先从项目选择器打开仓库根目录，再管理 worktree。
+如果你在仓库子目录里，先从 **最近项目**、**浏览文件夹…** 或 **自定义路径…** 选择仓库根目录。
 
-## 切换 Worktree 会影响什么
+## 选择 Worktree 会影响什么
 
-worktree 切换器决定 omp-web 接下来使用哪个 checkout。
+选择 worktree 后，空白聊天会在那个 checkout 里重新开始。新会话、左侧 Explorer、以及从 Explorer 插入到输入框的文件路径都会使用它。发送第一条消息后，会话会固定使用这个目录。
 
-它会影响：
-
-- 从侧边栏新建的会话。
-- 左侧 Explorer 浏览的文件。
-- 从 Explorer 插入到输入框里的文件路径。
-
-已有会话仍然按同一个 project root 分组。点击一个已有会话时，侧边栏会回到这个会话原本所在的 checkout。
+已有会话仍然在侧边栏里按项目分组。打开一个会话时，Explorer 会切换到这个会话所在的 checkout。
 
 ## 新建 Worktree
 
-在 worktree 菜单里选择 `New worktree...`，输入 branch name。
+在目录菜单的 Worktrees 分组里选择 `新建 worktree…`，输入 branch name。空白聊天会切换到新的 checkout。
 
 omp-web 会把 checkout 放在：
 
@@ -52,7 +46,7 @@ omp-web 会把 checkout 放在：
 
 ## 删除 Worktree
 
-非 main worktree 右侧有删除按钮。它删除的是这个 checkout 目录。
+目录菜单里非 main worktree 右侧有删除按钮。它删除的是这个 checkout 目录。
 
 删除 worktree 不会删除：
 
@@ -74,14 +68,14 @@ omp-web 按 project root 分组会话，所以 main checkout 和 linked worktree
 
 ## 常见问题
 
-**为什么我看不到 worktree 切换器？**
-请确认当前选择的是 Git 仓库根目录。非 Git 目录和仓库子目录会显示一行轻提示，而不是切换器。
+**为什么我看不到 Worktrees 分组？**
+请把新会话的目录选为 Git 仓库根目录。非 Git 目录和仓库子目录不会列出 worktree。
 
 **为什么某个 branch 不能创建 worktree？**
 Git 不允许同一个 branch 同时被多个 worktree checkout。你可以切到已有的 worktree，或者先删除那个 checkout。
 
 **Git 里还有已经消失的 worktree 记录怎么办？**
-Git 有时会保留 prunable worktree 记录。Pi Web 会过滤这些记录，不在切换器里显示。
+Git 有时会保留 prunable worktree 记录。Pi Web 会过滤这些记录，不在目录菜单里显示。
 
 **Explorer 和当前聊天看起来不在同一个分支？**
-Explorer 跟随当前选择的 worktree；聊天跟随打开的会话。重新点击会话，可以把侧边栏切回这个会话所在的 checkout。
+Explorer 跟随当前打开的聊天：已选会话所在的 checkout，或新会话选择的目录。

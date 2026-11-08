@@ -10,6 +10,8 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { NewSessionDirectoryPicker } from "./NewSessionDirectoryPicker";
+import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
 import { useI18n } from "@/hooks/useI18n";
 import { AgentTasksPanel } from "./AgentTasksPanel";
 import type { AgentTask } from "@/lib/agent-task-types";
@@ -345,6 +347,19 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
 
+  // Choosing another directory restarts the empty chat there; the unsent
+  // draft (text and in-memory images) moves with it.
+  const handleNewSessionCwdChange = useCallback((cwd: string) => {
+    if (!onNewSession || !newSessionCwd || cwd === newSessionCwd) return;
+    const fromKey = `new:${engine}:${newSessionCwd}`;
+    const draft = getDraft(fromKey);
+    if (draft) {
+      setDraft(`new:${engine}:${cwd}`, draft);
+      clearDraft(fromKey);
+    }
+    onNewSession(cwd, engine);
+  }, [engine, newSessionCwd, onNewSession]);
+
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
@@ -485,6 +500,11 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                 </span>
               </div>
             </div>
+            {newSessionCwd && onNewSession && (
+              <div style={{ margin: "0 16px 12px", display: "flex", minWidth: 0 }}>
+                <NewSessionDirectoryPicker cwd={newSessionCwd} onChange={handleNewSessionCwdChange} />
+              </div>
+            )}
             {engine === "claude" && <p style={{ margin: "0 16px 10px", fontSize: 12, lineHeight: 1.5, color: "var(--text-dim)" }}>{locale === "zh-CN" ? "直接使用本机 Claude Code 的登录和配置。需要你授权时会弹出确认。" : "Uses this machine's native Claude Code login and configuration. Approval prompts appear when needed."}</p>}
             {engine === "codex" && <p style={{ margin: "0 16px 10px", fontSize: 12, lineHeight: 1.5, color: "var(--text-dim)" }}>{locale === "zh-CN" ? "直接使用本机 Codex CLI。需要你授权时会弹出确认。" : "Runs your local Codex CLI directly. Approval prompts appear when needed."}</p>}
             <NoticeShelf notices={notices} align="right" />

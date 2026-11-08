@@ -1,34 +1,28 @@
 # Worktrees in omp-web
 
-omp-web can show all Git worktrees for one project in the sidebar. Use this when you want to keep separate checkouts for different branches, while keeping the project's sessions grouped together.
+omp-web groups all Git worktrees of one project under a single project in the sidebar. Use this when you want to keep separate checkouts for different branches, while keeping the project's sessions grouped together.
 
-## When the Worktree Control Appears
+## Where the Worktree Controls Are
 
-The worktree switcher appears below the project picker when the selected directory is a Git repository root.
+You choose a worktree when you start a session. Click **New session** in the sidebar, or the pencil button on a project row, then open the directory chip above the chat input. When that directory is a Git checkout's top level, the menu lists the project's worktrees under **Worktrees**.
 
-It is hidden when:
+The Worktrees section is hidden when:
 
-- The selected directory is not a Git repository.
-- The selected directory is inside a repository, but not the repository root.
+- The directory is not a Git repository (for example the default `/tmp`).
+- The directory is inside a repository, but not at a checkout's top level.
 - Git cannot read the repository's worktree list.
 
-If you are inside a repo subdirectory, open the repository root from the project picker to manage worktrees.
+If you are inside a repo subdirectory, first pick the repository root from **Recent projects**, **Browse folders…** or **Custom path…**.
 
-## Switching Worktrees
+## Choosing a Worktree
 
-Use the worktree switcher to choose which checkout omp-web should use for new work in that project.
+Picking a worktree restarts the empty chat in that checkout. The new session, the file Explorer and file mentions inserted from the Explorer all use it. After the first message, the session keeps that directory.
 
-Switching worktrees affects:
-
-- New sessions started from the sidebar.
-- The file Explorer.
-- File mentions inserted from the Explorer.
-
-Existing sessions stay grouped under the same project. Opening an existing session moves the effective working directory back to that session's checkout.
+Existing sessions stay grouped under their project in the sidebar. Opening a session switches the Explorer to that session's checkout.
 
 ## Creating a Worktree
 
-Choose `New worktree...` from the worktree menu and enter a branch name.
+Choose `New worktree…` in the Worktrees section of the directory menu and enter a branch name. The empty chat moves to the new checkout.
 
 omp-web creates the checkout at:
 
@@ -52,7 +46,7 @@ If the branch already exists, omp-web adds a worktree for that branch. If it doe
 
 ## Removing a Worktree
 
-Use the remove button next to a non-main worktree to remove that checkout.
+Use the remove button next to a non-main worktree in the directory menu to remove that checkout.
 
 Removing a worktree does not delete:
 
@@ -74,12 +68,12 @@ Each session still remembers the working directory it was created with. That mea
 
 ## Troubleshooting
 
-**I do not see the worktree switcher.**
-Select a Git repository root. Non-Git directories and repo subdirectories show a small hint instead of the switcher.
+**I do not see the Worktrees section.**
+Choose a Git repository root as the new session's directory. Non-Git directories and repo subdirectories do not list worktrees.
 
 **A branch cannot be added as a worktree.**
 Git allows a branch to be checked out in only one worktree at a time. Switch to the existing worktree for that branch, or remove it first.
 
-Git can keep prunable worktree records after a checkout disappears. omp-web filters those out of the switcher.
+Git can keep prunable worktree records after a checkout disappears. omp-web filters those out of the directory menu.
 
-The Explorer follows the selected worktree. The chat follows the opened session. Click the session again to move the sidebar back to that session's checkout.
+The Explorer follows the open chat: the selected session's checkout, or the directory chosen for a new session.
