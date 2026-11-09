@@ -63,16 +63,26 @@ The comparison is based on official documentation (Herdr and Orca checked 2026-1
 
 ## Install
 
-**The host needs:** Linux, Node.js 22.19.0+, npm, Git, and at least one agent CLI that's already logged in: `omp` (Oh My Pi), `pi`, `claude`, or `codex`. Nothing needs to be installed on the devices you browse from.
+**The host needs:** Linux or macOS, Node.js 22.19.0+, npm, Git, and at least one agent CLI that's already logged in: `omp` (Oh My Pi), `pi`, `claude`, or `codex`. Nothing needs to be installed on the devices you browse from.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 
-# Also install a systemd service that starts on boot
+# Also install a background service (Linux: systemd, starts on boot; macOS: launchd, starts at login)
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
 ```
 
-The installer checks for runtimes but never installs them. It clones or updates `~/code/omp-web`, builds it, and asks you to choose a web username and password. Run it again to update. It refuses if there are uncommitted changes, and asks before stopping a running service. For unattended installs, set `OMP_WEB_USERNAME` and `OMP_WEB_PASSWORD`.
+The installer checks for runtimes but never installs them. It clones or updates `~/code/omp-web`, builds it, and asks you to choose a web username and password. For unattended installs, set `OMP_WEB_USERNAME` and `OMP_WEB_PASSWORD`.
+
+To update and restart in one step:
+
+```bash
+bash ~/code/omp-web/scripts/install.sh update
+```
+
+`update` asks nothing: it pulls the current branch, stops the service, rebuilds, and starts the service again, keeping the login and the service's address and port. It refuses if there are uncommitted changes. The restart interrupts active chats and terminals, so run it from a terminal outside omp-web (SSH, for example); it refuses to run from omp-web's own terminal or agents. Running the installer again without `update` also updates, but asks before stopping the service.
+
+On macOS the service is a per-user LaunchAgent (`~/Library/LaunchAgents/io.github.leafiy.omp-web.plist`). It needs no sudo and logs to `~/code/omp-web/.local/logs/omp-web.log`.
 
 Without the service, start omp-web manually and open [http://127.0.0.1:30141](http://127.0.0.1:30141):
 

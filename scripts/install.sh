@@ -1,35 +1,50 @@
 #!/usr/bin/env bash
-# One-step installer / updater for omp-web.
+# One-step installer / updater for omp-web (Linux and macOS).
 #
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
+#   bash ~/code/omp-web/scripts/install.sh update
 #
 # Requires git, Node.js 22.19+ and npm. It never installs runtimes or system
 # packages. Checkout location is fixed: ~/code/omp-web.
 #
+# Commands:
+#   (none)           install, or update while asking before each disruptive step
+#   update           one-step update: pull, stop the service, rebuild, start it
+#                    again. Asks nothing and keeps the login and service settings.
+#
 # Options:
-#   --service        install and start a systemd service (omp-web.service)
-#   --no-service     never ask about a systemd service
+#   --service        install and start a background service
+#                    (Linux: systemd omp-web.service, starts on boot;
+#                     macOS: launchd agent in ~/Library/LaunchAgents, starts at login)
+#   --no-service     never ask about a background service
 #   --host HOST      listen address for the service (default 127.0.0.1)
 #   --port PORT      listen port for the service (default 30141)
-#   --ref REF        Git branch to install (default main)
+#   --ref REF        Git branch to install (default main; update keeps the current branch)
 #
 # Unattended login setup: set OMP_WEB_USERNAME and OMP_WEB_PASSWORD.
 set -euo pipefail
 
+# systemd | launchd | none. Set by detect_platform.
+PLATFORM="none"
+LAUNCHD_LABEL="io.github.leafiy.omp-web"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+LAUNCHD_DOMAIN="gui/$(id -u)"
+
 main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
-  local ref="main" host="127.0.0.1" port="30141" service="ask"
+  local mode="install" ref="" host="127.0.0.1" port="30141" service="ask"
   local dir="$HOME/code/omp-web"
 
   while [ $# -gt 0 ]; do
     case "$1" in
+      update|--update) mode="update" ;;
       --service) service="yes" ;;
       --no-service) service="no" ;;
       --host) host="${2:?--host needs a value}"; shift ;;
       --port) port="${2:?--port needs a value}"; shift ;;
       --ref) ref="${2:?--ref needs a value}"; shift ;;
-      -h|--help) sed -n '2,17p' "$0" 2>/dev/null || true; return 0 ;;
+      -h|--help) sed -n '2,25p' "$0" 2>/dev/null || true; return 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
     shift
@@ -37,6 +52,8 @@ main() {
 
   local tty=""
   if [ -r /dev/tty ] && [ -w /dev/tty ] && { : </dev/tty; } 2>/dev/null; then tty="/dev/tty"; fi
+
+  detect_platform
 
   say "Checking prerequisites"
   command -v git >/dev/null 2>&1 || fail "git is required. Install it first."
@@ -48,16 +65,30 @@ main() {
   ' || exit 1
 
   if [ -d "$dir/.git" ]; then
-    say "Updating $dir"
+    if [ -z "$ref" ]; then
+      if [ "$mode" = "update" ]; then
+        ref="$(git -C "$dir" symbolic-ref --quiet --short HEAD)" || fail "$dir is not on a branch. Pass --ref BRANCH."
+      else
+        ref="main"
+      fi
+    fi
+    say "Updating $dir ($ref)"
     if [ -n "$(git -C "$dir" status --porcelain)" ]; then
       fail "$dir has uncommitted changes. Commit or stash them, then run the installer again."
     fi
+    local before after
+    before="$(git -C "$dir" rev-parse --short HEAD)"
     git -C "$dir" fetch --quiet origin "$ref"
     git -C "$dir" checkout --quiet "$ref"
     git -C "$dir" pull --ff-only --quiet origin "$ref"
+    after="$(git -C "$dir" rev-parse --short HEAD)"
+    if [ "$before" = "$after" ]; then echo "  Already at $after; rebuilding anyway."; else echo "  $before -> $after"; fi
   elif [ -e "$dir" ]; then
     fail "$dir exists but is not a Git checkout. Move it away and run the installer again."
+  elif [ "$mode" = "update" ]; then
+    fail "omp-web is not installed at $dir. Run the installer without 'update' first."
   else
+    [ -n "$ref" ] || ref="main"
     say "Cloning $repo into $dir"
     mkdir -p "$HOME/code"
     git clone --quiet --branch "$ref" "$repo" "$dir"
@@ -65,42 +96,63 @@ main() {
   cd "$dir"
 
   # The build guard refuses to overwrite .next while the service runs.
-  local was_running="no"
-  if service_running; then
-    if confirm "omp-web.service is running. Stop it now to rebuild? Active chats and terminals will be interrupted." "$tty"; then
-      run_root systemctl stop omp-web.service
-      was_running="yes"
+  local was_active="no"
+  if service_active; then
+    if inside_service; then
+      fail "This shell runs inside omp-web (its terminal or one of its agents). Stopping the service would kill this run halfway. Run it from a separate terminal, e.g. over SSH."
+    fi
+    if [ "$mode" = "update" ] || confirm "$(service_name) is running. Stop it now to rebuild? Active chats and terminals will be interrupted." "$tty"; then
+      say "Stopping $(service_name)"
+      service_stop
+      was_active="yes"
     else
-      fail "Stopped. Rebuild later after stopping omp-web.service."
+      fail "Stopped. Rebuild later after stopping $(service_name)."
     fi
   fi
 
+  local stopped_note=""
+  if [ "$was_active" = "yes" ]; then stopped_note=" $(service_name) is stopped; fix the problem and run this again."; fi
   say "Installing dependencies"
-  npm ci --include=dev --no-audit --no-fund
+  npm ci --include=dev --no-audit --no-fund || fail "npm ci failed.$stopped_note"
   say "Building"
-  npm run build
+  npm run build || fail "Build failed.$stopped_note"
 
-  setup_login "$tty"
-
-  if [ "$service" = "ask" ] && [ -d /run/systemd/system ] && [ -n "$tty" ]; then
-    if confirm "Install a systemd service that starts omp-web on boot?" "$tty"; then service="yes"; fi
+  # An update keeps the existing login; it only asks when there is none yet.
+  if [ "$mode" != "update" ] || ! has_login; then
+    setup_login "$tty"
   fi
+
+  if [ "$service" = "ask" ] && [ "$mode" != "update" ] && [ "$PLATFORM" != "none" ] && [ -n "$tty" ] && ! service_installed; then
+    if confirm "Install a background service that starts omp-web automatically?" "$tty"; then service="yes"; fi
+  fi
+  local started="no"
   if [ "$service" = "yes" ]; then
     install_service "$dir" "$host" "$port"
-  elif [ "$was_running" = "yes" ]; then
-    run_root systemctl start omp-web.service
+    started="yes"
+  elif [ "$was_active" = "yes" ] || { [ "$mode" = "update" ] && service_installed; }; then
+    say "Starting $(service_name)"
+    service_start
+    started="yes"
   fi
 
   echo
   say "Done."
-  if [ "$service" = "yes" ] || [ "$was_running" = "yes" ]; then
-    echo "  omp-web.service is running: http://$host:$port"
-    echo "  Logs: journalctl -u omp-web -f"
+  if [ "$started" = "yes" ]; then
+    if [ "$service" = "yes" ]; then
+      echo "  $(service_name) is running: http://$host:$port"
+    else
+      echo "  $(service_name) is running again with its existing settings."
+    fi
+    echo "  Logs: $(service_logs_hint "$dir")"
   else
+    if [ "$mode" = "update" ]; then
+      echo "  No background service is installed. Restart your running omp-web to load the new build."
+    fi
     echo "  Start:  cd ~/code/omp-web && node bin/omp-web.js --hostname $host --port $port"
     echo "  Open:   http://$host:$port"
   fi
-  echo "  Change the web login later in Settings, or run: node ~/code/omp-web/bin/omp-web.js passwd"
+  echo "  Update later:  bash ~/code/omp-web/scripts/install.sh update"
+  echo "  Change the web login in Settings, or run: node ~/code/omp-web/bin/omp-web.js passwd"
 }
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -121,11 +173,93 @@ run_root() {
   fi
 }
 
-service_running() {
-  [ -d /run/systemd/system ] || return 1
-  local pid
-  pid="$(systemctl show omp-web.service --property=MainPID --value 2>/dev/null || true)"
-  [ -n "$pid" ] && [ "$pid" != "0" ]
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin) PLATFORM="launchd" ;;
+    Linux) if [ -d /run/systemd/system ]; then PLATFORM="systemd"; fi ;;
+  esac
+}
+
+service_name() {
+  if [ "$PLATFORM" = "launchd" ]; then printf 'launchd agent %s' "$LAUNCHD_LABEL"; else printf 'omp-web.service'; fi
+}
+
+service_logs_hint() {
+  if [ "$PLATFORM" = "launchd" ]; then printf 'tail -f %s/.local/logs/omp-web.log' "$1"; else printf 'journalctl -u omp-web -f'; fi
+}
+
+launchd_loaded() {
+  launchctl print "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" >/dev/null 2>&1
+}
+
+# Prints the service's main PID, or nothing when it has no process.
+service_pid() {
+  local pid=""
+  case "$PLATFORM" in
+    systemd) pid="$(systemctl show omp-web.service --property=MainPID --value 2>/dev/null || true)" ;;
+    launchd) pid="$(launchctl print "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)" ;;
+  esac
+  if [ "$pid" = "0" ]; then pid=""; fi
+  printf '%s' "$pid"
+}
+
+service_installed() {
+  case "$PLATFORM" in
+    systemd) systemctl cat omp-web.service >/dev/null 2>&1 ;;
+    launchd) [ -f "$LAUNCHD_PLIST" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# A loaded launchd agent counts as active even between restarts: launchd may
+# respawn it in the middle of a build.
+service_active() {
+  case "$PLATFORM" in
+    systemd) [ -n "$(service_pid)" ] ;;
+    launchd) launchd_loaded ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when this script is a descendant of the service it is about to stop.
+inside_service() {
+  if [ "$PLATFORM" = "systemd" ] && grep -q '/omp-web\.service' /proc/self/cgroup 2>/dev/null; then return 0; fi
+  local target pid="$$" hops=0
+  target="$(service_pid)"
+  [ -n "$target" ] || return 1
+  while [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "1" ] && [ "$hops" -lt 64 ]; do
+    if [ "$pid" = "$target" ]; then return 0; fi
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    hops=$((hops + 1))
+  done
+  return 1
+}
+
+service_stop() {
+  case "$PLATFORM" in
+    systemd) run_root systemctl stop omp-web.service ;;
+    launchd)
+      launchctl bootout "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" 2>/dev/null || true
+      # bootout can return while the process is still shutting down.
+      local waited=0
+      while launchd_loaded; do
+        waited=$((waited + 1))
+        [ "$waited" -le 30 ] || fail "$(service_name) did not stop within 30 seconds."
+        sleep 1
+      done
+      ;;
+  esac
+}
+
+service_start() {
+  case "$PLATFORM" in
+    systemd) run_root systemctl start omp-web.service ;;
+    launchd)
+      launchctl enable "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" 2>/dev/null || true
+      launchctl bootstrap "$LAUNCHD_DOMAIN" "$LAUNCHD_PLIST" \
+        || fail "launchctl could not load $LAUNCHD_PLIST. The agent needs this user's desktop session; log in on the Mac and run this again."
+      ;;
+  esac
 }
 
 has_login() {
@@ -151,8 +285,15 @@ setup_login() {
 }
 
 install_service() {
+  case "$PLATFORM" in
+    systemd) install_systemd_service "$@" ;;
+    launchd) install_launchd_service "$@" ;;
+    *) fail "No supported service manager (systemd or launchd) is available; start omp-web manually instead." ;;
+  esac
+}
+
+install_systemd_service() {
   local dir="$1" host="$2" port="$3"
-  [ -d /run/systemd/system ] || fail "systemd is not available; start omp-web manually instead."
   local user node_bin unit
   user="$(id -un)"
   node_bin="$(command -v node)"
@@ -184,4 +325,63 @@ UNIT
   run_root systemctl enable --now omp-web.service
 }
 
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+# A per-user LaunchAgent, not a system daemon: the agent CLIs read this user's
+# keychain and files, and no root is needed. It runs while the user is logged in.
+install_launchd_service() {
+  local dir="$1" host="$2" port="$3"
+  local node_bin log
+  node_bin="$(command -v node)"
+  log="$dir/.local/logs/omp-web.log"
+  mkdir -p "$dir/.local/logs" "$HOME/Library/LaunchAgents"
+  if launchd_loaded; then service_stop; fi
+  say "Installing $LAUNCHD_PLIST"
+  cat >"$LAUNCHD_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCHD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_escape "$node_bin")</string>
+    <string>$(xml_escape "$dir/bin/omp-web.js")</string>
+    <string>--hostname</string>
+    <string>$(xml_escape "$host")</string>
+    <string>--port</string>
+    <string>$(xml_escape "$port")</string>
+    <string>--no-open</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$(xml_escape "$dir")</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$(xml_escape "$PATH")</string>
+    <key>LANG</key>
+    <string>$(xml_escape "${LANG:-en_US.UTF-8}")</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$(xml_escape "$log")</string>
+  <key>StandardErrorPath</key>
+  <string>$(xml_escape "$log")</string>
+</dict>
+</plist>
+PLIST
+  chmod 0644 "$LAUNCHD_PLIST"
+  service_start
+}
+
 main "$@"
+exit 0

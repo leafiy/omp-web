@@ -22,12 +22,24 @@ function assertWorkspaceLocation(root, home = os.homedir()) {
   return expected;
 }
 
+/** Label of the macOS LaunchAgent written by scripts/install.sh. */
+const LAUNCHD_LABEL = "io.github.leafiy.omp-web";
+const SERVICE_RUNNING = "Stop omp-web.service before building or running a development/second server in its workspace";
+
 function assertServiceStopped() {
-  // No systemd means no managed production instance to guard. This is an
-  // operational safety check, not a security boundary against the OS owner.
+  // No service manager means no managed production instance to guard. This is
+  // an operational safety check, not a security boundary against the OS owner.
+  if (process.platform === "darwin") {
+    let state;
+    try {
+      state = execFileSync("launchctl", ["print", `gui/${process.getuid()}/${LAUNCHD_LABEL}`], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+    } catch { return; } // Not loaded.
+    if (/^\s*pid = \d+/m.test(state)) throw new Error(SERVICE_RUNNING.replace("omp-web.service", `the launchd agent ${LAUNCHD_LABEL}`));
+    return;
+  }
   if (!fs.existsSync("/run/systemd/system")) return;
   const pid = execFileSync("systemctl", ["show", "omp-web.service", "--property=MainPID", "--value"], { encoding: "utf8", timeout: 5000 }).trim();
-  if (pid !== "0" && pid !== "") throw new Error("Stop omp-web.service before building or running a development/second server in its workspace");
+  if (pid !== "0" && pid !== "") throw new Error(SERVICE_RUNNING);
 }
 
 if (require.main === module) {

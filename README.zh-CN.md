@@ -63,16 +63,26 @@ Agent 还是你机器上原来的那几个，继续用它们自己的登录、�
 
 ## 安装
 
-**主机需要：** Linux、Node.js 22.19.0+、npm、Git，以及至少一个已经登录好的 Agent CLI：`omp`（Oh My Pi）、`pi`、`claude`、`codex`。访问设备上什么都不用装。
+**主机需要：** Linux 或 macOS、Node.js 22.19.0+、npm、Git，以及至少一个已经登录好的 Agent CLI：`omp`（Oh My Pi）、`pi`、`claude`、`codex`。访问设备上什么都不用装。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 
-# 同时安装开机自启的 systemd 服务
+# 同时安装自启动的后台服务（Linux：systemd，开机启动；macOS：launchd，登录后启动）
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
 ```
 
-脚本只检查运行时，不会替你安装。它会克隆或更新 `~/code/omp-web`、完成构建，并让你设置网页登录用户名和密码。再次运行即可更新：有未提交的改动时会拒绝，服务正在运行时会先询问是否停止。无人值守安装时，设置 `OMP_WEB_USERNAME` 和 `OMP_WEB_PASSWORD`。
+脚本只检查运行时，不会替你安装。它会克隆或更新 `~/code/omp-web`、完成构建，并让你设置网页登录用户名和密码。无人值守安装时，设置 `OMP_WEB_USERNAME` 和 `OMP_WEB_PASSWORD`。
+
+一键更新并重启：
+
+```bash
+bash ~/code/omp-web/scripts/install.sh update
+```
+
+`update` 不提问：拉取当前分支、停止服务、重新构建、再启动服务，登录信息和服务的地址端口保持不变。有未提交的改动时会拒绝。重启会中断正在进行的对话和终端，所以要在 omp-web 之外的终端（例如 SSH）里运行，从它自己的内嵌终端或 Agent 里运行会被拒绝。不带 `update` 再次运行安装脚本也能更新，只是停止服务前会先询问。
+
+macOS 上的服务是当前用户的 LaunchAgent（`~/Library/LaunchAgents/io.github.leafiy.omp-web.plist`），不需要 sudo，日志在 `~/code/omp-web/.local/logs/omp-web.log`。
 
 不装服务时手动启动，然后打开 [http://127.0.0.1:30141](http://127.0.0.1:30141)：
 

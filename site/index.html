@@ -246,8 +246,8 @@
         <article class="step reveal">
           <span class="step-num">1</span>
           <h3><span lang="en">Install on the agent host</span><span lang="zh-CN">安装到 Agent 主机</span></h3>
-          <p lang="en">Run it as the user whose agents are already logged in. <code>--service</code> adds a systemd unit that starts on boot and listens on <code>127.0.0.1:30141</code>.</p>
-          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。<code>--service</code> 会安装开机自启的 systemd 服务，监听 <code>127.0.0.1:30141</code>。</p>
+          <p lang="en">Run it as the user whose agents are already logged in. <code>--service</code> adds a background service (systemd on Linux, launchd on macOS) that listens on <code>127.0.0.1:30141</code>. Later, <code>install.sh update</code> updates and restarts it in one step.</p>
+          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。<code>--service</code> 会安装自启动的后台服务（Linux 用 systemd，macOS 用 launchd），监听 <code>127.0.0.1:30141</code>。之后用 <code>install.sh update</code> 一键更新并重启。</p>
           <div class="cmd"><code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
         </article>
         <article class="step reveal">
@@ -266,8 +266,8 @@
         </article>
       </div>
       <p class="req">
-        <span lang="en">Host: Linux · Node.js 22.19+ · npm · Git, plus at least one logged-in agent (<code>omp</code>, <code>pi</code>, <code>claude</code>, <code>codex</code>). The installer checks these but never installs runtimes.</span>
-        <span lang="zh-CN">主机要求：Linux · Node.js 22.19+ · npm · Git，以及至少一个已登录的 Agent（<code>omp</code>、<code>pi</code>、<code>claude</code>、<code>codex</code>）。安装脚本只检查，不会替你安装运行时。</span>
+        <span lang="en">Host: Linux or macOS · Node.js 22.19+ · npm · Git, plus at least one logged-in agent (<code>omp</code>, <code>pi</code>, <code>claude</code>, <code>codex</code>). The installer checks these but never installs runtimes.</span>
+        <span lang="zh-CN">主机要求：Linux 或 macOS · Node.js 22.19+ · npm · Git，以及至少一个已登录的 Agent（<code>omp</code>、<code>pi</code>、<code>claude</code>、<code>codex</code>）。安装脚本只检查，不会替你安装运行时。</span>
       </p>
     </div>
   </section>
