@@ -1,5 +1,6 @@
 import { spawn, type IPty } from "@lydell/node-pty";
 import { TERMINAL_MAX_INPUT, isTerminalId, isTerminalSize, type TerminalEvent, type TerminalInfo, type TerminalSize } from "./terminal-contract";
+import { defaultTerminalLaunch, type TerminalLaunchPlan } from "./terminal-shells";
 
 const REPLAY_LIMIT = 256 * 1024;
 const DETACHED_TIMEOUT = 30 * 60_000;
@@ -7,19 +8,21 @@ const MAX_TERMINALS = 8;
 type RecordedEvent = Extract<TerminalEvent, { seq: number }>;
 type Listener = (event: TerminalEvent) => void;
 type Pty = Pick<IPty, "pid" | "write" | "resize" | "kill" | "onData" | "onExit">;
-type SpawnShell = (cwd: string, size: TerminalSize) => Pty;
+type SpawnShell = (cwd: string, size: TerminalSize, launch: TerminalLaunchPlan) => Pty;
 
 export class TerminalError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-function spawnShell(cwd: string, size: TerminalSize): Pty {
+function spawnShell(cwd: string, size: TerminalSize, launch: TerminalLaunchPlan): Pty {
   // Shells run as the web service user, NOT in a sandbox. Do not expose the
   // web password or agent session metadata to programs launched here.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) =>
     value !== undefined && !key.startsWith("PI_WEB_") && !key.startsWith("PI_SESSION_") && !key.startsWith("OMP_WEB_AUTH")
   )) as Record<string, string>;
-  return spawn(process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash", [], {
+  // Programs that start a subshell (vim :sh, tmux) follow the chosen shell.
+  if (process.platform !== "win32") env.SHELL = launch.shell;
+  return spawn(launch.shell, launch.args, {
     name: "xterm-256color", cwd, cols: size.cols, rows: size.rows,
     env: { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" },
   });
@@ -39,6 +42,7 @@ export class TerminalSession {
     readonly id: string,
     readonly cwd: string,
     private pty: Pty,
+    private launch: TerminalLaunchPlan,
     private expire: () => void,
     private detachedTimeout: number,
   ) {
@@ -59,7 +63,7 @@ export class TerminalSession {
   }
 
   get info(): TerminalInfo {
-    return { id: this.id, cwd: this.cwd, pid: this.pty.pid, alive: this.alive };
+    return { id: this.id, cwd: this.cwd, pid: this.pty.pid, alive: this.alive, shell: this.launch.shell, login: this.launch.login };
   }
 
   private armExpiry() {
@@ -132,7 +136,8 @@ export class TerminalRegistry {
   private sessions = new Map<string, TerminalSession>();
   constructor(private spawnPty: SpawnShell = spawnShell, private detachedTimeout = DETACHED_TIMEOUT) {}
 
-  open(id: string, cwd: string, size: TerminalSize): TerminalInfo {
+  /** `launch` is resolved only when a new shell starts; reattaching keeps the original shell. */
+  open(id: string, cwd: string, size: TerminalSize, launch: () => TerminalLaunchPlan = defaultTerminalLaunch): TerminalInfo {
     if (!isTerminalId(id) || !isTerminalSize(size)) throw new TerminalError("Invalid terminal request", 400);
     const existing = this.sessions.get(id);
     if (existing) {
@@ -141,7 +146,8 @@ export class TerminalRegistry {
       return existing.info;
     }
     if (this.sessions.size >= MAX_TERMINALS) throw new TerminalError("Terminal limit reached (8). Terminate an unused terminal first.", 429);
-    const terminal = new TerminalSession(id, cwd, this.spawnPty(cwd, size), () => this.close(id), this.detachedTimeout);
+    const plan = launch();
+    const terminal = new TerminalSession(id, cwd, this.spawnPty(cwd, size, plan), plan, () => this.close(id), this.detachedTimeout);
     this.sessions.set(id, terminal);
     return terminal.info;
   }

@@ -4,17 +4,24 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { useI18n } from "@/hooks/useI18n";
-import { TERMINAL_MAX_INPUT, type TerminalEvent } from "@/lib/terminal-contract";
+import { TERMINAL_MAX_INPUT, type TerminalEvent, type TerminalInfo, type TerminalLaunch } from "@/lib/terminal-contract";
 import type { TerminalStatus } from "./TerminalPanel";
 import styles from "./TerminalPanel.module.css";
 
-type Props = { id: string; cwd: string; onStatus: (status: TerminalStatus) => void };
+type Props = { id: string; cwd: string; launch: TerminalLaunch; onStatus: (status: TerminalStatus) => void };
 
-export default function TerminalViewport({ id, cwd, onStatus }: Props) {
+function shellLabel(terminal: TerminalInfo): string {
+  return `${terminal.shell.split(/[\\/]/).pop()}${terminal.login ? " -l" : ""}`;
+}
+
+export default function TerminalViewport({ id, cwd, launch, onStatus }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
   const translate = useRef(t);
   translate.current = t;
+  // Read at creation only: changing the preference must not restart this shell.
+  const launchRef = useRef(launch);
+  launchRef.current = launch;
 
   useEffect(() => {
     const host = container.current;
@@ -100,7 +107,7 @@ export default function TerminalViewport({ id, cwd, onStatus }: Props) {
     });
     observer.observe(host);
 
-    void post("/api/terminal", { id, cwd, cols: terminal.cols, rows: terminal.rows }).then(() => {
+    void post("/api/terminal", { ...launchRef.current, id, cwd, cols: terminal.cols, rows: terminal.rows }).then(() => {
       if (disposed) return;
       source = new EventSource(`/api/terminal/${id}/events`);
       source.onmessage = (message) => {
@@ -133,7 +140,11 @@ export default function TerminalViewport({ id, cwd, onStatus }: Props) {
               if (disposed || exited || epoch !== inputEpoch) return;
               connected = event.terminal.alive;
               terminal.options.disableStdin = !connected;
-              onStatus({ state: connected ? "connected" : "exited", detail: replayTruncated ? translate.current("terminal.replayTruncated") : undefined });
+              onStatus({
+                state: connected ? "connected" : "exited",
+                detail: replayTruncated ? translate.current("terminal.replayTruncated") : undefined,
+                shell: shellLabel(event.terminal),
+              });
               if (connected) {
                 fitTerminal();
                 enqueue({ type: "resize", cols: terminal.cols, rows: terminal.rows });

@@ -8,6 +8,23 @@ export interface TerminalInfo {
   cwd: string;
   pid: number;
   alive: boolean;
+  /** Executable actually started, and whether it runs as a login shell. */
+  shell: string;
+  login: boolean;
+}
+
+/** Browser preference for new terminals. No `shell` means the server default. */
+export interface TerminalLaunch { shell?: string; login?: boolean }
+export interface TerminalShellOption {
+  path: string;
+  name: string;
+  /** Whether the shell accepts `-l` (start as a login shell, like SSH). */
+  login: boolean;
+}
+export interface TerminalShellCatalog {
+  shells: TerminalShellOption[];
+  /** The shell used when the browser leaves the choice on automatic. */
+  defaultShell: TerminalShellOption;
 }
 export type TerminalEvent =
   | { type: "output"; seq: number; data: string }

@@ -41,7 +41,7 @@
     "start:lan": "next start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",
     "passwd": "node bin/omp-web.js passwd",
-    "test:terminal": "node --test lib/terminal-manager.test.mjs lib/terminal-http.test.mjs"
+    "test:terminal": "node --test lib/terminal-manager.test.mjs lib/terminal-http.test.mjs lib/terminal-shells.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.318",

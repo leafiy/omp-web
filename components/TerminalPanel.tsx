@@ -3,17 +3,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useI18n } from "@/hooks/useI18n";
-import { isTerminalId } from "@/lib/terminal-contract";
+import { isTerminalId, type TerminalLaunch, type TerminalShellCatalog } from "@/lib/terminal-contract";
 import styles from "./TerminalPanel.module.css";
 
 const TerminalViewport = dynamic(() => import("./TerminalViewport"), { ssr: false });
-export type TerminalStatus = { state: "connecting" | "connected" | "disconnected" | "exited" | "error"; detail?: string };
+export type TerminalStatus = { state: "connecting" | "connected" | "disconnected" | "exited" | "error"; detail?: string; shell?: string };
 type TerminalTab = { id: string; index: number };
 
 const MAX_TABS = 8;
 // Inactive tabs are detached; keep their shells from hitting the server's
 // 30-minute detached expiry while this page stays open.
 const KEEPALIVE_MS = 5 * 60_000;
+// Per-browser shell preference; the server validates it against /etc/shells.
+const LAUNCH_KEY = "omp-terminal-shell";
+
+function readStoredLaunch(): TerminalLaunch {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAUNCH_KEY) || "null");
+    return {
+      shell: typeof parsed?.shell === "string" && parsed.shell.startsWith("/") ? parsed.shell : undefined,
+      login: parsed?.login === true,
+    };
+  } catch { return {}; }
+}
+
+function baseName(file: string): string {
+  return file.split(/[\\/]/).pop() || file;
+}
 
 function newId(): string {
   // randomUUID requires HTTPS; getRandomValues also works on trusted LAN HTTP.
@@ -51,6 +67,10 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
   const [height, setHeight] = useState(280);
   const [statuses, setStatuses] = useState<Record<string, TerminalStatus>>({});
   const [stopping, setStopping] = useState<string | null>(null);
+  const [launch, setLaunch] = useState<TerminalLaunch>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [catalog, setCatalog] = useState<TerminalShellCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const tabsKey = `omp-terminal-tabs:${cwd}`;
   const legacyKey = `omp-terminal:${cwd}`;
@@ -61,7 +81,22 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
       const stored = Number(localStorage.getItem("omp-terminal-height"));
       if (stored >= 160 && stored <= 700) setHeight(stored);
     } catch { /* storage may be disabled */ }
+    setLaunch(readStoredLaunch());
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen || catalog) return;
+    let cancelled = false;
+    fetch("/api/terminal", { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `Terminal HTTP ${response.status}`);
+        return result as TerminalShellCatalog;
+      })
+      .then((result) => { if (!cancelled) { setCatalog(result); setCatalogError(null); } })
+      .catch((error) => { if (!cancelled) setCatalogError(error instanceof Error ? error.message : String(error)); });
+    return () => { cancelled = true; };
+  }, [settingsOpen, catalog]);
 
   useEffect(() => {
     if (!cwd || !tabs.length) return;
@@ -95,6 +130,11 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
     try { localStorage.setItem("omp-terminal-height", String(next)); } catch { /* optional */ }
   }
 
+  function updateLaunch(next: TerminalLaunch) {
+    setLaunch(next);
+    try { localStorage.setItem(LAUNCH_KEY, JSON.stringify(next)); } catch { /* optional */ }
+  }
+
   function select(id: string) {
     setStatuses((current) => ({ ...current, [id]: { state: "connecting" } }));
     setActiveId(id);
@@ -115,6 +155,12 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
       setTabs(stored.tabs);
       select(stored.active);
     } else addTab([]);
+  }
+
+  // Keeps any terminals restored from this browser tab, then adds one using
+  // the current shell preference.
+  function newTerminal() {
+    addTab(tabs.length ? tabs : readStoredTabs(tabsKey, legacyKey).tabs);
   }
 
   // Closing is immediate: no confirmation, per the tab's × button.
@@ -141,8 +187,12 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
   }
 
   const hasTabs = tabs.length > 0 && activeId !== null;
+  const listedShell = launch.shell ? catalog?.shells.find((shell) => shell.path === launch.shell) : undefined;
+  const selectedShell = launch.shell ? listedShell : catalog?.defaultShell;
+  const loginSupported = selectedShell?.login ?? false;
+  const shellBadge = launch.shell ? `${baseName(launch.shell)}${launch.login ? " -l" : ""}` : launch.login ? "-l" : "";
   return (
-    <section className={styles.panel} style={{ height: open ? height : 34, maxHeight: open ? "70%" : undefined }} aria-label={t("terminal.title")}>
+    <section className={styles.panel} style={{ height: open ? height : settingsOpen ? undefined : 34, maxHeight: open ? "70%" : undefined }} aria-label={t("terminal.title")}>
       {open && <div
         className={styles.resize}
         role="separator" aria-orientation="horizontal" aria-label={t("terminal.resize")}
@@ -186,18 +236,45 @@ export function TerminalPanel({ cwd }: { cwd: string | null }) {
           {tabs.length < MAX_TABS && <button type="button" className={styles.tabAdd} onClick={() => addTab()}
             title={t("terminal.newTab")} aria-label={t("terminal.newTab")}>+</button>}
         </div>}
+        <button type="button" className={styles.settingsToggle} aria-expanded={settingsOpen} aria-controls="terminal-shell-settings"
+          title={t("terminal.shellSettings")} aria-label={t("terminal.shellSettings")} onClick={() => setSettingsOpen(!settingsOpen)}>
+          <span aria-hidden="true">⚙</span>{shellBadge && <span className={styles.shellBadge}>{shellBadge}</span>}
+        </button>
         <span className={styles.cwd} title={`${t("terminal.initialDirectory")}: ${cwd ?? ""}`}>{cwd}</span>
         {hasTabs && <>
-          <span className={styles.status} role="status" title={status.detail}>{t(`terminal.${status.state}`)}</span>
+          <span className={styles.status} role="status" title={status.detail}>
+            {t(`terminal.${status.state}`)}{status.state === "connected" && status.shell ? ` · ${status.shell}` : ""}
+          </span>
           {open && activeId && (status.state === "error" || status.state === "disconnected") && <button type="button" onClick={() => {
             setStatuses((current) => ({ ...current, [activeId]: { state: "connecting" } }));
             setGeneration((value) => value + 1);
           }}>{t("terminal.reconnect")}</button>}
         </>}
       </div>
+      {settingsOpen && <div id="terminal-shell-settings" className={styles.settings}>
+        <label className={styles.setting}>
+          <span>{t("terminal.shell")}</span>
+          <select value={launch.shell ?? ""} disabled={!catalog} onChange={(e) => {
+            const shell = e.target.value || undefined;
+            const option = shell ? catalog?.shells.find((item) => item.path === shell) : catalog?.defaultShell;
+            updateLaunch({ shell, login: Boolean(launch.login && option?.login) });
+          }}>
+            <option value="">{catalog ? t("terminal.shellAuto", { name: catalog.defaultShell.name }) : t("terminal.shellLoading")}</option>
+            {launch.shell && catalog && !listedShell && <option value={launch.shell}>{t("terminal.shellUnavailable", { path: launch.shell })}</option>}
+            {catalog?.shells.map((shell) => <option key={shell.path} value={shell.path}>{shell.name} — {shell.path}</option>)}
+          </select>
+        </label>
+        <label className={styles.setting} title={t("terminal.loginShellHint")}>
+          <input type="checkbox" checked={Boolean(launch.login) && loginSupported} disabled={!loginSupported}
+            onChange={(e) => updateLaunch({ ...launch, login: e.target.checked })} />
+          <span>{t("terminal.loginShell")}</span>
+        </label>
+        <span className={styles.settingsHint} role={catalogError ? "alert" : undefined}>{catalogError ?? t("terminal.shellHint")}</span>
+        <button type="button" disabled={!cwd || tabs.length >= MAX_TABS} onClick={newTerminal}>{t("terminal.newWithShell")}</button>
+      </div>}
       {activeId && tabs.length > 0 && cwd && <div id="workspace-terminal" className={styles.body} style={{ display: open ? "flex" : "none" }}>
         {status.detail && <div className={styles.notice}>{status.detail}</div>}
-        <TerminalViewport key={`${activeId}:${generation}`} id={activeId} cwd={cwd} onStatus={onStatus} />
+        <TerminalViewport key={`${activeId}:${generation}`} id={activeId} cwd={cwd} launch={launch} onStatus={onStatus} />
       </div>}
     </section>
   );

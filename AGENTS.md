@@ -83,7 +83,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - `/api/files` is allow-list based, not unrestricted file browsing. Roots derive from session cwd, resolved main repo roots, and explicitly registered directories. New-session/cwd/worktree operations update `allowFileRoot()`.
 - `lib/worktree.ts` groups linked worktrees by main `projectRoot`. Dirty removal returns 409 so the user can decide whether to force it.
 - Session trees are projected to shallow UI structures in the session route; avoid recursive operations over arbitrarily deep histories.
-- The embedded terminal uses its own registry/stream endpoints and can run independently of chat. Its security switches must not disable agent RPC accidentally.
+- The embedded terminal uses its own registry/stream endpoints and can run independently of chat. Its security switches must not disable agent RPC accidentally. A browser shell preference is only a request: `lib/terminal-shells.ts` spawns an `/etc/shells` entry or its automatic default, resolved once at creation; reattaching keeps the running shell.
 - Preserve local upload work in `ChatInput`, `useDragDrop`, `file-upload-limits` and the files route. Image attachments and persisted ordinary files have different limits/handling.
 - The Next proxy bypasses `/events`; SSE routes must enforce their own authentication/origin checks before exposing data or starting processes.
 - Web login is mandatory (no anonymous mode, no Basic Auth prompt). `bin/web-credentials.js` owns the credentials file and signed session tokens; `lib/web-auth.ts` checks the `omp_web_session` cookie. Guards return `webAuthRequired()` (401 + `X-OMP-Web-Auth`) so the browser redirects to `/login`; never send `WWW-Authenticate`.

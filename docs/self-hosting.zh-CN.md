@@ -36,7 +36,7 @@
 | `PI_WEB_PASSWORD_FILE` / `PI_WEB_PASSWORD` | 旧方式：凭据文件不存在时作为只读后备，用户名为 `OMP_WEB_USERNAME` 或 `pi`。文件无效时失败关闭 |
 | `PI_WEB_ALLOWED_HOSTS` | 允许的额外访问主机名，逗号分隔 |
 | `OMP_WEB_TERMINAL=0` | 禁用所有终端 API；默认启用 |
-| `SHELL` | Linux/macOS 下使用的 Shell 绝对路径，未设置时使用 `/bin/bash` |
+| `SHELL` | 终端「自动」选项使用的 Shell 绝对路径（Linux/macOS）。未设置或不可用时依次使用账户登录 Shell（`/etc/passwd`）、`/bin/bash`。网页终端工具栏的 ⚙ 可为新终端选择 `/etc/shells` 中的其他 Shell，并可勾选以登录 Shell（`-l`）启动；选择保存在浏览器本地，服务端只接受 `/etc/shells` 中列出的 Shell |
 
 所有终端端点，包括 `/events`，都独立校验 Host、跨站请求和网页登录会话（HttpOnly Cookie）。未登录一律拒绝，不存在免密模式。终端只使用现有同源 HTTP 端口，通过 SSE 接收输出、POST 发送输入，不需要额外端口或 WebSocket 代理。
 
