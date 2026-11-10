@@ -30,6 +30,8 @@ PLATFORM="none"
 LAUNCHD_LABEL="io.github.leafiy.omp-web"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
 LAUNCHD_DOMAIN="gui/$(id -u)"
+HOLD_DROPIN="/run/systemd/system/omp-web.service.d/50-omp-web-install-hold.conf"
+HOLD_ACTIVE="no"
 
 main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
@@ -102,16 +104,21 @@ main() {
       fail "This shell runs inside omp-web (its terminal or one of its agents). Stopping the service would kill this run halfway. Run it from a separate terminal, e.g. over SSH."
     fi
     if [ "$mode" = "update" ] || confirm "$(service_name) is running. Stop it now to rebuild? Active chats and terminals will be interrupted." "$tty"; then
-      say "Stopping $(service_name)"
-      service_stop
       was_active="yes"
     else
       fail "Stopped. Rebuild later after stopping $(service_name)."
     fi
   fi
+  # Other units can start the service by themselves (a Wants= dependency, a
+  # timer, a restart loop). Keep it stopped until the new build is complete.
+  if service_installed; then hold_service; fi
+  if [ "$was_active" = "yes" ]; then
+    say "Stopping $(service_name)"
+    service_stop
+  fi
 
   local stopped_note=""
-  if [ "$was_active" = "yes" ]; then stopped_note=" $(service_name) is stopped; fix the problem and run this again."; fi
+  if [ "$was_active" = "yes" ] && [ "$HOLD_ACTIVE" = "no" ]; then stopped_note=" $(service_name) is stopped; fix the problem and run this again."; fi
   say "Installing dependencies"
   npm ci --include=dev --no-audit --no-fund || fail "npm ci failed.$stopped_note"
   say "Building"
@@ -121,6 +128,7 @@ main() {
   if [ "$mode" != "update" ] || ! has_login; then
     setup_login "$tty"
   fi
+  release_hold
 
   if [ "$service" = "ask" ] && [ "$mode" != "update" ] && [ "$PLATFORM" != "none" ] && [ -n "$tty" ] && ! service_installed; then
     if confirm "Install a background service that starts omp-web automatically?" "$tty"; then service="yes"; fi
@@ -235,9 +243,60 @@ inside_service() {
   return 1
 }
 
+# Makes systemd skip every start of omp-web.service while this file exists,
+# including starts pulled in by other units (which would otherwise cancel our
+# stop job, or start the server on a half-written build). It lives in /run, so
+# a reboot clears a hold left behind by an interrupted run.
+hold_service() {
+  [ "$PLATFORM" = "systemd" ] || return 0
+  local tmp
+  tmp="$(mktemp)"
+  cat >"$tmp" <<HOLD
+# Written by omp-web scripts/install.sh while it rebuilds; removed when it
+# finishes. While this file exists, systemd skips every start of the service.
+[Unit]
+ConditionPathExists=!$HOLD_DROPIN
+HOLD
+  run_root install -d -m 0755 "$(dirname "$HOLD_DROPIN")"
+  run_root install -m 0644 "$tmp" "$HOLD_DROPIN"
+  rm -f "$tmp"
+  HOLD_ACTIVE="yes"
+  run_root systemctl daemon-reload
+}
+
+release_hold() {
+  [ "$HOLD_ACTIVE" = "yes" ] || return 0
+  run_root rm -f "$HOLD_DROPIN"
+  HOLD_ACTIVE="no"
+  run_root systemctl daemon-reload
+}
+
+on_exit() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ "$HOLD_ACTIVE" = "yes" ]; then
+    printf '\033[1;33mnote:\033[0m omp-web.service is held stopped so nothing starts it on an incomplete build.\n' >&2
+    printf '      Fix the problem and run this again, or release the hold:\n' >&2
+    printf '      sudo rm -f %s && sudo systemctl daemon-reload\n' "$HOLD_DROPIN" >&2
+  fi
+}
+trap on_exit EXIT
+
 service_stop() {
   case "$PLATFORM" in
-    systemd) run_root systemctl stop omp-web.service ;;
+    systemd)
+      # A start request from another unit can cancel the stop job ("Job for
+      # omp-web.service canceled"); under the hold that start is skipped, so
+      # wait for the unit itself to settle instead of trusting the job result.
+      run_root systemctl stop omp-web.service || true
+      local waited=0 state
+      while :; do
+        state="$(systemctl show omp-web.service --property=ActiveState --value 2>/dev/null || true)"
+        case "$state" in inactive|failed) break ;; esac
+        waited=$((waited + 1))
+        [ "$waited" -le 300 ] || fail "omp-web.service did not stop within 300 seconds (state: ${state:-unknown})."
+        sleep 1
+      done
+      ;;
     launchd)
       launchctl bootout "$LAUNCHD_DOMAIN/$LAUNCHD_LABEL" 2>/dev/null || true
       # bootout can return while the process is still shutting down.

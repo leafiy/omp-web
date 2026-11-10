@@ -37,7 +37,7 @@ else
 fi
 ```
 
-不需要保留旧构建时，`bash scripts/install.sh update` 一步完成拉取、停服、`npm ci`、构建和启动（Linux 用 systemd，macOS 用 launchd）；它不备份 `.next`，构建失败时服务保持停止。
+不需要保留旧构建时，`bash scripts/install.sh update` 一步完成拉取、停服、`npm ci`、构建和启动（Linux 用 systemd，macOS 用 launchd）；它不备份 `.next`。重建期间脚本在 `/run/systemd/system/omp-web.service.d/` 放一个临时 drop-in，让 systemd 跳过所有启动请求（例如 `omp-web-tunnel.service` 的 `Wants=` 重启时顺带拉起），完成后删除；构建失败时保留它，服务保持停止，重启后 `/run` 清空也会解除。
 
 检查服务、认证首页、静态资源及公网 HTTPS。若新构建健康检查失败，停止服务后在**同一目录**恢复备份 `.next` 再启动；不恢复外置运行副本。源码改动也应通过 Git 在本目录审查和处理，不用另一个 checkout 替代当前工作区。
 
