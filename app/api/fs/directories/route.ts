@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { readdirSync, statSync, mkdirSync, existsSync } from "fs";
+import { readdirSync, statSync, mkdirSync, existsSync, type Stats } from "fs";
 import { homedir, platform } from "os";
 import { join, dirname, isAbsolute, resolve } from "path";
+import { folderNameError } from "@/lib/directory-browser";
 import { allowFileRoot } from "@/lib/file-access";
 
 function getWindowsDrives(): string[] {
@@ -85,23 +86,37 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/fs/directories — create a new folder
+// POST /api/fs/directories — create one new folder directly inside an existing directory
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { parentPath?: string; folderName?: string };
-    const parentPath = normalizePath(body.parentPath);
-    const folderName = body.folderName?.trim();
+    const body = (await req.json()) as { parentPath?: unknown; folderName?: unknown };
+    const parentPath = normalizePath(typeof body.parentPath === "string" ? body.parentPath : null);
+    const folderName = typeof body.folderName === "string" ? body.folderName.trim() : "";
 
-    if (!folderName) {
-      return NextResponse.json({ error: "Folder name is required" }, { status: 400 });
+    const nameError = folderNameError(folderName);
+    if (nameError) {
+      return NextResponse.json({ error: nameError }, { status: 400 });
+    }
+
+    let parentStat: Stats;
+    try {
+      parentStat = statSync(parentPath);
+    } catch {
+      return NextResponse.json({ error: `Directory does not exist: ${parentPath}` }, { status: 404 });
+    }
+    if (!parentStat.isDirectory()) {
+      return NextResponse.json({ error: `Path is not a directory: ${parentPath}` }, { status: 400 });
     }
 
     const newPath = join(parentPath, folderName);
-    if (existsSync(newPath)) {
-      return NextResponse.json({ error: `Folder already exists: ${newPath}` }, { status: 409 });
+    try {
+      mkdirSync(newPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        return NextResponse.json({ error: `Folder already exists: ${newPath}` }, { status: 409 });
+      }
+      throw error;
     }
-
-    mkdirSync(newPath, { recursive: true });
     allowFileRoot(newPath);
 
     return NextResponse.json({ success: true, path: newPath });

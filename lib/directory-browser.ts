@@ -44,6 +44,16 @@ export function normalizeDirectory(directory: string): string {
   return path.resolve(directory);
 }
 
+/** Why `name` cannot be created as one direct child folder, or null when it can. */
+export function folderNameError(name: string): string | null {
+  if (!name) return "Folder name is required";
+  if (name.length > 255) return "Folder name is too long";
+  if (name === "." || name === "..") return "Folder name cannot be . or ..";
+  if (/[\\/]/.test(name)) return "Folder name cannot contain / or \\";
+  if (/[\x00-\x1f\x7f]/.test(name)) return "Folder name cannot contain control characters";
+  return null;
+}
+
 export function getParentDirectory(directory: string): string | null {
   const pathApi = /^[a-zA-Z]:[\\/]/.test(directory) || directory.startsWith("\\\\")
     ? path.win32

@@ -48,6 +48,30 @@ export function projectDisplayName(root: string): string {
   return trimmed.split(/[\\/]/).pop() || root;
 }
 
+/**
+ * Folder in which "New project" creates its directory: the parent holding the
+ * most recent projects (ties go to the more recent one), else `fallback`.
+ * Filesystem roots and the temporary default directory are never suggested.
+ */
+export function newProjectParent(projects: readonly string[], fallback: string): string {
+  const counts = new Map<string, number>();
+  for (const project of projects) {
+    const parent = projectParentPath(project);
+    if (!parent || /^(?:[\\/]|[a-zA-Z]:[\\/]?)$/.test(parent)) continue;
+    if (parent === DEFAULT_NEW_SESSION_CWD || parent.startsWith(`${DEFAULT_NEW_SESSION_CWD}/`)) continue;
+    counts.set(parent, (counts.get(parent) ?? 0) + 1);
+  }
+  let best = fallback;
+  let bestCount = 0;
+  for (const [parent, count] of counts) {
+    if (count > bestCount) {
+      best = parent;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 /** Parent directory of a project root, used to tell same-named projects apart. */
 export function projectParentPath(root: string): string {
   const trimmed = root.replace(/[\\/]+$/, "");

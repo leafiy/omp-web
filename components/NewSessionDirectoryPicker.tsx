@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
-import { DEFAULT_NEW_SESSION_CWD, getRecentProjects, projectDisplayName } from "@/lib/session-projects";
+import { DEFAULT_NEW_SESSION_CWD, getRecentProjects, newProjectParent, projectDisplayName } from "@/lib/session-projects";
 import type { SessionInfo } from "@/lib/types";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FolderPickerModal } from "./FolderPickerModal";
@@ -123,6 +123,7 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const worktreeInputRef = useRef<HTMLInputElement>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [position, setPosition] = useState<CSSProperties | null>(null);
@@ -139,6 +140,8 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
   const [newWorktreeOpen, setNewWorktreeOpen] = useState(false);
   const [newWorktreeBranch, setNewWorktreeBranch] = useState("");
   const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
 
   const isDefault = cwd === DEFAULT_NEW_SESSION_CWD;
 
@@ -211,6 +214,8 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
     setNewWorktreeOpen(false);
     setNewWorktreeBranch("");
     setConfirmRemovePath(null);
+    setNewProjectOpen(false);
+    setNewProjectName("");
   }, []);
 
   const updatePosition = useCallback(() => {
@@ -246,7 +251,8 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
       closeMenu();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      // Inline inputs consume Escape to close themselves, not the whole menu.
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
       closeMenu();
       buttonRef.current?.focus();
@@ -352,6 +358,35 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
   const name = projectDisplayName(cwd);
   const query = filter.trim().toLowerCase();
   const recentProjects = (projects ?? []).filter((project) => project !== DEFAULT_NEW_SESSION_CWD);
+  // New projects go next to the user's existing ones (home when there are none).
+  const projectParent = projects === null ? null : newProjectParent(recentProjects, homeDir) || null;
+  const projectNameValue = newProjectName.trim();
+  const projectSeparator = projectParent && projectParent.includes("\\") && !projectParent.includes("/") ? "\\" : "/";
+  const projectTarget = projectParent
+    ? `${displayPath(projectParent, homeDir).replace(/[\\/]+$/, "")}${projectSeparator}${projectNameValue}`
+    : null;
+  const canCreateProject = Boolean(projectParent && projectNameValue) && !busy;
+
+  const createProject = async () => {
+    if (!canCreateProject || !projectParent) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/fs/directories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentPath: projectParent, folderName: projectNameValue }),
+      });
+      const data = await response.json().catch(() => ({})) as { path?: string; error?: string };
+      if (!response.ok || data.error || !data.path) throw new Error(data.error ?? `HTTP ${response.status}`);
+      closeMenu();
+      onChange(data.path);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const showFilter = recentProjects.length > PROJECT_FILTER_THRESHOLD;
   const visibleProjects = query
     ? recentProjects.filter((project) => project.toLowerCase().includes(query))
@@ -517,6 +552,69 @@ export function NewSessionDirectoryPicker({ cwd, onChange }: Props) {
         )}
 
         <div style={{ height: 1, margin: "6px 0 2px", background: "var(--border)" }} />
+        {newProjectOpen ? (
+          <div style={{ padding: "6px 12px" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                ref={projectInputRef}
+                value={newProjectName}
+                onChange={(event) => {
+                  setNewProjectName(event.target.value);
+                  setError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void createProject();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setNewProjectOpen(false);
+                    setNewProjectName("");
+                  }
+                }}
+                placeholder={t("newSession.projectName")}
+                aria-label={t("newSession.projectName")}
+                autoComplete="off"
+                spellCheck={false}
+                style={{ flex: 1, minWidth: 0, padding: "4px 8px", fontSize: 12, fontFamily: "var(--font-mono)", border: "1px solid var(--accent)", borderRadius: 5, outline: "none", background: "var(--bg)", color: "var(--text)" }}
+              />
+              <button
+                type="button"
+                disabled={!canCreateProject}
+                onClick={() => void createProject()}
+                style={{ padding: "4px 10px", border: "none", borderRadius: 5, background: "var(--accent)", color: "#fff", fontSize: 11.5, fontWeight: 600, cursor: canCreateProject ? "pointer" : "not-allowed", opacity: canCreateProject ? 1 : 0.65, flexShrink: 0 }}
+              >
+                {busy ? t("sidebar.creating") : t("sidebar.create")}
+              </button>
+            </div>
+            {projectTarget ? (
+              <PathText
+                text={t("newSession.projectLocation", { path: projectTarget })}
+                style={{ display: "block", marginTop: 4, fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-dim)" }}
+              />
+            ) : (
+              <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-dim)" }}>{t("sidebar.loading")}</div>
+            )}
+          </div>
+        ) : (
+          <OptionButton
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              setNewProjectOpen(true);
+              setTimeout(() => projectInputRef.current?.focus(), 0);
+            }}
+          >
+            <span style={{ width: 11, flexShrink: 0 }} />
+            <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+              <line x1="5" y1="1" x2="5" y2="9" />
+              <line x1="1" y1="5" x2="9" y2="5" />
+            </svg>
+            <span>{t("newSession.newProject")}</span>
+          </OptionButton>
+        )}
         <OptionButton
           disabled={busy}
           onClick={() => {
