@@ -48,7 +48,11 @@ export class FollowUpSession implements FollowUpNativeSession {
   private destroyed?: () => void;
   private detach: () => void;
   private titleInput?: string;
+  /** Latest `/command args` sent before any plain prompt; a fallback naming source. */
+  private titleCommand?: string;
   private titleReply = "";
+  /** The reply came from a model call, not a local command's printed output. */
+  private titleReplyFromModel = false;
   private titleAttempted = false;
   private titleSuppressed = false;
   private titleController?: AbortController;
@@ -63,6 +67,7 @@ export class FollowUpSession implements FollowUpNativeSession {
           this.titleReply = message.stopReason === "error" || message.stopReason === "aborted" ? ""
             : (typeof message.content === "string" ? message.content
               : Array.isArray(message.content) ? message.content.map(object).filter(block => block.type === "text" && typeof block.text === "string").map(block => block.text).join("\n") : "").slice(0, 3000);
+          this.titleReplyFromModel = Boolean(this.titleReply) && typeof message.usage === "object" && message.usage !== null;
         }
       }
       if (event.type === "session_info_update" || event.type === "session_info_changed") this.suppressTitle();
@@ -135,7 +140,19 @@ export class FollowUpSession implements FollowUpNativeSession {
   private captureTitleInput(message: unknown) {
     if (!this.autoTitle || this.titleInput || this.titleSuppressed || typeof message !== "string") return;
     const text = message.trim();
-    if (text && !text.startsWith("/") && !text.startsWith("!")) this.titleInput = text.slice(0, 3000);
+    if (!text || text.startsWith("!")) return;
+    if (!text.startsWith("/")) { this.titleInput = text.slice(0, 3000); return; }
+    // A skill/command with arguments can be the whole first turn, and Claude Code
+    // writes no ai-title for it. Pair it only with this turn's model reply, so a
+    // local command such as `/model x` cannot name the session.
+    if (/^\/\S+\s+\S/.test(text)) {
+      this.titleCommand = text.slice(0, 3000);
+      this.titleReply = "";
+      this.titleReplyFromModel = false;
+    }
+  }
+  private titleSource(): string | undefined {
+    return this.titleInput ?? (this.titleReplyFromModel ? this.titleCommand : undefined);
   }
   private suppressTitle() {
     this.titleSuppressed = true;
@@ -143,7 +160,8 @@ export class FollowUpSession implements FollowUpNativeSession {
     this.titleController?.abort();
   }
   private maybeNameSession() {
-    if (!this.autoTitle || this.titleAttempted || this.titleSuppressed || !this.titleInput || !this.titleReply
+    const input = this.titleSource();
+    if (!this.autoTitle || this.titleAttempted || this.titleSuppressed || !input || !this.titleReply
       || !this.isAlive() || this.native.isRunning() || this.manualRequests || this.pending.length) return;
     this.titleAttempted = true;
     const controller = new AbortController();
@@ -151,7 +169,7 @@ export class FollowUpSession implements FollowUpNativeSession {
     const timeout = setTimeout(() => controller.abort(new Error("Session title generation timed out")), 90_000);
     timeout.unref();
     this.changed();
-    this.titleWork = this.nameSession(controller).catch(() => {
+    this.titleWork = this.nameSession(controller, input).catch(() => {
       if (this.isAlive() && !this.titleSuppressed) this.emit({
         type: "extension_ui_request", id: randomUUID(), method: "notify", notifyType: "warning",
         message: "Automatic session naming failed. You can set a title with Rename.",
@@ -160,16 +178,18 @@ export class FollowUpSession implements FollowUpNativeSession {
       clearTimeout(timeout);
       this.titleController = undefined;
       this.titleInput = undefined;
+      this.titleCommand = undefined;
       this.titleReply = "";
+      this.titleReplyFromModel = false;
       this.changed();
     });
   }
-  private async nameSession(controller: AbortController) {
+  private async nameSession(controller: AbortController, input: string) {
     const sessionId = this.sessionId;
     const mayWrite = () => !controller.signal.aborted && !this.titleSuppressed && this.isAlive() && this.sessionId === sessionId;
     const before = object(await this.native.send({ type: "get_state" }));
     if (!mayWrite() || before.sessionId !== sessionId || typeof before.sessionName === "string" && before.sessionName.trim()) return;
-    const prompt = buildSessionTitlePrompt(this.titleInput!, this.titleReply);
+    const prompt = buildSessionTitlePrompt(input, this.titleReply);
     const title = parseGeneratedSessionTitle(await this.native.generateSessionTitle(prompt, controller.signal));
     if (!mayWrite()) return;
     const after = object(await this.native.send({ type: "get_state" }));

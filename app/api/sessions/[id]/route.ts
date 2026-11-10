@@ -18,6 +18,7 @@ import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession, startRpcSession, withIdleSessionDeletion, SessionDeletionConflict } from "@/lib/rpc-manager";
 import { engineForSession, supportsSessionDeletion } from "@/lib/engine";
 import { deleteClaudeSession } from "@/lib/claude-code-delete";
+import { forgetContextUsage } from "@/lib/context-usage-cache";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -229,6 +230,7 @@ export async function DELETE(
         const projectionPath = await resolveSessionPath(id);
         if (!projectionPath) return NextResponse.json({ error: "Session not found" }, { status: 404 });
         await deleteClaudeSession(id, projectionPath);
+        forgetContextUsage(id);
         invalidateSessionPathCache(id);
         invalidateSessionListCache();
         return NextResponse.json({ ok: true });
@@ -272,6 +274,7 @@ export async function DELETE(
 
     await getRpcSession(id)?.shutdown();
     unlinkSync(filePath);
+    forgetContextUsage(id);
     invalidateSessionPathCache(id);
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
