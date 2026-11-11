@@ -1895,6 +1895,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           position: "relative",
           marginTop: isMobile ? 4 : 8,
           display: isMobile ? "grid" : "flex",
+          flexWrap: "wrap",
           gridTemplateColumns: isMobile ? "minmax(0, 1fr) auto auto" : undefined,
           alignItems: "center",
           gap: isMobile ? 4 : 6,
@@ -1958,7 +1959,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       borderRadius: 9,
                       color: "var(--text-muted)",
                       cursor: isStreaming ? "not-allowed" : "pointer",
-                      fontSize: 12,
+                      fontSize: 14,
                       opacity: isStreaming ? 0.5 : 1,
                       transition: "background 0.12s, color 0.12s",
                     }}
@@ -2154,6 +2155,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
             <div data-composer-menu style={{
               display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
+              flexWrap: "wrap",
+              minWidth: 0,
               alignItems: "center",
               gap: isMobile ? 1 : 2,
               ...(isMobile ? {
@@ -2164,7 +2167,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 padding: 1,
                 width: "max-content",
                 maxWidth: "100%",
-                flexWrap: "nowrap",
+                flexWrap: "wrap",
                 justifyContent: "flex-end",
                 border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
                 borderRadius: 10,
@@ -2182,15 +2185,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                    aria-label={t(engine === "claude" ? "chat.changeEffortLabel" : "chat.changeReasoningLabel")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
+                    padding: isMobile ? "0 10px" : "10px 14px",
+                    minWidth: 44,
+                    height: 44,
                     background: thinkingDropdownOpen ? "var(--bg-hover)" : "none",
                     border: "none",
                     borderRadius: 9,
                     color: "var(--text-muted)",
                     cursor: isStreaming ? "not-allowed" : "pointer",
-                    fontSize: 12,
+                    fontSize: 14,
                     opacity: isStreaming ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
@@ -2265,15 +2268,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                    aria-label={t("chat.changeToolPreset")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
+                    padding: isMobile ? "0 10px" : "10px 14px",
+                    minWidth: 44,
+                    height: 44,
                     background: toolDropdownOpen ? "var(--bg-hover)" : "none",
                     border: "none",
                     borderRadius: 9,
                     color: "var(--text-muted)",
                     cursor: isStreaming ? "not-allowed" : "pointer",
-                    fontSize: 12,
+                    fontSize: 14,
                     opacity: isStreaming ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
@@ -2340,15 +2343,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   disabled={isStreaming && !isCompacting}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
+                    padding: isMobile ? "0 10px" : "10px 14px",
+                    minWidth: 44,
+                    height: 44,
                     background: isCompacting ? "rgba(239,68,68,0.08)" : "none",
                     border: "none",
                     borderRadius: 9,
                     color: isCompacting ? "#ef4444" : "var(--text-muted)",
                     cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
-                    fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
+                    fontSize: 14, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
@@ -2381,15 +2384,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                  title={t("chat.stopAgent")}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  padding: "8px 14px",
-                  height: 32,
+                  padding: "10px 16px",
+                  height: 44,
                   background: "rgba(239,68,68,0.08)",
                   border: "1px solid rgba(239,68,68,0.3)",
                   borderRadius: 9,
                   color: "#ef4444",
                   cursor: "pointer",
-                  fontSize: 12, fontWeight: 600,
-                  whiteSpace: "nowrap", letterSpacing: "-0.01em",
+                  fontSize: 16, fontWeight: 400,
+                  whiteSpace: "nowrap", letterSpacing: "normal",
                   transition: "background 0.12s",
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.16)"; }}
@@ -2409,8 +2412,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                  aria-label={soundEnabled ? t("chat.disableSound") : t("chat.enableSound")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                  width: isMobile ? 32 : 32,
-                  height: 32,
+                  width: 44,
+                  height: 44,
                   padding: 0,
                   background: "none",
                   border: "none",
@@ -2461,8 +2464,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: 36,
-                  height: 32,
+                  width: 44,
+                  height: 44,
                   padding: 0,
                   marginLeft: 0,
                   background: "var(--bg-hover)",
