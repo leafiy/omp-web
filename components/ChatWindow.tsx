@@ -57,7 +57,7 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
-const CHAT_COLUMN_PADDING = 16;
+const CHAT_COLUMN_PADDING = 24;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
 function hasFinalAssistantAnswer(message: AgentMessage): boolean {
@@ -439,10 +439,10 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       )}
 
       {isEmptyNew ? (
-        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-12">
           <div className="w-full max-w-[820px]">
             <div
-              className="mb-3"
+              className="mb-10"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -454,8 +454,8 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               }}
             >
               <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
-                <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>{engine === "codex" ? "CX" : engine === "claude" ? "CC" : engine === "pi" ? "π" : "Ω"}</span>
-                <span style={{ fontSize: isMobile ? 18 : 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>{engineLabel} Chat</span>
+                <span style={{ fontSize: 24, fontWeight: 300, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>{engine === "codex" ? "CX" : engine === "claude" ? "CC" : engine === "pi" ? "π" : "Ω"}</span>
+                <span style={{ fontSize: 24, color: "var(--text)", fontWeight: 300, letterSpacing: "0.12em", overflowWrap: "anywhere" }}>{engineLabel} Chat</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
@@ -491,7 +491,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
             <NoticeShelf notices={notices} floating align="right" />
           </div>
         </div>
-        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-10 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
               <ExtensionWidgets widgets={aboveEditorWidgets} />

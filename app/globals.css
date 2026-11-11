@@ -897,6 +897,76 @@ pre, code {
   white-space: pre-wrap;
 }
 
+/* Spacious reading rhythm for conversation prose only. Keep technical
+   output, file previews and the opt-in Starfield theme in their own styles. */
+html:not(.starfield) .markdown-reading {
+  font-family: 'HarmonyOS Sans', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 2.5;
+  letter-spacing: normal;
+  text-align: left;
+  color: color-mix(in srgb, var(--text) 90%, var(--bg));
+}
+html:not(.starfield) .markdown-reading > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+html:not(.starfield) .markdown-reading > * + * {
+  margin-top: 40px;
+}
+html:not(.starfield) .markdown-reading :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 300;
+  line-height: 1.8;
+  color: var(--text);
+}
+html:not(.starfield) .markdown-reading h1 {
+  font-size: 24px;
+  font-weight: 200;
+  letter-spacing: 0.5em;
+  padding-left: 0.5em; /* Balance the trailing letter space when centered. */
+  text-align: center;
+  text-wrap: balance;
+}
+html:not(.starfield) .markdown-reading h2 {
+  font-size: 20px;
+  letter-spacing: 0.12em;
+}
+html:not(.starfield) .markdown-reading h3 {
+  font-size: 18px;
+  letter-spacing: 0.06em;
+}
+html:not(.starfield) .markdown-reading strong {
+  color: var(--text);
+  font-weight: 500;
+}
+html:not(.starfield) .markdown-reading blockquote {
+  margin-right: 0;
+  margin-left: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-align: center;
+}
+html:not(.starfield) .markdown-reading blockquote > p {
+  margin: 0;
+}
+html:not(.starfield) .markdown-reading blockquote > * + * {
+  margin-top: 40px;
+}
+/* Lists, tables and code remain scan-friendly rather than inheriting 2.5. */
+html:not(.starfield) .markdown-reading :is(ul, ol, table, pre, .markdown-code-block) {
+  line-height: 1.7;
+}
+html:not(.starfield) .markdown-reading li::marker {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 .markdown-custom-message {
   line-height: 1.32;
 }
