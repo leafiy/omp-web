@@ -9,16 +9,52 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
+const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 const { normalizeDisplayMath } = await jiti.import("../lib/markdown.ts");
 
 function renderMarkdown(markdown) {
   return renderToStaticMarkup(
-    React.createElement(MarkdownBody, {
-      cwd: "/home/me/project",
-      onOpenFile() {},
-    }, markdown),
+    React.createElement(I18nProvider, null,
+      React.createElement(MarkdownBody, {
+        cwd: "/home/me/project",
+        onOpenFile() {},
+      }, markdown),
+    ),
   );
 }
+
+test("renders Chinese strong emphasis ending in punctuation inside nested quotes", () => {
+  const html = renderMarkdown("> > **注意：**层级增加后，手机上仍应保留足够的文字宽度。");
+  assert.match(html, /<strong>注意：<\/strong>层级增加后/);
+});
+
+test("renders Chinese strong questions adjacent to following prose", () => {
+  const html = renderMarkdown("**是否允许我运行本地 Markdown 渲染测试，复现并验证修复？**仅使用现有依赖。");
+  assert.match(html, /<strong>是否允许我运行本地 Markdown 渲染测试，复现并验证修复？<\/strong>仅使用/);
+});
+
+test("preserves code, escaped markers and incomplete streaming emphasis", () => {
+  for (const markdown of [
+    "`**注意：**层`",
+    "```text\n**注意：**层\n```",
+    "> > ```text\n> > **注意：**层\n> > ```",
+    String.raw`\*\*注意：\*\*层`,
+    "**注意：",
+  ]) {
+    const html = renderMarkdown(markdown);
+    assert.doesNotMatch(html, /<strong>|<em>/);
+    assert.match(html, /注意/);
+  }
+});
+
+test("supports Chinese italic, combined emphasis and ordinary Markdown", () => {
+  assert.match(renderMarkdown("*注意：*层"), /<em>注意：<\/em>层/);
+  assert.match(renderMarkdown("***注意：***层"), /<em><strong>注意：<\/strong><\/em>层/);
+  const html = renderMarkdown("**bold** and *italic* and ~~removed~~");
+  assert.match(html, /<strong>bold<\/strong>/);
+  assert.match(html, /<em>italic<\/em>/);
+  assert.match(html, /<del>removed<\/del>/);
+});
 
 test("opens non-file markdown links in a safe new tab", () => {
   const html = renderMarkdown("[docs](https://example.com/docs)");
