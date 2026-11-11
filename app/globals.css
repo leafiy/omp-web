@@ -920,29 +920,18 @@ html:not(.starfield) .markdown-reading > * {
   margin-bottom: 0;
 }
 html:not(.starfield) .markdown-reading > * + * {
-  margin-top: 20px;
+  margin-top: 10px;
 }
 html:not(.starfield) .markdown-reading :is(h1, h2, h3, h4, h5, h6) {
-  font-weight: 300;
-  line-height: 1.8;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: normal;
+  text-align: left;
   color: var(--text);
 }
-html:not(.starfield) .markdown-reading h1 {
-  font-size: 24px;
-  font-weight: 200;
-  letter-spacing: 0.5em;
-  padding-left: 0.5em; /* Balance the trailing letter space when centered. */
-  text-align: center;
-  text-wrap: balance;
-}
-html:not(.starfield) .markdown-reading h2 {
-  font-size: 20px;
-  letter-spacing: 0.12em;
-}
-html:not(.starfield) .markdown-reading h3 {
-  font-size: 18px;
-  letter-spacing: 0.06em;
-}
+html:not(.starfield) .markdown-reading h1 { font-size: 24px; }
+html:not(.starfield) .markdown-reading h2 { font-size: 20px; }
+html:not(.starfield) .markdown-reading h3 { font-size: 18px; }
 html:not(.starfield) .markdown-reading strong {
   color: var(--text);
   font-weight: 700;
