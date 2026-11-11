@@ -23,12 +23,12 @@ export function ComposerActions({ mobile, streaming, sendEnabled, steerEnabled, 
   const { t } = useI18n();
   const common: CSSProperties = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: mobile ? 0 : 5,
-    flexShrink: 0, width: mobile ? 44 : undefined, height: mobile ? 44 : undefined,
-    padding: mobile ? 0 : "7px 12px", borderRadius: 8,
-    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
+    flexShrink: 0, width: mobile ? 44 : undefined, minWidth: 44, height: 44,
+    padding: mobile ? 0 : "10px 16px", borderRadius: 8,
+    fontSize: 16, fontWeight: 400, lineHeight: 1.5, letterSpacing: "normal",
     transition: "background 0.15s, box-shadow 0.15s",
   };
-  const size = mobile ? 18 : 12;
+  const size = 18;
   return <div data-composer-actions style={{ display: "flex", alignItems: "center", gap: mobile ? 4 : 6, flexShrink: 0, alignSelf: mobile ? "center" : "flex-end" }}>
     {streaming ? <>
       {onSteer && <button type="button" onClick={onSteer} disabled={!steerEnabled} aria-label={t("chat.steer")} title={steerHint} style={{ ...common,
@@ -49,12 +49,12 @@ export function ComposerActions({ mobile, streaming, sendEnabled, steerEnabled, 
         <svg width={18} height={18} viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" /></svg>
       </button>}
     </> : <button type="button" className="sf-send-btn" onClick={onSend} disabled={attachmentBusy || !sendEnabled} aria-label={t("chat.send")} title={t("chat.send")} style={{ ...common,
-      padding: mobile ? 0 : "7px 14px", opacity: attachmentBusy ? .5 : 1,
+      padding: mobile ? 0 : "10px 20px", opacity: attachmentBusy ? .5 : 1,
       background: sendEnabled ? "var(--accent)" : "var(--bg-panel)", border: "none",
       color: sendEnabled ? "#fff" : "var(--text-dim)", cursor: sendEnabled ? "pointer" : "not-allowed",
       boxShadow: sendEnabled ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
     }}>
-      <svg width={mobile ? 18 : 14} height={mobile ? 18 : 14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="2" y1="7" x2="11" y2="7" /><polyline points="7.5 3 12 7 7.5 11" /></svg>
+      <svg width={18} height={18} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="2" y1="7" x2="11" y2="7" /><polyline points="7.5 3 12 7 7.5 11" /></svg>
       {!mobile && t("chat.send")}
     </button>}
   </div>;

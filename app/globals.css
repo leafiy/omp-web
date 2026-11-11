@@ -778,7 +778,14 @@ pre, code {
   color: color-mix(in srgb, var(--text) 88%, var(--accent));
   font-weight: 700;
 }
-.markdown-body em { color: var(--text-muted); }
+.markdown-body em {
+  color: inherit;
+  font-style: italic;
+}
+.markdown-body del {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
 .markdown-body a {
   color: var(--accent);
   text-decoration: underline;
@@ -913,7 +920,7 @@ html:not(.starfield) .markdown-reading > * {
   margin-bottom: 0;
 }
 html:not(.starfield) .markdown-reading > * + * {
-  margin-top: 40px;
+  margin-top: 20px;
 }
 html:not(.starfield) .markdown-reading :is(h1, h2, h3, h4, h5, h6) {
   font-weight: 300;
@@ -938,25 +945,27 @@ html:not(.starfield) .markdown-reading h3 {
 }
 html:not(.starfield) .markdown-reading strong {
   color: var(--text);
-  font-weight: 500;
+  font-weight: 700;
 }
 html:not(.starfield) .markdown-reading blockquote {
   margin-right: 0;
   margin-left: 0;
-  padding: 0;
+  padding: 12px 20px;
   border: none;
-  border-radius: 0;
-  background: none;
+  border-left: 3px solid var(--text-muted);
+  border-radius: 0 6px 6px 0;
+  background: var(--bg-subtle);
   font-size: 14px;
   font-weight: 400;
+  line-height: 2;
   color: var(--text-muted);
-  text-align: center;
+  text-align: left;
 }
 html:not(.starfield) .markdown-reading blockquote > p {
   margin: 0;
 }
 html:not(.starfield) .markdown-reading blockquote > * + * {
-  margin-top: 40px;
+  margin-top: 8px;
 }
 /* Lists, tables and code remain scan-friendly rather than inheriting 2.5. */
 html:not(.starfield) .markdown-reading :is(ul, ol, table, pre, .markdown-code-block) {

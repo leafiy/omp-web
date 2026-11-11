@@ -1820,7 +1820,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 ? "rgba(234,179,8,0.4)"
                 : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
-              padding: isMobile ? "8px 10px" : "10px 10px 10px 14px",
+              padding: isMobile ? "12px 14px" : "14px 16px",
               boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
@@ -1870,10 +1870,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               outline: "none",
               resize: "none",
               color: "var(--text)",
-              fontSize: isMobile ? 16 : 14,
-              lineHeight: 1.6,
+              fontSize: 16,
+              lineHeight: 2.5,
               fontFamily: "inherit",
-              minHeight: 24,
+              minHeight: 40,
               maxHeight: `min(${isMobile ? 160 : 200}px, calc(var(--app-viewport-height, 100dvh) * 0.35))`,
               overflow: "auto",
             }}
@@ -1910,7 +1910,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               aria-label={t("chat.attachFiles")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: isMobile ? 44 : 32, height: isMobile ? 44 : 32, padding: 0,
+                width: 44, height: 44, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
@@ -1948,8 +1948,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       justifyContent: isMobile ? "flex-start" : undefined,
-                      padding: isMobile ? "0 4px" : "8px 12px",
-                      height: isMobile ? 44 : 32,
+                      padding: isMobile ? "0 8px" : "10px 16px",
+                      height: 44,
                       width: isMobile ? "100%" : undefined,
                       maxWidth: isMobile ? "100%" : 220,
                       overflow: "hidden",
