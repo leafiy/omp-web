@@ -978,9 +978,27 @@ function ExtensionDialog({
           {request.method === "input" && request.choices && request.choices.length > 0 && (
             <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "grid", gap: 10, maxHeight: "36vh", overflow: "auto" }}>
               {request.choices.map((choice, index) => (
-                <li key={index} style={{ paddingLeft: 10, borderLeft: "2px solid var(--border)", overflowWrap: "anywhere" }}>
-                  {choice.label && <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{choice.label}</div>}
-                  {choice.description && <div style={{ marginTop: choice.label ? 2 : 0, color: "var(--text-muted)", fontSize: 12.5, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{choice.description}</div>}
+                <li key={index} style={{ minWidth: 0 }}>
+                  <button
+                    type="button"
+                    disabled={!choice.label}
+                    aria-pressed={Boolean(choice.label) && value === choice.label}
+                    onClick={() => { if (choice.label) setValue(choice.label); }}
+                    style={{
+                      width: "100%",
+                      padding: "9px 10px",
+                      borderRadius: 7,
+                      border: `1px solid ${choice.label && value === choice.label ? "var(--accent)" : "var(--border)"}`,
+                      background: choice.label && value === choice.label ? "var(--bg-selected)" : "var(--bg-panel)",
+                      color: "var(--text)",
+                      cursor: choice.label ? "pointer" : "default",
+                      textAlign: "left",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {choice.label && <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.5 }}>{choice.label}</div>}
+                    {choice.description && <div style={{ marginTop: choice.label ? 2 : 0, color: "var(--text-muted)", fontSize: 12.5, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{choice.description}</div>}
+                  </button>
                 </li>
               ))}
             </ul>
