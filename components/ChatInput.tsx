@@ -15,7 +15,6 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import { encodeFilePathForApi } from "@/lib/file-paths";
-import { createAttachmentId } from "@/lib/attachment-id";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -379,7 +378,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   draftKey,
   cwd,
 }: Props, ref) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [draftNotice, setDraftNotice] = useState(() => draftKey ? getDraft(draftKey)?.notice : undefined);
@@ -560,15 +559,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         throw new Error(t("chat.uploadTotalTooLarge"));
       }
 
-      // Persist every attachment so images also remain browsable as files.
-      // Compatible raster images additionally go into the native image prompt.
+      // Native image attachments stay in the conversation, never in the project.
       const imageFiles: File[] = [];
-      const uploadFiles: File[] = [...files];
+      const uploadFiles: File[] = [];
       for (const file of files) {
         if (/^image\/(png|jpeg|gif|webp)$/.test(file.type)
           && file.size > 0 && file.size <= MAX_ATTACHED_IMAGE_BYTES
           && attachedImagesRef.current.length + imageFiles.length < MAX_ATTACHED_IMAGES) {
           imageFiles.push(file);
+        } else if (file.type.startsWith("image/")) {
+          // Do not silently turn unsupported/oversized images into project files.
+          throw new Error(locale === "zh-CN" ? "图片格式、大小或数量超出附件限制；未保存到项目目录。" : "Image format, size or count exceeds attachment limits; nothing was saved to the project.");
+        } else {
+          uploadFiles.push(file);
         }
       }
       if (uploadFiles.length && !cwd) throw new Error(t("chat.uploadNeedsDirectory"));
@@ -586,14 +589,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         })
       )));
       if (job.signal.aborted) return;
+      if (newImages.length) {
+        editRevisionRef.current++;
+        setAttachedImages((prev) => [...prev, ...newImages]);
+      }
       if (uploadFiles.length && cwd) {
         const formData = new FormData();
-        // Clipboard images commonly all have the name image.png. Keep each
-        // attachment without overwriting a previous turn's image.
-        const uploadNames = new Map(uploadFiles.map((file) => [file, imageFiles.includes(file)
-          ? `chat-image-${createAttachmentId()}.${file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1]}`
-          : file.name]));
-        uploadFiles.forEach((file) => formData.append("files", file, uploadNames.get(file)!));
+        uploadFiles.forEach((file) => formData.append("files", file, file.name));
         const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, {
           method: "POST",
           body: formData,
@@ -612,12 +614,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         if (!response.ok) throw new Error(result.error ?? t("chat.uploadFailed", { status: response.status }));
         if (result.uploaded?.length) {
           window.dispatchEvent(new Event("omp-web:files-changed"));
-          const persistedImages = newImages.filter((_, index) => result.uploaded!.includes(uploadNames.get(imageFiles[index])!));
-          setAttachedImages((prev) => [...prev, ...persistedImages]);
-          // Native image attachments already have thumbnails and prompt content.
-          // Saving their files must not insert paths (or even a newline) into the draft.
-          const imageUploadNames = new Set(imageFiles.map((file) => uploadNames.get(file)!));
-          const references = result.uploaded.filter((name) => !imageUploadNames.has(name)).map((name) => {
+          const references = result.uploaded.map((name) => {
             const label = name.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
             const href = encodeURIComponent(name).replace(/[()]/g, (char) => char === "(" ? "%28" : "%29");
             return `[@${label}](./${href})`;
@@ -653,7 +650,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         setAttachmentBusy(false);
       }
     }
-  }, [cwd, t]);
+  }, [cwd, t, locale]);
 
   const removeImage = useCallback((index: number) => {
     editRevisionRef.current++;

@@ -167,6 +167,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       ? []
       : message.content.filter((b): b is ImageContent => b.type === "image");
 
+  // Pi adds this coordinate-mapping note for the model when resizing images.
+  // Hide only standalone generated notes beside actual images; keep the native
+  // transcript and the original content used by copy/edit unchanged.
+  const displayContent = imageBlocks.length > 0
+    ? content.replace(/^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\][ \t]*(?:\r?\n|$)/gm, "")
+    : content;
+
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
@@ -226,7 +233,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               })}
             </div>
           )}
-          {content && <MarkdownBody className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{content}</MarkdownBody>}
+          {displayContent && <MarkdownBody className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{displayContent}</MarkdownBody>}
         </div>
 
       </div>
