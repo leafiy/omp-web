@@ -23,6 +23,29 @@ export function translationPrompt(direction: TranslateDirection, text: string): 
   return `请将以下${source}文本翻译为${target}，直接输出翻译结果，不要进行任何解释。\n\n${text}`;
 }
 
+/** Tencent Hunyuan-MT models such as anna's `hy-mt2-1.8b`. */
+export function isHunyuanMtModel(model: string): boolean {
+  return /^hy-?mt/i.test(model.trim());
+}
+
+/**
+ * The chat-completions body for one chunk. Hunyuan-MT gets its model-card
+ * ZH⇄XX template (as anna's hy-mt2 caller sends it) and the server's
+ * recommended sampling; everything else gets the Index-Translate template,
+ * greedy.
+ */
+export function translationRequestBody(direction: TranslateDirection, text: string, model: string): Record<string, unknown> {
+  if (isHunyuanMtModel(model)) {
+    const target = direction === "zh2en" ? "英语" : "中文";
+    return {
+      model,
+      messages: [{ role: "user", content: `将以下文本翻译为${target}，注意只需要输出翻译后的结果，不要额外解释：\n\n${text}` }],
+      stream: false,
+    };
+  }
+  return { model, messages: [{ role: "user", content: translationPrompt(direction, text) }], temperature: 0, stream: false };
+}
+
 /**
  * The chat-completions URL for a configured API address. A full
  * `…/chat/completions` URL is used as-is, an OpenAI-style base such as
@@ -150,15 +173,20 @@ export function completionText(body: unknown): string | null {
   return text.replace(/^\s*<think>[\s\S]*?<\/think>/, "").trim();
 }
 
-/** A short reason from an error response body (OpenAI, the anna gateway or FastAPI). */
+/**
+ * A short reason from an error response body: OpenAI `{ error }`, FastAPI
+ * `{ detail }`, or the anna gateway's `{ detail: { error: { message } } }`.
+ */
 export function completionErrorDetail(body: unknown, raw: string): string {
-  const value = body as { error?: unknown; detail?: unknown; message?: unknown } | null;
-  const error = value?.error;
-  const candidates = [
-    error && typeof error === "object" ? (error as { message?: unknown }).message : error,
-    value?.detail,
-    value?.message,
-  ];
-  const found = candidates.find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
-  return (found ?? raw).trim().slice(0, 300);
+  const read = (value: unknown, depth: number): string | null => {
+    if (typeof value === "string") return value.trim() || null;
+    if (!value || typeof value !== "object" || depth > 3) return null;
+    const record = value as Record<string, unknown>;
+    for (const key of ["message", "error", "detail"]) {
+      const found = read(record[key], depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  return (read(body, 0) ?? raw).trim().slice(0, 300);
 }

@@ -1,6 +1,6 @@
 import type { TranslateConfig } from "./translate-config";
 import {
-  assembleTranslation, chatCompletionsUrl, completionErrorDetail, completionText, planTranslation, translationPrompt,
+  assembleTranslation, chatCompletionsUrl, completionErrorDetail, completionText, planTranslation, translationRequestBody,
   type TranslateDirection,
 } from "./translate-text";
 
@@ -25,12 +25,7 @@ async function requestChunk(url: string, config: TranslateConfig, direction: Tra
         "Content-Type": "application/json",
         ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [{ role: "user", content: translationPrompt(direction, text) }],
-        temperature: 0,
-        stream: false,
-      }),
+      body: JSON.stringify(translationRequestBody(direction, text, config.model)),
       signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
     });
   } catch (error) {
