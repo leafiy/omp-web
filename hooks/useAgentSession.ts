@@ -515,7 +515,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const thinkingChangeRevisionRef = useRef(0);
   const promptRunIdRef = useRef(0);
   const contextRevisionRef = useRef(0);
-  const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  const optimisticUserMessageRef = useRef<AgentMessage | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -1128,7 +1128,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const agentWasActive = sdkAgentActiveRef.current;
       rpcPromptPendingRef.current = false;
       sdkAgentActiveRef.current = false;
-      optimisticUserMessageKeyRef.current = null;
+      optimisticUserMessageRef.current = null;
       const wasRunning = settleUiStage();
       if (promptWasPending) {
         notifyPromptStage(runId);
@@ -1342,7 +1342,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const runId = promptRunIdRef.current;
           const promptWasPending = rpcPromptPendingRef.current;
           rpcPromptPendingRef.current = false;
-          optimisticUserMessageKeyRef.current = null;
+          optimisticUserMessageRef.current = null;
           const firstNotification = notifyPromptStage(runId);
           if (!promptWasPending && !firstNotification) break;
 
@@ -1391,20 +1391,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!agentRunningRef.current) break;
         const completed = event.message as AgentMessage | undefined;
         if (completed && completed.role === "user") {
-          // Delivered steering/follow-up messages surface here as user
-          // messages. The run's initial prompt also emits one, but handleSend
-          // already appended it optimistically. Consume only the still-adjacent
-          // optimistic bubble; later same-text queue deliveries must render.
+          // Consume this send's exact placeholder, not the last message or a
+          // same-text previous turn. Extensions can append messages before Pi's
+          // echo, and Pi can resize images/change text before emitting it.
           const delivered = normalizeToolCalls(completed);
-          const deliveredKey = userMessageKey(delivered);
-          const optimisticKey = optimisticUserMessageKeyRef.current;
-          optimisticUserMessageKeyRef.current = null;
+          const optimisticMessage = optimisticUserMessageRef.current;
+          optimisticUserMessageRef.current = null;
           setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
-              return optimisticKey === deliveredKey
-                ? prev
-                : [...prev.slice(0, -1), delivered];
+            if (optimisticMessage) {
+              const index = prev.indexOf(optimisticMessage);
+              if (index >= 0) {
+                const next = [...prev];
+                next[index] = delivered;
+                return next;
+              }
+              // A history refresh may already have replaced the placeholder.
+              // Match the native timestamp AND content, only while consuming
+              // this pending echo; never suppress later same-text queue input.
+              if (typeof delivered.timestamp === "number" && prev.some((message) =>
+                message.role === "user" && message.timestamp === delivered.timestamp
+                && userMessageKey(message) === userMessageKey(delivered))) return prev;
             }
             return [...prev, delivered];
           });
@@ -1516,7 +1522,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       timestamp: Date.now(),
     };
     setMessages((prev) => [...prev, userMsg]);
-    optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
+    optimisticUserMessageRef.current = userMsg;
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
     setAgentRunning(true);
@@ -1582,14 +1588,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       closeEvents();
       if (!(e instanceof EventStreamConnectionError)) addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
       if (e instanceof EventStreamConnectionError) {
-        const optimisticKey = optimisticUserMessageKeyRef.current;
-        if (optimisticKey) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            return last?.role === "user" && userMessageKey(last) === optimisticKey
-              ? prev.slice(0, -1)
-              : prev;
-          });
+        const optimisticMessage = optimisticUserMessageRef.current;
+        if (optimisticMessage) {
+          setMessages((prev) => prev.filter((message) => message !== optimisticMessage));
         }
         addNotice({ type: "error", message: e.message });
         // The prompt never reached the agent, so restore the user's text into
@@ -1597,7 +1598,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // executeBash; insertIfEmpty avoids clobbering anything typed since.
         if (mountedRef.current && message) opts.chatInputRef?.current?.insertIfEmpty(message);
       }
-      optimisticUserMessageKeyRef.current = null;
+      optimisticUserMessageRef.current = null;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
