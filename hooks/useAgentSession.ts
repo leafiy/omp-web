@@ -19,6 +19,7 @@ import type { HistoryPage } from "@/lib/history-page";
 import { historyTurnKey, type HistoryTurnSummary } from "@/lib/history-turns";
 import { getDraft, setDraft } from "@/lib/draft-store";
 import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { preferredModel, rememberChatChoice } from "@/lib/chat-preferences";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
@@ -1727,9 +1728,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setNewSessionModel(selectedModel);
       setPendingModel(selectedModel);
       const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
-      if (!sid) return;
+      if (!sid) {
+        rememberChatChoice(modelCwd, engine, selectedModel);
+        return;
+      }
       try {
         await sendAgentCommand(sid, { type: "set_model", provider, modelId });
+        rememberChatChoice(modelCwd, engine, selectedModel);
         await refreshContext(sid);
       } catch (e) {
         addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
@@ -1742,11 +1747,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       await sendAgentCommand(sid, { type: "set_model", provider, modelId });
       setCurrentModelOverride({ provider, modelId });
+      rememberChatChoice(modelCwd, engine, { provider, modelId });
       await refreshContext(sid);
     } catch (e) {
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [isNew, setNewSessionModel, engine, addNotice]);
+  }, [isNew, setNewSessionModel, engine, modelCwd, addNotice]);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -2291,11 +2297,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
-  // Never carry an explicit model/thinking choice into another engine or cwd.
+  // Restore only this project's choice for this engine; never alter a resumed session.
   useEffect(() => {
-    newSessionModelOverrideRef.current = null;
+    const remembered = isNew ? preferredModel(modelCwd, engine) : null;
+    newSessionModelOverrideRef.current = remembered;
     thinkingLevelOverrideRef.current = null;
-    setNewSessionModel(null);
+    setNewSessionModel(remembered);
     setNewSessionDefaultModel(null);
     setPendingModel(null);
     setModelNames({});

@@ -559,17 +559,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         throw new Error(t("chat.uploadTotalTooLarge"));
       }
 
-      // Only model-compatible raster images go into the prompt. Other image
-      // formats and larger images are ordinary files, not silently discarded.
+      // Persist every attachment so images also remain browsable as files.
+      // Compatible raster images additionally go into the native image prompt.
       const imageFiles: File[] = [];
-      const uploadFiles: File[] = [];
+      const uploadFiles: File[] = [...files];
       for (const file of files) {
         if (/^image\/(png|jpeg|gif|webp)$/.test(file.type)
           && file.size > 0 && file.size <= MAX_ATTACHED_IMAGE_BYTES
           && attachedImagesRef.current.length + imageFiles.length < MAX_ATTACHED_IMAGES) {
           imageFiles.push(file);
-        } else {
-          uploadFiles.push(file);
         }
       }
       if (uploadFiles.length && !cwd) throw new Error(t("chat.uploadNeedsDirectory"));
@@ -587,12 +585,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         })
       )));
       if (job.signal.aborted) return;
-      if (newImages.length) editRevisionRef.current++;
-      setAttachedImages((prev) => [...prev, ...newImages]);
-
       if (uploadFiles.length && cwd) {
         const formData = new FormData();
-        uploadFiles.forEach((file) => formData.append("files", file, file.name));
+        // Clipboard images commonly all have the name image.png. Keep each
+        // attachment without overwriting a previous turn's image.
+        const uploadNames = new Map(uploadFiles.map((file) => [file, imageFiles.includes(file)
+          ? `chat-image-${crypto.randomUUID()}.${file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1]}`
+          : file.name]));
+        uploadFiles.forEach((file) => formData.append("files", file, uploadNames.get(file)!));
         const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, {
           method: "POST",
           body: formData,
@@ -612,7 +612,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         if (result.uploaded?.length) {
           // Prepend references so an existing /command or !shell draft cannot
           // accidentally execute instead of sending the uploaded file context.
-          const references = result.uploaded.map((name) => `@${JSON.stringify(name)}`).join(" ");
+          window.dispatchEvent(new Event("omp-web:files-changed"));
+          const persistedImages = newImages.filter((_, index) => result.uploaded!.includes(uploadNames.get(imageFiles[index])!));
+          setAttachedImages((prev) => [...prev, ...persistedImages]);
+          const references = result.uploaded.map((name) => {
+            const label = name.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+            const href = encodeURIComponent(name).replace(/[()]/g, (char) => char === "(" ? "%28" : "%29");
+            return `[@${label}](./${href})`;
+          }).join(" ");
           editRevisionRef.current++;
           setValue((current) => `${references}\n${current}`);
           setAtQuery(null);

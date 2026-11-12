@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { preferredEngine, rememberChatChoice } from "@/lib/chat-preferences";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
@@ -83,6 +84,11 @@ export function AppShell() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  useEffect(() => {
+    const refreshFiles = () => setExplorerRefreshKey((key) => key + 1);
+    window.addEventListener("omp-web:files-changed", refreshFiles);
+    return () => window.removeEventListener("omp-web:files-changed", refreshFiles);
+  }, []);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [installedEngines, setInstalledEngines] = useState<Partial<Record<AgentEngine, boolean>>>({});
@@ -308,6 +314,11 @@ export function AppShell() {
       : null
   );
   const activeCwd = selectedSession?.cwd || effectiveNewSessionCwd;
+  useEffect(() => {
+    if (selectedSession || !activeCwd) return;
+    const remembered = preferredEngine(activeCwd);
+    if (remembered) setNewSessionEngine(remembered);
+  }, [activeCwd, selectedSession]);
   // Project of the open chat; switching projects closes project-scoped file tabs.
   const activeProjectRootRef = useRef<string | null>(null);
 
@@ -395,10 +406,10 @@ export function AppShell() {
   }, [router, isMobile, syncActiveProject]);
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string, engine?: AgentEngine) => {
-    if (engine) {
-      setNewSessionEngine(engine);
-      try { localStorage.setItem("omp-web:new-chat-engine", engine); } catch {}
-    }
+    const chosenEngine = engine ?? preferredEngine(cwd) ?? newSessionEngine;
+    setNewSessionEngine(chosenEngine);
+    rememberChatChoice(cwd, chosenEngine);
+    try { localStorage.setItem("omp-web:new-chat-engine", chosenEngine); } catch {}
     syncActiveProject(cwd);
     setSelectedSession(null);
     setProjectTrustSaved(false);
@@ -410,7 +421,7 @@ export function AppShell() {
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace(`?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
-  }, [router, isMobile, syncActiveProject]);
+  }, [router, isMobile, syncActiveProject, newSessionEngine]);
 
   const handleEngineChange = useCallback((engine: AgentEngine) => {
     if (engine === activeEngine || installedEngines[engine] !== true) return;

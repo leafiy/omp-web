@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { ChatImage } from "./ChatImage";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -213,9 +214,10 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                     ? `data:${flat.mimeType};base64,${flat.data}`
                     : "";
                 return (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <ChatImage
                     key={i}
+                    cwd={cwd}
+                    onOpenFile={onOpenFile}
                     src={src}
                     alt=""
                     style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
@@ -613,6 +615,9 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
+  if (block.type === "image") {
+    return <ChatImage src={imageSource(block)} cwd={cwd} onOpenFile={onOpenFile} style={{ maxWidth: 240, maxHeight: 240, objectFit: "contain" }} />;
+  }
   if (block.type === "thinking") {
     return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
   }
@@ -620,7 +625,12 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} />;
+    return <>
+      <ToolCallBlock block={tc} result={result} duration={duration} />
+      {result?.content.filter((item): item is ImageContent => item.type === "image").map((image, index) => (
+        <ChatImage key={index} src={imageSource(image)} cwd={cwd} onOpenFile={onOpenFile} style={{ maxWidth: 240, maxHeight: 240, objectFit: "contain" }} />
+      ))}
+    </>;
   }
   return null;
 }
@@ -1229,9 +1239,10 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                   const src = imageSource(img);
                   if (!src) return null;
                   return (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <ChatImage
                       key={i}
+                      cwd={cwd}
+                      onOpenFile={onOpenFile}
                       src={src}
                       alt=""
                       style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
