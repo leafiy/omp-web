@@ -15,6 +15,7 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import { encodeFilePathForApi } from "@/lib/file-paths";
+import { createAttachmentId } from "@/lib/attachment-id";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -590,7 +591,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         // Clipboard images commonly all have the name image.png. Keep each
         // attachment without overwriting a previous turn's image.
         const uploadNames = new Map(uploadFiles.map((file) => [file, imageFiles.includes(file)
-          ? `chat-image-${crypto.randomUUID()}.${file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1]}`
+          ? `chat-image-${createAttachmentId()}.${file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1]}`
           : file.name]));
         uploadFiles.forEach((file) => formData.append("files", file, uploadNames.get(file)!));
         const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, {

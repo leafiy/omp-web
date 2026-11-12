@@ -3,6 +3,7 @@
 import { useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { encodeFilePathForApi } from "@/lib/file-paths";
+import { createAttachmentId } from "@/lib/attachment-id";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { MAX_UPLOAD_FILE_BYTES } from "@/lib/file-upload-limits";
 
@@ -37,7 +38,7 @@ export function ChatImage({ src, alt = "", cwd, onOpenFile, style }: {
       if (src.length > MAX_UPLOAD_FILE_BYTES * 4 / 3 + 128) throw new Error(zh ? "图片超过上传限制" : "Image exceeds upload limit");
       const blob = await (await fetch(src)).blob();
       const extension = blob.type.split("/")[1] === "jpeg" ? "jpg" : blob.type.split("/")[1];
-      const name = `chat-image-${crypto.randomUUID()}.${extension}`;
+      const name = `chat-image-${createAttachmentId()}.${extension}`;
       const form = new FormData();
       form.append("files", blob, name);
       const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, { method: "POST", body: form });
