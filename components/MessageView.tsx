@@ -10,6 +10,7 @@ import { getToolPreview } from "@/lib/tool-preview";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { countLines, pastedTextPreview, splitPastedBlocks, unwrapPastedBlocks } from "@/lib/pasted-text";
+import { TranslateButtons, TranslationPanel, useMessageTranslation } from "./MessageTranslation";
 import type {
   AgentMessage,
   UserMessage,
@@ -177,6 +178,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
 
   // Long pastes sent from the web composer render as attachments, not inline text.
   const segments = useMemo(() => splitPastedBlocks(displayContent), [displayContent]);
+  // Pasted attachments are not translated; only the typed text is.
+  const translationSource = useMemo(() => segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join("\n\n").trim(), [segments]);
+  const translation = useMessageTranslation(translationSource);
 
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
@@ -246,6 +250,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
 
       </div>
 
+      <TranslationPanel translation={translation} cwd={cwd} onOpenFile={onOpenFile} maxWidth="85%" />
+
       {/* Bottom row: action buttons + timestamp */}
       {(time || canFork || canNavigate || true) && (
         <div style={{
@@ -291,6 +297,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
+            <TranslateButtons translation={translation} />
           </div>
           {(canFork || canNavigate) && (
             <div style={{
@@ -460,6 +467,8 @@ function AssistantMessageView({
     .filter((b): b is TextContent => b.type === "text")
     .map((b) => b.text)
     .join("\n");
+  // Streaming text is not translatable yet; the source settles when the run ends.
+  const translation = useMessageTranslation(isStreaming ? "" : textContent);
 
   const copyContent = () => {
     copyText(textContent).then(() => {
@@ -608,6 +617,8 @@ function AssistantMessageView({
         </div>
       )}
 
+      <TranslationPanel translation={translation} cwd={cwd} onOpenFile={onOpenFile} />
+
       <div style={{
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
@@ -649,6 +660,7 @@ function AssistantMessageView({
              {copied ? t("i18n.copied") : t("i18n.copy")}
           </button>
         )}
+        {!isStreaming && <TranslateButtons translation={translation} visible={hovered} />}
         {time && !isStreaming && (
           <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}

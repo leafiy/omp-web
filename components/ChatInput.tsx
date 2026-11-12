@@ -18,9 +18,12 @@ import { encodeFilePathForApi } from "@/lib/file-paths";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
 import {
   collapsePastedBlocks, expandPastedTokens, isCommandDraft, livePastedTexts, nextPastedTextId, normalizePastedText,
-  pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, summarizePastedBlocks,
+  pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens, summarizePastedBlocks,
   type PastedText,
 } from "@/lib/pasted-text";
+import { requestTranslation } from "@/lib/translate-client";
+import { TRANSLATE_DIRECTIONS, type TranslateDirection } from "@/lib/translate-text";
+import { useTranslateAvailable } from "@/hooks/useTranslate";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
@@ -1388,6 +1391,91 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!isMobile) setControlsMenuOpen(false);
   }, [isMobile]);
 
+  // ZH⇄EN translation of the draft, shown only when a translation API is configured.
+  const translateAvailable = useTranslateAvailable();
+  const [translatingDirection, setTranslatingDirection] = useState<TranslateDirection | null>(null);
+  // A notice belongs to the exact draft text it was produced for; any edit or draft switch retires it.
+  const [translateNotice, setTranslateNotice] = useState<
+    { kind: "undo"; original: string; text: string; key: string | undefined }
+    | { kind: "error"; message: string; text: string; key: string | undefined }
+    | null
+  >(null);
+  const translateJobRef = useRef<AbortController | null>(null);
+  const activeTranslateNotice = translateNotice && translateNotice.text === value && translateNotice.key === draftKey ? translateNotice : null;
+  const canTranslateDraft = translateAvailable && !translatingDirection && !isCommandDraft(value)
+    && splitPastedTokens(value).some((part) => !part.token && part.text.trim());
+
+  const translateDraft = useCallback(async (direction: TranslateDirection) => {
+    if (translateJobRef.current) return;
+    const original = valueRef.current;
+    if (isCommandDraft(original)) return;
+    const parts = splitPastedTokens(original);
+    const sources = parts.filter((part) => !part.token && part.text.trim()).map((part) => part.text);
+    if (!sources.length) return;
+    const job = new AbortController();
+    translateJobRef.current = job;
+    const revision = editRevisionRef.current;
+    const key = draftKeyRef.current;
+    setTranslatingDirection(direction);
+    setTranslateNotice(null);
+    try {
+      const translated = await requestTranslation(sources, direction, job.signal);
+      if (job.signal.aborted || !composerMountedRef.current) return;
+      if (editRevisionRef.current !== revision || draftKeyRef.current !== key || valueRef.current !== original) {
+        setTranslateNotice({ kind: "error", message: t("translate.draftChanged"), text: valueRef.current, key: draftKeyRef.current });
+        return;
+      }
+      let index = 0;
+      const next = parts.map((part) => (!part.token && part.text.trim() ? translated[index++] : part.text)).join("");
+      editRevisionRef.current++;
+      valueRef.current = next;
+      setValue(next);
+      setAtQuery(null);
+      setHistoryMenuOpen(false);
+      setTranslateNotice({ kind: "undo", original, text: next, key });
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (ta && ta.value === next) { ta.focus(); ta.setSelectionRange(next.length, next.length); }
+      });
+    } catch (error) {
+      if (!job.signal.aborted && composerMountedRef.current) {
+        setTranslateNotice({ kind: "error", message: error instanceof Error ? error.message : String(error), text: valueRef.current, key: draftKeyRef.current });
+      }
+    } finally {
+      if (translateJobRef.current === job) {
+        translateJobRef.current = null;
+        if (composerMountedRef.current) setTranslatingDirection(null);
+      }
+    }
+  }, [t]);
+
+  const cancelDraftTranslation = useCallback(() => {
+    translateJobRef.current?.abort();
+    translateJobRef.current = null;
+    setTranslatingDirection(null);
+  }, []);
+
+  const undoDraftTranslation = useCallback(() => {
+    const undo = activeTranslateNotice?.kind === "undo" ? activeTranslateNotice : null;
+    setTranslateNotice(null);
+    if (!undo || valueRef.current !== undo.text) return;
+    editRevisionRef.current++;
+    valueRef.current = undo.original;
+    setValue(undo.original);
+    setAtQuery(null);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta && ta.value === undo.original) { ta.focus(); ta.setSelectionRange(undo.original.length, undo.original.length); }
+    });
+  }, [activeTranslateNotice]);
+
+  // A switched or unmounted composer must not receive another draft's translation.
+  useEffect(() => () => {
+    translateJobRef.current?.abort();
+    translateJobRef.current = null;
+    setTranslatingDirection(null);
+  }, [draftKey]);
+
   const composerActions = <ComposerActions
     mobile={isMobile} streaming={isStreaming}
     sendEnabled={Boolean(value.trim() || attachedImages.length)}
@@ -1984,6 +2072,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         )}
 
+        {/* Draft translation status */}
+        {(translatingDirection || activeTranslateNotice) && (
+          <div
+            className="text-xs px-2 py-1"
+            role={activeTranslateNotice?.kind === "error" && !translatingDirection ? "alert" : "status"}
+            style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: activeTranslateNotice?.kind === "error" && !translatingDirection ? "#ef4444" : "var(--text-muted)", overflowWrap: "anywhere" }}
+          >
+            {translatingDirection ? <>
+              <span>{t("translate.translatingDraft", { direction: t(`translate.${translatingDirection}`) })}</span>
+              <button type="button" onClick={cancelDraftTranslation} style={{ padding: 0, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "inherit" }}>{t("translate.cancel")}</button>
+            </> : activeTranslateNotice?.kind === "error" ? <span>{activeTranslateNotice.message}</span> : <>
+              <span>{t("translate.draftTranslated")}</span>
+              <button type="button" onClick={undoDraftTranslation} style={{ padding: 0, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "inherit" }}>{t("translate.undo")}</button>
+            </>}
+          </div>
+        )}
+
         {/* Bottom bar: left | center (context) | right */}
         <div data-composer-controls style={{
           position: "relative",
@@ -2270,6 +2375,51 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 backdropFilter: "blur(10px)",
               } : null),
             }}>
+            {translateAvailable && TRANSLATE_DIRECTIONS.map((direction) => {
+              const busy = translatingDirection === direction;
+              const enabled = canTranslateDraft;
+              return (
+                <button
+                  key={direction}
+                  type="button"
+                  data-composer-translate={direction}
+                  onClick={() => { if (enabled) void translateDraft(direction); }}
+                  disabled={!enabled}
+                  title={t(`translate.${direction}DraftTitle`)}
+                  aria-label={t(`translate.${direction}DraftTitle`)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                    padding: isMobile ? "0 10px" : "10px 12px",
+                    minWidth: 44,
+                    height: 44,
+                    background: busy ? "var(--bg-hover)" : "none",
+                    border: "none",
+                    borderRadius: 9,
+                    color: busy ? "var(--accent)" : "var(--text-muted)",
+                    cursor: enabled ? "pointer" : "not-allowed",
+                    fontSize: 14,
+                    whiteSpace: "nowrap",
+                    opacity: enabled || busy ? 1 : 0.5,
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!enabled) return;
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = busy ? "var(--bg-hover)" : "none";
+                    e.currentTarget.style.color = busy ? "var(--accent)" : "var(--text-muted)";
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" />
+                    <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
+                  </svg>
+                  <span>{busy ? t("translate.translating") : t(`translate.${direction}`)}</span>
+                </button>
+              );
+            })}
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button

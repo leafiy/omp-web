@@ -89,6 +89,12 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - The Next proxy bypasses `/events`; SSE routes must enforce their own authentication/origin checks before exposing data or starting processes.
 - Web login is mandatory (no anonymous mode, no Basic Auth prompt). `bin/web-credentials.js` owns the credentials file and signed session tokens; `lib/web-auth.ts` checks the `omp_web_session` cookie. Guards return `webAuthRequired()` (401 + `X-OMP-Web-Auth`) so the browser redirects to `/login`; never send `WWW-Authenticate`.
 
+## Translation
+
+- Optional and web-only, not an engine feature. `lib/translate-config.ts` keeps `{ endpoint, model, apiKey }` in `~/.config/omp-web/translate.json` (or `OMP_WEB_TRANSLATE_FILE`), mode 0600, never in an agent directory; the config GET never returns the key. Without settings, no translate button renders.
+- `POST /api/translate` calls the OpenAI-compatible chat-completions API from the server (browsers may not reach a LAN gateway). Prompts are Index-Translate's fixed template in `lib/translate-text.ts`: one user message, no system message, `temperature: 0`. Code fences stay verbatim; long prose is chunked.
+- Message translations are display-only and never written to a transcript. Composer translation replaces the draft (paste markers stay atomic, `!`/`/` drafts are not translated) and offers Undo.
+
 ## Source map and checks
 
 Main routes are under `app/api/agent`, `app/api/sessions`, `app/api/models`, `app/api/files`, and `app/api/worktrees`. HTML export delegates to the session's pinned engine and cleans up a private temporary output directory.

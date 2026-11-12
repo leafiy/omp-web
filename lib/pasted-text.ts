@@ -122,6 +122,20 @@ export function splitPastedBlocks(text: string): PastedSegment[] {
   return segments;
 }
 
+/** Composer text around `[paste #n …]` markers, so whole-draft rewrites (translation) keep markers atomic. */
+export function splitPastedTokens(value: string): Array<{ token: boolean; text: string }> {
+  const parts: Array<{ token: boolean; text: string }> = [];
+  let last = 0;
+  for (const match of value.matchAll(TOKEN_RE)) {
+    const at = match.index ?? 0;
+    if (at > last) parts.push({ token: false, text: value.slice(last, at) });
+    parts.push({ token: true, text: match[0] });
+    last = at + match[0].length;
+  }
+  if (last < value.length) parts.push({ token: false, text: value.slice(last) });
+  return parts;
+}
+
 /** One-line contexts (outline rows, minimap, queue, titles) show the marker, not the content. */
 export function summarizePastedBlocks(text: string): string {
   if (!text.includes(OPEN_TAG)) return text;

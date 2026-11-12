@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { engineLabel, type AgentEngine } from "@/lib/engine";
 import { ToolUpdateControl } from "./ToolUpdateControl";
+import { TranslateSettings } from "./TranslateSettings";
 import { WebAccountSettings } from "./WebAccountSettings";
 
 /** One settings entry for every tool; agent credential editors remain disabled. */
@@ -34,6 +35,7 @@ export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; on
         </div>
         <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>{engineLabel(engine)}</div>
         <WebAccountSettings />
+        <TranslateSettings />
         <ToolUpdateControl zh={zh} />
       </section>
     </div>
