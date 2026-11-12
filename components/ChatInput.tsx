@@ -21,7 +21,7 @@ import {
   pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens, summarizePastedBlocks,
   type PastedText,
 } from "@/lib/pasted-text";
-import { requestTranslation } from "@/lib/translate-client";
+import { readSendTranslation, requestTranslation, writeSendTranslation } from "@/lib/translate-client";
 import { TRANSLATE_DIRECTIONS, type TranslateDirection } from "@/lib/translate-text";
 import { useTranslateAvailable } from "@/hooks/useTranslate";
 import { FolderIcon, getFileIcon } from "./FileIcons";
@@ -768,6 +768,78 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, []);
 
+  // Translate-before-send toggle: a browser preference that applies only while an API is configured.
+  const translateAvailable = useTranslateAvailable();
+  const [sendTranslation, setSendTranslation] = useState<TranslateDirection | null>(() => readSendTranslation());
+  const activeSendTranslation = translateAvailable ? sendTranslation : null;
+  const [translatingForSend, setTranslatingForSend] = useState<TranslateDirection | null>(null);
+  // An error belongs to the exact draft it was produced for; any edit or draft switch retires it.
+  const [translateError, setTranslateError] = useState<{ message: string; text: string; key: string | undefined } | null>(null);
+  const activeTranslateError = translateError && translateError.text === value && translateError.key === draftKey ? translateError : null;
+  const translateJobRef = useRef<AbortController | null>(null);
+
+  // Off → ZH→EN → EN→ZH → off.
+  const cycleSendTranslation = useCallback(() => {
+    const next = sendTranslation === null ? TRANSLATE_DIRECTIONS[0] : sendTranslation === TRANSLATE_DIRECTIONS[0] ? TRANSLATE_DIRECTIONS[1] : null;
+    writeSendTranslation(next);
+    setSendTranslation(next);
+    setTranslateError(null);
+  }, [sendTranslation]);
+
+  /**
+   * The message as it will be sent. With the toggle on, the typed text is
+   * translated (paste markers and `!`/`/` drafts stay as written). Null means
+   * do not send: the translation failed or was cancelled, or the draft changed.
+   */
+  const prepareOutgoing = useCallback(async (draft: string, pasted: PastedText[]): Promise<string | null> => {
+    const raw = expandPastedTokens(draft, pasted).trim();
+    const direction = activeSendTranslation;
+    if (!direction || isCommandDraft(draft)) return raw;
+    const parts = splitPastedTokens(draft);
+    const sources = parts.filter((part) => !part.token && part.text.trim()).map((part) => part.text);
+    if (!sources.length) return raw;
+    const job = new AbortController();
+    translateJobRef.current = job;
+    const revision = editRevisionRef.current;
+    const key = draftKeyRef.current;
+    setTranslatingForSend(direction);
+    setTranslateError(null);
+    try {
+      const translated = await requestTranslation(sources, direction, job.signal);
+      if (job.signal.aborted || !composerMountedRef.current) return null;
+      if (editRevisionRef.current !== revision || draftKeyRef.current !== key || valueRef.current !== draft) {
+        setTranslateError({ message: t("translate.draftChanged"), text: valueRef.current, key: draftKeyRef.current });
+        return null;
+      }
+      let index = 0;
+      const next = parts.map((part) => (!part.token && part.text.trim() ? translated[index++] : part.text)).join("");
+      return expandPastedTokens(next, pasted).trim();
+    } catch (error) {
+      if (!job.signal.aborted && composerMountedRef.current) {
+        setTranslateError({ message: t("translate.sendFailed", { error: error instanceof Error ? error.message : String(error) }), text: valueRef.current, key: draftKeyRef.current });
+      }
+      return null;
+    } finally {
+      if (translateJobRef.current === job) {
+        translateJobRef.current = null;
+        if (composerMountedRef.current) setTranslatingForSend(null);
+      }
+    }
+  }, [activeSendTranslation, t]);
+
+  const cancelSendTranslation = useCallback(() => {
+    translateJobRef.current?.abort();
+    translateJobRef.current = null;
+    setTranslatingForSend(null);
+  }, []);
+
+  // A switched or unmounted composer must not send another draft's translation.
+  useEffect(() => () => {
+    translateJobRef.current?.abort();
+    translateJobRef.current = null;
+    setTranslatingForSend(null);
+  }, [draftKey]);
+
   const handleSend = useCallback(async () => {
     const msg = expandPastedTokens(value, pastedTexts).trim();
     if (!msg && !attachedImages.length) return;
@@ -794,11 +866,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           return;
         }
       }
-      const accepted = await onSend(msg, attachedImages.length ? attachedImages : undefined);
+      const outgoing = msg ? await prepareOutgoing(value, pastedTexts) : msg;
+      if (outgoing === null) return;
+      const accepted = await onSend(outgoing, attachedImages.length ? attachedImages : undefined);
       if (accepted !== false) clearAccepted();
     } catch { /* A failed or ambiguous send retains the draft. */ }
     finally { normalSendRef.current = false; }
-  }, [value, attachedImages, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, prepareOutgoing]);
 
   const slashQuery = value.startsWith("/") && !/[\r\n]/.test(value)
     ? value.slice(1).toLowerCase()
@@ -1045,14 +1119,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const sentRevision = editRevisionRef.current;
     let accepted: void | boolean = false;
     try {
+      const outgoing = await prepareOutgoing(value, pastedTexts);
+      if (outgoing === null) return;
       if (msg.startsWith("/") && onPromptWithStreamingBehavior) accepted = await onPromptWithStreamingBehavior(msg, mode === "steer" ? "steer" : "followUp");
-      else if (mode === "steer" && onSteer) accepted = await onSteer(msg);
-      else if (mode === "followup" && onFollowUp) accepted = await onFollowUp(msg);
+      else if (mode === "steer" && onSteer) accepted = await onSteer(outgoing);
+      else if (mode === "followup" && onFollowUp) accepted = await onFollowUp(outgoing);
       // A failed/ambiguous POST keeps the draft; a newer edit is never cleared.
       if (accepted !== false && editRevisionRef.current === sentRevision && valueRef.current === value) clearInput();
     } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
     finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
-  }, [value, attachedImages, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, prepareOutgoing]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1391,96 +1467,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!isMobile) setControlsMenuOpen(false);
   }, [isMobile]);
 
-  // ZH⇄EN translation of the draft, shown only when a translation API is configured.
-  const translateAvailable = useTranslateAvailable();
-  const [translatingDirection, setTranslatingDirection] = useState<TranslateDirection | null>(null);
-  // A notice belongs to the exact draft text it was produced for; any edit or draft switch retires it.
-  const [translateNotice, setTranslateNotice] = useState<
-    { kind: "undo"; original: string; text: string; key: string | undefined }
-    | { kind: "error"; message: string; text: string; key: string | undefined }
-    | null
-  >(null);
-  const translateJobRef = useRef<AbortController | null>(null);
-  const activeTranslateNotice = translateNotice && translateNotice.text === value && translateNotice.key === draftKey ? translateNotice : null;
-  const canTranslateDraft = translateAvailable && !translatingDirection && !isCommandDraft(value)
-    && splitPastedTokens(value).some((part) => !part.token && part.text.trim());
-
-  const translateDraft = useCallback(async (direction: TranslateDirection) => {
-    if (translateJobRef.current) return;
-    const original = valueRef.current;
-    if (isCommandDraft(original)) return;
-    const parts = splitPastedTokens(original);
-    const sources = parts.filter((part) => !part.token && part.text.trim()).map((part) => part.text);
-    if (!sources.length) return;
-    const job = new AbortController();
-    translateJobRef.current = job;
-    const revision = editRevisionRef.current;
-    const key = draftKeyRef.current;
-    setTranslatingDirection(direction);
-    setTranslateNotice(null);
-    try {
-      const translated = await requestTranslation(sources, direction, job.signal);
-      if (job.signal.aborted || !composerMountedRef.current) return;
-      if (editRevisionRef.current !== revision || draftKeyRef.current !== key || valueRef.current !== original) {
-        setTranslateNotice({ kind: "error", message: t("translate.draftChanged"), text: valueRef.current, key: draftKeyRef.current });
-        return;
-      }
-      let index = 0;
-      const next = parts.map((part) => (!part.token && part.text.trim() ? translated[index++] : part.text)).join("");
-      editRevisionRef.current++;
-      valueRef.current = next;
-      setValue(next);
-      setAtQuery(null);
-      setHistoryMenuOpen(false);
-      setTranslateNotice({ kind: "undo", original, text: next, key });
-      requestAnimationFrame(() => {
-        const ta = textareaRef.current;
-        if (ta && ta.value === next) { ta.focus(); ta.setSelectionRange(next.length, next.length); }
-      });
-    } catch (error) {
-      if (!job.signal.aborted && composerMountedRef.current) {
-        setTranslateNotice({ kind: "error", message: error instanceof Error ? error.message : String(error), text: valueRef.current, key: draftKeyRef.current });
-      }
-    } finally {
-      if (translateJobRef.current === job) {
-        translateJobRef.current = null;
-        if (composerMountedRef.current) setTranslatingDirection(null);
-      }
-    }
-  }, [t]);
-
-  const cancelDraftTranslation = useCallback(() => {
-    translateJobRef.current?.abort();
-    translateJobRef.current = null;
-    setTranslatingDirection(null);
-  }, []);
-
-  const undoDraftTranslation = useCallback(() => {
-    const undo = activeTranslateNotice?.kind === "undo" ? activeTranslateNotice : null;
-    setTranslateNotice(null);
-    if (!undo || valueRef.current !== undo.text) return;
-    editRevisionRef.current++;
-    valueRef.current = undo.original;
-    setValue(undo.original);
-    setAtQuery(null);
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (ta && ta.value === undo.original) { ta.focus(); ta.setSelectionRange(undo.original.length, undo.original.length); }
-    });
-  }, [activeTranslateNotice]);
-
-  // A switched or unmounted composer must not receive another draft's translation.
-  useEffect(() => () => {
-    translateJobRef.current?.abort();
-    translateJobRef.current = null;
-    setTranslatingDirection(null);
-  }, [draftKey]);
-
   const composerActions = <ComposerActions
     mobile={isMobile} streaming={isStreaming}
     sendEnabled={Boolean(value.trim() || attachedImages.length)}
     steerEnabled={canQueueStreamingMessage} followUpEnabled={canQueueFollowUpMessage}
-    attachmentBusy={attachmentBusy}
+    attachmentBusy={attachmentBusy || translatingForSend !== null}
     steerHint={engine === "claude" ? t("chat.claudeSteerHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
     followUpHint={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : t("chat.followUpQueueHint")}
     onSend={handleSend} onAbort={onAbort}
@@ -2072,20 +2063,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         )}
 
-        {/* Draft translation status */}
-        {(translatingDirection || activeTranslateNotice) && (
+        {/* Translate-before-send status */}
+        {(translatingForSend || activeTranslateError) && (
           <div
             className="text-xs px-2 py-1"
-            role={activeTranslateNotice?.kind === "error" && !translatingDirection ? "alert" : "status"}
-            style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: activeTranslateNotice?.kind === "error" && !translatingDirection ? "#ef4444" : "var(--text-muted)", overflowWrap: "anywhere" }}
+            role={translatingForSend ? "status" : "alert"}
+            style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: translatingForSend ? "var(--text-muted)" : "#ef4444", overflowWrap: "anywhere" }}
           >
-            {translatingDirection ? <>
-              <span>{t("translate.translatingDraft", { direction: t(`translate.${translatingDirection}`) })}</span>
-              <button type="button" onClick={cancelDraftTranslation} style={{ padding: 0, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "inherit" }}>{t("translate.cancel")}</button>
-            </> : activeTranslateNotice?.kind === "error" ? <span>{activeTranslateNotice.message}</span> : <>
-              <span>{t("translate.draftTranslated")}</span>
-              <button type="button" onClick={undoDraftTranslation} style={{ padding: 0, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "inherit" }}>{t("translate.undo")}</button>
-            </>}
+            {translatingForSend ? <>
+              <span>{t("translate.translatingForSend", { direction: t(`translate.${translatingForSend}`) })}</span>
+              <button type="button" onClick={cancelSendTranslation} style={{ padding: 0, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "inherit" }}>{t("translate.cancel")}</button>
+            </> : <span>{activeTranslateError?.message}</span>}
           </div>
         )}
 
@@ -2132,6 +2120,46 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.5-8.5" />
               </svg>
             </button>
+            {translateAvailable && (() => {
+              const active = activeSendTranslation;
+              const title = t(active ? `translate.send.${active}Title` : "translate.send.offTitle");
+              return (
+                <button
+                  type="button"
+                  data-composer-translate={active ?? "off"}
+                  aria-pressed={active !== null}
+                  onClick={cycleSendTranslation}
+                  disabled={translatingForSend !== null}
+                  title={title}
+                  aria-label={title}
+                  style={{
+                    flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                    minWidth: 44, height: 44, padding: active || !isMobile ? "0 10px" : 0,
+                    background: active ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none",
+                    border: "none", borderRadius: 9,
+                    color: active ? "var(--accent)" : "var(--text-muted)",
+                    cursor: translatingForSend ? "not-allowed" : "pointer",
+                    fontSize: 14, whiteSpace: "nowrap",
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (active || translatingForSend) return;
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = active ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "none";
+                    e.currentTarget.style.color = active ? "var(--accent)" : "var(--text-muted)";
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" />
+                    <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
+                  </svg>
+                  {active ? <span>{t(`translate.${active}`)}</span> : !isMobile && <span>{t("translate.send.off")}</span>}
+                </button>
+              );
+            })()}
             {/* Model selector — visible always, disabled during streaming */}
             {(modelOptions.length > 0 || currentName || modelError) && onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
@@ -2375,51 +2403,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 backdropFilter: "blur(10px)",
               } : null),
             }}>
-            {translateAvailable && TRANSLATE_DIRECTIONS.map((direction) => {
-              const busy = translatingDirection === direction;
-              const enabled = canTranslateDraft;
-              return (
-                <button
-                  key={direction}
-                  type="button"
-                  data-composer-translate={direction}
-                  onClick={() => { if (enabled) void translateDraft(direction); }}
-                  disabled={!enabled}
-                  title={t(`translate.${direction}DraftTitle`)}
-                  aria-label={t(`translate.${direction}DraftTitle`)}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 10px" : "10px 12px",
-                    minWidth: 44,
-                    height: 44,
-                    background: busy ? "var(--bg-hover)" : "none",
-                    border: "none",
-                    borderRadius: 9,
-                    color: busy ? "var(--accent)" : "var(--text-muted)",
-                    cursor: enabled ? "pointer" : "not-allowed",
-                    fontSize: 14,
-                    whiteSpace: "nowrap",
-                    opacity: enabled || busy ? 1 : 0.5,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!enabled) return;
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = busy ? "var(--bg-hover)" : "none";
-                    e.currentTarget.style.color = busy ? "var(--accent)" : "var(--text-muted)";
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" />
-                    <path d="m22 22-5-10-5 10" /><path d="M14 18h6" />
-                  </svg>
-                  <span>{busy ? t("translate.translating") : t(`translate.${direction}`)}</span>
-                </button>
-              );
-            })}
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button

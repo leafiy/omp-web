@@ -1,5 +1,5 @@
 import type { TranslateStatus } from "./translate-config";
-import type { TranslateDirection } from "./translate-text";
+import { isTranslateDirection, type TranslateDirection } from "./translate-text";
 
 export type { TranslateStatus };
 
@@ -90,6 +90,23 @@ export async function requestTranslation(texts: string[], direction: TranslateDi
     throw new Error("Invalid response from the server.");
   }
   return translated as string[];
+}
+
+const SEND_TRANSLATION_KEY = "omp-web:translate-before-send";
+
+/** The composer's translate-before-send direction, remembered per browser; null when off. */
+export function readSendTranslation(): TranslateDirection | null {
+  try {
+    const value = localStorage.getItem(SEND_TRANSLATION_KEY);
+    return isTranslateDirection(value) ? value : null;
+  } catch { return null; }
+}
+
+export function writeSendTranslation(direction: TranslateDirection | null): void {
+  try {
+    if (direction) localStorage.setItem(SEND_TRANSLATION_KEY, direction);
+    else localStorage.removeItem(SEND_TRANSLATION_KEY);
+  } catch { /* The toggle still works for this page when storage is unavailable. */ }
 }
 
 const MAX_CACHED_TRANSLATIONS = 200;

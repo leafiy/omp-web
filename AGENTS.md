@@ -93,7 +93,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 
 - Optional and web-only, not an engine feature. `lib/translate-config.ts` keeps `{ endpoint, model, apiKey }` in `~/.config/omp-web/translate.json` (or `OMP_WEB_TRANSLATE_FILE`), mode 0600, never in an agent directory; the config GET never returns the key. Without settings, no translate button renders.
 - `POST /api/translate` calls the OpenAI-compatible chat-completions API from the server (browsers may not reach a LAN gateway). Prompts are Index-Translate's fixed template in `lib/translate-text.ts`: one user message, no system message, `temperature: 0`. Code fences stay verbatim; long prose is chunked.
-- Message translations are display-only and never written to a transcript. Composer translation replaces the draft (paste markers stay atomic, `!`/`/` drafts are not translated) and offers Undo.
+- Message translations are display-only and never written to a transcript. The composer toggle under the input (off → ZH→EN → EN→ZH, remembered per browser) translates send/steer/follow-up text before it goes out, so the transcript holds the translation. Paste markers stay atomic and `!`/`/` drafts go out untranslated. A failed or cancelled translation, or an edit meanwhile, sends nothing and keeps the draft.
 
 ## Source map and checks
 
