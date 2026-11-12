@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { SessionEntry, SessionTreeNode } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
+import { summarizePastedBlocks } from "@/lib/pasted-text";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -67,6 +68,7 @@ function getLabel(entry: SessionEntry): string {
         .map((b) => b.text)
         .join(" ");
     }
+    text = summarizePastedBlocks(text);
     if (text.length > 40) text = text.slice(0, 40) + "…";
     if (text) return text;
     if (msg.role === "assistant") return "[assistant]";

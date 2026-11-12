@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, useState, useCallback, useMemo, type RefObject
 import ReactMarkdown from "react-markdown";
 import { markdownPreviewRemarkPlugins } from "@/lib/markdown";
 import { splitFinalAssistantBlocks } from "@/lib/message-display";
+import { summarizePastedBlocks } from "@/lib/pasted-text";
 import type { AgentMessage, AssistantMessage, TextContent, UserMessage } from "@/lib/types";
 import styles from "./ChatMinimap.module.css";
 
@@ -38,12 +39,13 @@ interface NodeInfo {
 }
 
 function getUserPreview(message: UserMessage): string {
-  if (typeof message.content === "string") return message.content.trim();
-  return message.content
-    .filter((block): block is TextContent => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
+  const text = typeof message.content === "string"
+    ? message.content
+    : message.content
+        .filter((block): block is TextContent => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+  return summarizePastedBlocks(text).trim();
 }
 
 function getAssistantAnswerMarkdown(message: AgentMessage | Partial<AgentMessage>): string {

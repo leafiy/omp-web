@@ -16,6 +16,11 @@ import {
 } from "@/lib/file-fuzzy";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
+import {
+  collapsePastedBlocks, expandPastedTokens, isCommandDraft, livePastedTexts, nextPastedTextId, normalizePastedText,
+  pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, summarizePastedBlocks,
+  type PastedText,
+} from "@/lib/pasted-text";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
@@ -269,9 +274,11 @@ function revokeImagePreview(image: AttachedImage): void {
 
 function QueuedMessageRow({ kind, text, onEdit, disabled, state }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; disabled?: boolean; state?: QueuedMessageItem["state"] }) {
   const { locale } = useI18n();
+  // Queued text is already expanded; show the marker, not the pasted content.
+  const label = summarizePastedBlocks(text);
   return (
     <div
-      title={text}
+      title={label}
       style={{
         display: "flex",
         alignItems: "center",
@@ -295,7 +302,7 @@ function QueuedMessageRow({ kind, text, onEdit, disabled, state }: { kind: "stee
       >
         {kind}
       </span>
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{label}</span>
       {state === "unconfirmed" && <span>{locale === "zh-CN" ? "发送未确认" : "Delivery unconfirmed"}</span>}
       {state === "sending" && <span>{locale === "zh-CN" ? "发送中" : "Sending"}</span>}
       <button type="button" disabled={disabled || !onEdit} onClick={onEdit} style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)", color: "var(--text)", opacity: disabled || !onEdit ? .5 : 1 }}>{state === "unconfirmed" ? (locale === "zh-CN" ? "取回副本" : "Recover copy") : (locale === "zh-CN" ? "取回编辑" : "Recall to edit")}</button>
@@ -392,6 +399,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
   ));
+  // Content behind the `[paste #n …]` markers in `value`; expanded when sending.
+  const [pastedTexts, setPastedTexts] = useState<PastedText[]>(() => (
+    draftKey ? getDraft(draftKey)?.pastedTexts ?? [] : []
+  ));
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [queuedSendBusy, setQueuedSendBusy] = useState(false);
   const queuedSendRef = useRef(false);
@@ -446,19 +457,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const editRevisionRef = useRef(0);
   const attachedImagesRef = useRef(attachedImages);
   const attachmentJobRef = useRef<AbortController | null>(null);
+  const pastedTextsRef = useRef(pastedTexts);
+  const pendingCaretRef = useRef<{ value: string; caret: number } | null>(null);
+  const lastCaretRef = useRef<number | null>(null);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
+  pastedTextsRef.current = pastedTexts;
 
-  const replaceDraftText = useCallback((text: string) => {
+  const replacePastedTexts = useCallback((next: PastedText[]) => {
+    pastedTextsRef.current = next;
+    setPastedTexts(next);
+  }, []);
+
+  const replaceDraftText = useCallback((sent: string) => {
+    // A sent message carries its pastes expanded; fold them back into markers.
+    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(sent);
     editRevisionRef.current++;
     valueRef.current = text;
+    replacePastedTexts(pasted);
     setValue(text); setDraftNotice(undefined); setHistoryMenuOpen(false); setAtQuery(null);
-    if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage) });
+    if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage), pastedTexts: pasted });
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (ta) { ta.focus(); ta.setSelectionRange(text.length, text.length); ta.scrollIntoView({ block: "nearest" }); }
     });
-  }, []);
+  }, [replacePastedTexts]);
 
   useImperativeHandle(ref, () => ({
     editText(text: string) {
@@ -487,7 +510,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const current = ta ? ta.value : value;
       // Mirrors the TUI's queue restore: queued text first, then whatever
       // the user already typed, separated by a blank line.
-      const combined = text === current ? current : [text, current].filter((t) => t.trim()).join("\n\n");
+      const adopted = text === current ? null : collapsePastedBlocks(text, livePastedTexts(current, pastedTextsRef.current));
+      const combined = adopted ? [adopted.value, current].filter((t) => t.trim()).join("\n\n") : current;
+      if (adopted) replacePastedTexts(adopted.pastedTexts);
       editRevisionRef.current++;
       valueRef.current = combined;
       setValue(combined);
@@ -678,19 +703,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (draftKey) clearDraft(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
+    replacePastedTexts([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages, draftKey, replacePastedTexts]);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
     setDraft(draftKey, {
       value,
       images: attachedImages.map(imageToDraftImage),
+      pastedTexts: livePastedTexts(value, pastedTexts),
       notice: draftNotice,
     });
-  }, [attachedImages, draftKey, value, draftNotice]);
+  }, [attachedImages, pastedTexts, draftKey, value, draftNotice]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
@@ -700,6 +727,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setDraft(previousDraftKey, {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
+        pastedTexts: livePastedTexts(valueRef.current, pastedTextsRef.current),
         notice: getDraft(previousDraftKey)?.notice,
       });
     }
@@ -714,6 +742,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     draftKeyRef.current = draftKey;
     setPendingEdit(null);
     setValue(draft?.value ?? "");
+    setPastedTexts(draft?.pastedTexts ?? []);
     setDraftNotice(draft?.notice);
     setAtQuery(null);
     setHistoryMenuOpen(false);
@@ -737,14 +766,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const handleSend = useCallback(async () => {
-    const msg = value.trim();
+    const msg = expandPastedTokens(value, pastedTexts).trim();
     if (!msg && !attachedImages.length) return;
     if (isStreaming || attachmentJobRef.current || normalSendRef.current) return;
     onAudioUnlock?.();
     normalSendRef.current = true;
     const sentKey = draftKeyRef.current;
     const sentRevision = editRevisionRef.current;
-    const sentDraft = { value, images: attachedImages.map(imageToDraftImage) };
+    const sentDraft = { value, images: attachedImages.map(imageToDraftImage), pastedTexts: livePastedTexts(value, pastedTexts) };
     const clearAccepted = () => {
       if (editRevisionRef.current !== sentRevision) return;
       if (sentKey) clearDraftIfUnchanged(sentKey, sentDraft);
@@ -766,7 +795,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (accepted !== false) clearAccepted();
     } catch { /* A failed or ambiguous send retains the draft. */ }
     finally { normalSendRef.current = false; }
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/[\r\n]/.test(value)
     ? value.slice(1).toLowerCase()
@@ -963,8 +992,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     historyItemRefs.current[historyActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [historyActiveIndex, historyMenuOpen]);
 
-  const applyHistoryInput = useCallback((text: string) => {
+  const applyHistoryInput = useCallback((sent: string) => {
+    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(sent);
     editRevisionRef.current++;
+    replacePastedTexts(pasted);
     setValue(text);
     setHistoryMenuOpen(false);
     setHistoryActiveIndex(0);
@@ -977,7 +1008,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
-  }, []);
+  }, [replacePastedTexts]);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
     editRevisionRef.current++;
@@ -1003,7 +1034,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [value]);
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
-    const msg = value.trim();
+    const msg = expandPastedTokens(value, pastedTexts).trim();
     if (!msg || normalSendRef.current || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
     if ((engine === "claude" || mode === "followup") && msg.startsWith("/")) return;
     onAudioUnlock?.();
@@ -1018,7 +1049,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (accepted !== false && editRevisionRef.current === sentRevision && valueRef.current === value) clearInput();
     } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
     finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
-  }, [value, attachedImages, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1198,10 +1229,47 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const items = Array.from(e.clipboardData?.items ?? []);
     const files = items.filter((item) => item.kind === "file")
       .map((item) => item.getAsFile()).filter((file): file is File => file !== null);
-    if (!files.length) return;
+    if (files.length) {
+      e.preventDefault();
+      void processFiles(files);
+      return;
+    }
+    // Long text becomes a marker instead of flooding the input. Command drafts
+    // (`!shell`, `/command`) keep the native paste: their text is sent verbatim.
+    const ta = textareaRef.current;
+    const text = normalizePastedText(e.clipboardData?.getData("text/plain") ?? "");
+    if (!ta || !shouldCollapsePaste(text) || isCommandDraft(ta.value)) return;
     e.preventDefault();
-    void processFiles(files);
-  }, [processFiles]);
+    const current = ta.value;
+    const start = ta.selectionStart ?? current.length;
+    const end = ta.selectionEnd ?? start;
+    const live = livePastedTexts(current, pastedTextsRef.current);
+    const entry: PastedText = { id: nextPastedTextId(live), text };
+    const token = pastedTextToken(entry);
+    const replaced = current.slice(0, start) + token + current.slice(end);
+    // A selection that cut through an existing marker takes the whole marker with it.
+    const repaired = repairPastedTokenEdit(current, replaced, live, start + token.length);
+    const next = repaired?.value ?? replaced;
+    editRevisionRef.current++;
+    valueRef.current = next;
+    replacePastedTexts([...live, entry]);
+    pendingCaretRef.current = { value: next, caret: repaired?.caret ?? start + token.length };
+    setValue(next);
+    setAtQuery(null);
+    setHistoryMenuOpen(false);
+    setSlashCursorAtEnd(pendingCaretRef.current.caret === next.length);
+  }, [processFiles, replacePastedTexts]);
+
+  // Restore the caret after an edit that rewrote the value around a marker.
+  React.useLayoutEffect(() => {
+    const pending = pendingCaretRef.current;
+    if (!pending) return;
+    pendingCaretRef.current = null;
+    const ta = textareaRef.current;
+    if (!ta || pending.value !== value) return;
+    ta.setSelectionRange(pending.caret, pending.caret);
+    lastCaretRef.current = pending.caret;
+  }, [value]);
 
   useEffect(() => {
     if (slashQuery === null) {
@@ -1569,7 +1637,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         {index + 1}
                       </span>
                       <span style={{ minWidth: 0, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", overflowWrap: "anywhere" }}>
-                        {item}
+                        {summarizePastedBlocks(item)}
                       </span>
                     </button>
                   );
@@ -1839,16 +1907,32 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ref={textareaRef}
             value={value}
             onChange={(e) => {
+              let nextValue = e.target.value;
+              let caret = e.target.selectionStart;
+              let atEnd = caret === nextValue.length && e.target.selectionEnd === nextValue.length;
+              // Paste markers are atomic; never rewrite the value mid-composition.
+              const repaired = isComposingRef.current ? null : repairPastedTokenEdit(valueRef.current, nextValue, pastedTextsRef.current, caret);
+              if (repaired) {
+                nextValue = repaired.value;
+                caret = repaired.caret;
+                atEnd = caret === nextValue.length;
+                pendingCaretRef.current = { value: nextValue, caret };
+              }
               editRevisionRef.current++;
-              valueRef.current = e.target.value;
-              setValue(e.target.value);
-              if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: e.target.value, images: attachedImagesRef.current.map(imageToDraftImage), notice: draftNotice });
-              setSlashCursorAtEnd(e.target.selectionStart === e.target.value.length && e.target.selectionEnd === e.target.value.length);
+              valueRef.current = nextValue;
+              setValue(nextValue);
+              if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: nextValue, images: attachedImagesRef.current.map(imageToDraftImage), pastedTexts: livePastedTexts(nextValue, pastedTextsRef.current), notice: draftNotice });
+              setSlashCursorAtEnd(atEnd);
               setHistoryMenuOpen(false);
-              updateAtQuery(e.target.value, e.target.selectionStart);
+              updateAtQuery(nextValue, caret);
             }}
             onSelect={(e) => {
               const el = e.currentTarget;
+              if (el.selectionStart === el.selectionEnd && !isComposingRef.current && pastedTextsRef.current.length) {
+                const snapped = snapCaretOutOfToken(el.value, el.selectionStart, lastCaretRef.current, pastedTextsRef.current);
+                if (snapped !== el.selectionStart) el.setSelectionRange(snapped, snapped);
+              }
+              lastCaretRef.current = el.selectionStart === el.selectionEnd ? el.selectionStart : null;
               setSlashCursorAtEnd(el.selectionStart === el.value.length && el.selectionEnd === el.value.length);
               updateAtQuery(el.value, el.selectionStart);
             }}

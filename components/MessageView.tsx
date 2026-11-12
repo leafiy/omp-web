@@ -9,6 +9,7 @@ import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getToolPreview } from "@/lib/tool-preview";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
+import { countLines, pastedTextPreview, splitPastedBlocks, unwrapPastedBlocks } from "@/lib/pasted-text";
 import type {
   AgentMessage,
   UserMessage,
@@ -174,12 +175,15 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     ? content.replace(/^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\][ \t]*(?:\r?\n|$)/gm, "")
     : content;
 
+  // Long pastes sent from the web composer render as attachments, not inline text.
+  const segments = useMemo(() => splitPastedBlocks(displayContent), [displayContent]);
+
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
   const copyContent = () => {
-    copyText(content).then(() => {
+    copyText(unwrapPastedBlocks(content)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -233,7 +237,11 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               })}
             </div>
           )}
-          {displayContent && <MarkdownBody className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{displayContent}</MarkdownBody>}
+          {displayContent && segments.map((segment, i) => segment.type === "paste"
+            ? <PastedTextAttachment key={i} text={segment.text} />
+            : segments.length === 1 || segment.text.trim()
+              ? <MarkdownBody key={i} className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{segment.text}</MarkdownBody>
+              : null)}
         </div>
 
       </div>
@@ -348,6 +356,37 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           )}
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
         </div>
+      )}
+    </div>
+  );
+}
+
+function PastedTextAttachment({ text }: { text: string }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const preview = useMemo(() => pastedTextPreview(text), [text]);
+  const lines = useMemo(() => countLines(text), [text]);
+  return (
+    <div style={{ margin: "6px 0", maxWidth: "100%", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-panel)", overflow: "hidden" }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        title={t(open ? "chat.pastedTextCollapse" : "chat.pastedTextExpand")}
+        onClick={() => setOpen((value) => !value)}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, padding: "6px 10px", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5, textAlign: "left" }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+          <rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M9 12h6M9 16h4" />
+        </svg>
+        <span style={{ flexShrink: 0, color: "var(--text)" }}>{t("chat.pastedText")}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{open ? "" : preview}</span>
+        <span style={{ flexShrink: 0, color: "var(--text-dim)" }}>{t("chat.pastedTextMeta", { lines, chars: text.length })}</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform 0.12s" }}>
+          <path d="M3.5 2 6.5 5 3.5 8" />
+        </svg>
+      </button>
+      {open && (
+        <pre style={{ margin: 0, padding: "8px 10px", maxHeight: 360, overflow: "auto", borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--text)" }}>{text}</pre>
       )}
     </div>
   );
