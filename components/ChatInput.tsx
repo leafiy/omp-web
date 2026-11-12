@@ -611,19 +611,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
         if (!response.ok) throw new Error(result.error ?? t("chat.uploadFailed", { status: response.status }));
         if (result.uploaded?.length) {
-          // Prepend references so an existing /command or !shell draft cannot
-          // accidentally execute instead of sending the uploaded file context.
           window.dispatchEvent(new Event("omp-web:files-changed"));
           const persistedImages = newImages.filter((_, index) => result.uploaded!.includes(uploadNames.get(imageFiles[index])!));
           setAttachedImages((prev) => [...prev, ...persistedImages]);
-          const references = result.uploaded.map((name) => {
+          // Native image attachments already have thumbnails and prompt content.
+          // Saving their files must not insert paths (or even a newline) into the draft.
+          const imageUploadNames = new Set(imageFiles.map((file) => uploadNames.get(file)!));
+          const references = result.uploaded.filter((name) => !imageUploadNames.has(name)).map((name) => {
             const label = name.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
             const href = encodeURIComponent(name).replace(/[()]/g, (char) => char === "(" ? "%28" : "%29");
             return `[@${label}](./${href})`;
           }).join(" ");
           editRevisionRef.current++;
-          setValue((current) => `${references}\n${current}`);
-          setAtQuery(null);
+          if (references) {
+            // Ordinary files still need prompt references. Prepend them so an
+            // existing /command or !shell draft cannot accidentally execute.
+            setValue((current) => `${references}\n${current}`);
+            setAtQuery(null);
+          }
           setFileIndex(null);
           fileIndexMetaRef.current = null;
           textareaRef.current?.focus();

@@ -20,8 +20,7 @@ export function ChatImage({ src, alt = "", cwd, onOpenFile, style }: {
   const localPath = resolveLocalFileHref(src, cwd);
   const inline = /^data:image\/(png|jpeg|gif|webp);base64,/i.test(src);
   const canOpen = !!onOpenFile && (!!localPath || (inline && !!cwd));
-  const label = localPath ? (zh ? "在文件浏览器中打开" : "Open in file browser")
-    : (zh ? "保存并在文件浏览器中打开" : "Save and open in file browser");
+  const label = zh ? "查看图片" : "View image";
   const open = async () => {
     if (!onOpenFile || inFlight.current) return;
     if (localPath) { onOpenFile(localPath); return; }
@@ -59,9 +58,20 @@ export function ChatImage({ src, alt = "", cwd, onOpenFile, style }: {
   };
   const imageSrc = localPath ? `/api/files/${encodeFilePathForApi(localPath)}?type=read` : src;
   return <span style={{ display: "inline-flex", flexDirection: "column", gap: 4, maxWidth: "100%" }}>
-    {/* eslint-disable-next-line @next/next/no-img-element */}
-    <img src={imageSrc} alt={alt} loading="lazy" style={style} />
-    {canOpen && <button type="button" disabled={busy} onClick={() => void open()} style={{ color: "var(--accent)", fontSize: 12, cursor: busy ? "wait" : "pointer", textAlign: "left" }}>{busy ? (zh ? "正在保存…" : "Saving…") : label}</button>}
+    {canOpen ? <button
+      type="button"
+      disabled={busy}
+      aria-label={label}
+      aria-busy={busy}
+      onClick={() => void open()}
+      style={{ display: "block", padding: 0, border: 0, background: "transparent", maxWidth: "100%", cursor: busy ? "wait" : "zoom-in" }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={imageSrc} alt={alt} loading="lazy" style={{ ...style, display: "block" }} />
+    </button> : (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={imageSrc} alt={alt} loading="lazy" style={style} />
+    )}
     {error && <span role="alert" style={{ color: "var(--text-muted)", fontSize: 12 }}>{error}</span>}
   </span>;
 }
