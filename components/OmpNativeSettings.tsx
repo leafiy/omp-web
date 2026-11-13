@@ -6,6 +6,7 @@ import { engineLabel, type AgentEngine } from "@/lib/engine";
 import { ToolUpdateControl } from "./ToolUpdateControl";
 import { TranslateSettings } from "./TranslateSettings";
 import { WebAccountSettings } from "./WebAccountSettings";
+import { PunctuationSettings } from "./PunctuationSettings";
 
 /** One settings entry for every tool; agent credential editors remain disabled. */
 export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; onClose: () => void }) {
@@ -35,6 +36,7 @@ export function OmpNativeSettings({ engine, onClose }: { engine: AgentEngine; on
         </div>
         <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>{engineLabel(engine)}</div>
         <WebAccountSettings />
+        <PunctuationSettings />
         <TranslateSettings />
         <ToolUpdateControl zh={zh} />
       </section>

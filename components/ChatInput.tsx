@@ -22,6 +22,7 @@ import {
   type PastedText,
 } from "@/lib/pasted-text";
 import { readSendTranslation, requestTranslation, writeSendTranslation } from "@/lib/translate-client";
+import { convertPromptPunctuation, readPunctuationConversion } from "@/lib/punctuation-conversion";
 import { TRANSLATE_DIRECTIONS, type TranslateDirection } from "@/lib/translate-text";
 import { useTranslateAvailable } from "@/hooks/useTranslate";
 import { FolderIcon, getFileIcon } from "./FileIcons";
@@ -788,16 +789,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   /**
    * The message as it will be sent. With the toggle on, the typed text is
-   * translated (paste markers and `!`/`/` drafts stay as written). Null means
+   * translated (paste markers and `!`/`/` drafts stay as written), then expanded
+   * and punctuation-converted according to browser settings. Null means
    * do not send: the translation failed or was cancelled, or the draft changed.
    */
   const prepareOutgoing = useCallback(async (draft: string, pasted: PastedText[]): Promise<string | null> => {
     const raw = expandPastedTokens(draft, pasted).trim();
+    if (isCommandDraft(draft)) return raw;
+    const convert = (text: string) => convertPromptPunctuation(text, readPunctuationConversion());
     const direction = activeSendTranslation;
-    if (!direction || isCommandDraft(draft)) return raw;
+    if (!direction) return convert(raw);
     const parts = splitPastedTokens(draft);
     const sources = parts.filter((part) => !part.token && part.text.trim()).map((part) => part.text);
-    if (!sources.length) return raw;
+    if (!sources.length) return convert(raw);
     const job = new AbortController();
     translateJobRef.current = job;
     const revision = editRevisionRef.current;
@@ -813,7 +817,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
       let index = 0;
       const next = parts.map((part) => (!part.token && part.text.trim() ? translated[index++] : part.text)).join("");
-      return expandPastedTokens(next, pasted).trim();
+      return convert(expandPastedTokens(next, pasted).trim());
     } catch (error) {
       if (!job.signal.aborted && composerMountedRef.current) {
         setTranslateError({ message: t("translate.sendFailed", { error: error instanceof Error ? error.message : String(error) }), text: valueRef.current, key: draftKeyRef.current });

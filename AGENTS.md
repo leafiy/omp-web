@@ -2,7 +2,7 @@
 
 ## Canonical workspace
 
-Develop, test, commit, build, deploy and run this fork only from `~/code/omp-web` (on 192.168.52.3: `/root/code/omp-web`). Keep `.git`, `node_modules` and `.next` in that directory. Use its existing checkout; do not create another checkout, worktree or external release/build directory. Local logs and inactive rollback archives belong under its git-ignored `.local/`; credentials and native agent data remain in their existing protected locations.
+Develop, test, commit, build, deploy and run this fork only from the existing canonical checkout: `~/code/omp-web` (on 192.168.52.3: `/root/code/omp-web`), exposed in the devbox/distrobox environment as `/root/2/devbox-distrobox/code/omp-web`. These are environment-specific paths to the same workspace, not separate checkouts; use the path available in the current environment rather than requiring the host path to exist. Keep `.git`, `node_modules` and `.next` in that directory. Use its existing checkout; do not create another checkout, worktree or external release/build directory. Local logs and inactive rollback archives belong under its git-ignored `.local/`; credentials and native agent data remain in their existing protected locations.
 
 For migration, builds, deployment, rollback or service-path changes, read [the single-workspace procedure](./docs/workspace.zh-CN.md). Historical `/opt/omp-web*` deployment records are not current instructions. Stop the production service before building into its `.next`; a conversation hosted by that service must finish before a separately supervised maintenance task stops it.
 

@@ -1,6 +1,6 @@
 # 唯一开发、发布与运行目录
 
-本仓库在每个服务账户下只使用 **`~/code/omp-web`**。`192.168.52.3` 使用 root，实际路径是 **`/root/code/omp-web`**。
+本仓库只使用现有的唯一检出。宿主机路径为 **`~/code/omp-web`**（`192.168.52.3` 上是 **`/root/code/omp-web`**）；devbox/distrobox 环境中同一工作区暴露为 **`/root/2/devbox-distrobox/code/omp-web`**。按当前环境使用可访问的路径，不要求宿主路径在容器内存在，也不因此创建第二份检出。下文命令中的 `~/code/omp-web` 应替换为当前环境的对应路径；生产服务路径仍以宿主机为准。
 
 ## 目录约定
 
@@ -49,7 +49,7 @@ fi
 
 验收项：
 
-1. `git status --short` 为空，`git rev-parse --show-toplevel` 为 `~/code/omp-web`。
+1. `git status --short` 为空，`git rev-parse --show-toplevel` 为当前环境下上述唯一工作区的对应路径。
 2. `node_modules`、`.next` 不再链接到旧发布目录。
 3. `systemctl show omp-web -p WorkingDirectory -p ExecStart` 使用新目录；主进程的 `/proc/<PID>/cwd` 为新目录。
 4. 未登录首页 307 跳转 `/login`、未登录 API 为 401，登录后访问及静态资源为 200；`https://omp.leafiy.com` 可用。
