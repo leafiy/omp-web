@@ -761,11 +761,16 @@ pre, code {
 .markdown-body h1 { font-size: 1.16em; }
 .markdown-body h2 { font-size: 1.08em; }
 .markdown-body h3 { font-size: 0.98em; color: color-mix(in srgb, var(--text) 88%, var(--text-muted)); }
+/* Outside markers live in this padding and .markdown-body clips horizontal
+   overflow, so the gutter must fit the widest marker: two digits ("10. ") by
+   default, plus MarkdownBody's --md-ol-extra-digits for longer numbers. ul
+   shares the base width so adjacent lists stay aligned. */
 .markdown-body ul, .markdown-body ol {
-  padding-left: 22px;
+  padding-left: 2em;
   margin: 5px 0 8px;
   list-style-position: outside;
 }
+.markdown-body ol { padding-left: calc(2em + var(--md-ol-extra-digits, 0) * 0.65em); }
 .markdown-body li { margin: 3px 0; padding-left: 2px; }
 .markdown-body ul > li { list-style-type: disc; }
 .markdown-body ol > li { list-style-type: decimal; }

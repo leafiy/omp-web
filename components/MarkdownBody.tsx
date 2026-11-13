@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type MouseEvent } from "react";
+import { useMemo, type CSSProperties, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { ChatImage } from "./ChatImage";
@@ -72,6 +72,14 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     img({ src, alt, ...props }) {
       delete props.node;
       return typeof src === "string" ? <ChatImage src={src} alt={alt ?? ""} cwd={cwd} onOpenFile={onOpenFile} /> : null;
+    },
+    ol({ node, children, ...props }) {
+      // The CSS gutter fits two-digit markers; widen it for the list's last number.
+      const start = typeof props.start === "number" ? props.start : 1;
+      const items = node?.children.filter((child) => child.type === "element" && child.tagName === "li").length ?? 0;
+      const extraDigits = String(Math.max(start, start + items - 1)).length - 2;
+      const style = extraDigits > 0 ? { ...props.style, "--md-ol-extra-digits": extraDigits } as CSSProperties : props.style;
+      return <ol {...props} style={style}>{children}</ol>;
     },
     table({ children }) {
       return (
