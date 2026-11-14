@@ -176,6 +176,8 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.showLess": "收起",
     "sidebar.projectRunning": "此项目中有会话正在运行",
     "sidebar.projectUnread": "此项目有新活动",
+    "sidebar.markProjectRead": "将此项目的所有会话标为已读",
+    "sidebar.markReadFailed": "已读状态同步失败，未读提醒已保留，请重试。",
     "sidebar.projectWaiting": "此项目中有会话在等待你回答",
     "newSession.chooseDirectory": "选择此会话的工作目录",
     "newSession.default": "默认",

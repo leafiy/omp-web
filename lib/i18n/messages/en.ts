@@ -176,6 +176,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.showLess": "Show less",
     "sidebar.projectRunning": "A session in this project is running",
     "sidebar.projectUnread": "New activity in this project",
+    "sidebar.markProjectRead": "Mark all conversations in this project as read",
+    "sidebar.markReadFailed": "Could not sync read status. Unread markers were kept; please retry.",
     "sidebar.projectWaiting": "A session in this project is waiting for your answer",
     "newSession.chooseDirectory": "Choose the working directory for this session",
     "newSession.default": "default",

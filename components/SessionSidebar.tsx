@@ -18,6 +18,8 @@ import { FileSpinner } from "./FileSpinner";
 import { StarfieldEmblem } from "./StarfieldEmblem";
 import { useTheme } from "@/hooks/useTheme";
 import { useAudio } from "@/hooks/useAudio";
+import { useSessionReadState } from "@/hooks/useSessionReadState";
+import type { SessionReadSnapshot } from "@/lib/session-read-state";
 
 function ToolbarIconButton({
   onClick,
@@ -102,36 +104,12 @@ interface Props {
   onAtMentions?: (relativePaths: string[]) => void;
 }
 
-const UNREAD_SESSIONS_STORAGE_KEY = "omp-web:unread-session-ids";
 const PROJECT_EXPANSION_STORAGE_KEY = "omp-web:sidebar-project-expansion";
 const RUNNING_SESSIONS_POLL_MS = 2500;
 /** Projects expanded until the user toggles them (most recent first). */
 const DEFAULT_EXPANDED_PROJECTS = 5;
 /** Top-level sessions shown per project before "Show more". */
 const PROJECT_SESSION_PREVIEW = 5;
-
-function loadUnreadSessionIds(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(UNREAD_SESSIONS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) return new Set(parsed.filter((id): id is string => typeof id === "string"));
-    return new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function saveUnreadSessionIds(ids: Set<string>): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (ids.size === 0) window.localStorage.removeItem(UNREAD_SESSIONS_STORAGE_KEY);
-    else window.localStorage.setItem(UNREAD_SESSIONS_STORAGE_KEY, JSON.stringify([...ids]));
-  } catch {
-    // ignore storage quota / privacy-mode errors
-  }
-}
 
 /** Explicit expand/collapse choices keyed by project root. */
 function loadProjectExpansion(): Record<string, boolean> {
@@ -382,7 +360,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  const { unreadSessionIds, applyReadState, markSessionsRead, readError } = useSessionReadState(selectedSessionId);
   // Sessions with a question/approval dialog waiting for the user.
   const [waitingSessionIds, setWaitingSessionIds] = useState<Set<string>>(() => new Set());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -431,13 +409,6 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
         applyWaitingSessionIds(data.waitingSessionIds);
       }
-      // Drop unread markers for sessions that no longer exist (e.g. deleted).
-      const existingIds = new Set(data.sessions.map((s) => s.id));
-      setUnreadSessionIds((prev) => {
-        if (prev.size === 0) return prev;
-        const next = new Set([...prev].filter((id) => existingIds.has(id)));
-        return next.size === prev.size ? prev : next;
-      });
       setError(null);
       if (!showLoading) {
         setSessionRefreshDone(true);
@@ -460,12 +431,6 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
-
-  // Persist unread markers so they survive a browser refresh before the user
-  // has actually opened the completed session.
-  useEffect(() => {
-    saveUnreadSessionIds(unreadSessionIds);
-  }, [unreadSessionIds]);
 
   useEffect(() => {
     saveProjectExpansion(projectExpansion);
@@ -498,8 +463,9 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
           signal: current.signal,
         });
         if (!res.ok) return;
-        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[] };
+        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[]; readState?: SessionReadSnapshot };
         if (stopped || controller !== current) return;
+        applyReadState(data.readState);
         runningPollAuthoritativeRef.current = true;
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
         applyWaitingSessionIds(data.waitingSessionIds);
@@ -529,37 +495,17 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [applyWaitingSessionIds]);
+  }, [applyWaitingSessionIds, applyReadState]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
     const completedInBackground = [...previous].filter((id) => !runningSessionIds.has(id) && id !== selectedSessionId);
-    const newlyRunning = [...runningSessionIds];
-
-    if (completedInBackground.length > 0 || newlyRunning.length > 0) {
-      setUnreadSessionIds((prev) => {
-        const next = new Set(prev);
-        newlyRunning.forEach((id) => next.delete(id));
-        completedInBackground.forEach((id) => next.add(id));
-        return next;
-      });
-    }
     if (completedInBackground.length > 0) {
       loadSessions(false);
     }
 
     previousRunningSessionIdsRef.current = runningSessionIds;
   }, [runningSessionIds, selectedSessionId, loadSessions]);
-
-  useEffect(() => {
-    if (!selectedSessionId) return;
-    setUnreadSessionIds((prev) => {
-      if (!prev.has(selectedSessionId)) return prev;
-      const next = new Set(prev);
-      next.delete(selectedSessionId);
-      return next;
-    });
-  }, [selectedSessionId]);
 
   useEffect(() => {
     if (explorerRefreshKey !== undefined) setExplorerKey((k) => k + 1);
@@ -777,6 +723,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
             {t("sidebar.loading")}
           </div>
         )}
+        {readError && <div role="alert" style={{ padding: "4px 12px", color: "var(--text-muted)", fontSize: 12 }}>{t("sidebar.markReadFailed")}</div>}
         {error && (
           <div style={{ padding: "12px 16px", color: "#f87171", fontSize: 12 }}>
             {error}
@@ -818,6 +765,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                 running={group.sessions.some((s) => runningSessionIds.has(s.id))}
                 waiting={group.sessions.some((s) => waitingSessionIds.has(s.id))}
                 unread={group.sessions.some((s) => unreadSessionIds.has(s.id))}
+                onMarkRead={() => void markSessionsRead(allSessions.filter(s => sessionProjectRoot(s) === group.root).map(s => s.id))}
                 sessionCount={group.sessions.length}
                 onToggle={() => toggleProject(group.root, expanded)}
                 onNewSession={onNewSession ? () => startNewSession(group.root) : undefined}
@@ -1000,6 +948,7 @@ function ProjectGroupHeader({
   running,
   waiting,
   unread,
+  onMarkRead,
   sessionCount,
   onToggle,
   onNewSession,
@@ -1014,6 +963,7 @@ function ProjectGroupHeader({
   running: boolean;
   waiting: boolean;
   unread: boolean;
+  onMarkRead: () => void;
   sessionCount: number;
   onToggle: () => void;
   onNewSession?: () => void;
@@ -1071,6 +1021,16 @@ function ProjectGroupHeader({
         {!expanded && !waiting && running && <RunningSessionIndicator label={t("sidebar.projectRunning")} />}
         {!expanded && !waiting && !running && unread && <UnreadSessionIndicator label={t("sidebar.projectUnread")} />}
       </button>
+      <ToolbarIconButton
+        onClick={onMarkRead}
+        title={t("sidebar.markProjectRead")}
+        disabled={!unread}
+        color={unread ? "var(--accent)" : "var(--text-dim)"}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m3 12 4 4L17 6M11 16l2 2L23 8" />
+        </svg>
+      </ToolbarIconButton>
       <span
         className="sidebar-project-count"
         aria-hidden="true"

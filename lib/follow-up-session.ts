@@ -281,7 +281,7 @@ export class FollowUpSession implements FollowUpNativeSession {
         try { await this.state(); } catch { /* Native acknowledgement, not refresh, owns removal. */ }
         this.queueChanged();
         return { steering: strings(nativeRemoved.steering), followUp: [...strings(nativeRemoved.followUp), ...removed.map(item => item.text)] };
-      } finally { this.manualRequests--; this.schedule(); }
+      } finally { this.manualRequests--; this.schedule(); this.changed(); }
     }
     if (this.pending.length && (["fork", "navigate_tree"].includes(type) || type === "prompt" && typeof command.message === "string" && command.message.trimStart().startsWith("/"))) throw new Error("Withdraw pending follow-ups before changing the session or running commands");
     if (type === "abort") {
@@ -299,7 +299,13 @@ export class FollowUpSession implements FollowUpNativeSession {
       if (type === "prompt" && this.paused) { this.paused = false; this.queueChanged(); }
       if (type === "get_session_stats") rememberContextUsage(this.sessionId, object(result).contextUsage);
       return result;
-    } finally { if (mutation) this.manualRequests--; this.schedule(); this.maybeNameSession(); }
+    } finally {
+      if (mutation) this.manualRequests--;
+      this.schedule(); this.maybeNameSession();
+      // Native completion callbacks can run while manualRequests still holds
+      // the wrapper busy. Publish the final state even with no browser polling.
+      if (mutation) this.changed();
+    }
   }
   destroy() { this.closed = true; this.suppressTitle(); clearTimeout(this.timer); this.native.destroy(); }
   async shutdown() { this.closed = true; this.suppressTitle(); clearTimeout(this.timer); await this.native.shutdown(); await this.titleWork; }

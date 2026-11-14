@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sessionReadState } from "./session-read-state";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { AgentRpcClient, type AgentFrame, type AgentProcessOptions } from "./agent-rpc-client";
@@ -614,9 +615,12 @@ export function subscribeRunningSessions(listener: (ids: string[], waitingIds: s
 
 let lastRunningSnapshot = "";
 export function notifyRunningChange(): void {
+  const ids = getRunningRpcSessionIds();
+  // Record completions even with no browser/SSE subscriber attached.
+  try { sessionReadState().observeRunning(ids); }
+  catch (error) { console.error("Unable to persist session read state", error); }
   const listeners = globalThis.__ompWebRunningListeners;
   if (!listeners?.size) { lastRunningSnapshot = ""; return; }
-  const ids = getRunningRpcSessionIds();
   const waitingIds = getWaitingRpcSessionIds();
   const snapshot = JSON.stringify([[...ids].sort(), [...waitingIds].sort()]);
   if (snapshot === lastRunningSnapshot) return;
