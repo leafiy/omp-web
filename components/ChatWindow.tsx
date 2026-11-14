@@ -13,6 +13,7 @@ import { CollapsedHistoryTurn, HistoryTurnToggle } from "./HistoryTurnFold";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { NewSessionDirectoryPicker } from "./NewSessionDirectoryPicker";
 import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
+import { moveSendTranslation } from "@/lib/translate-client";
 import { useI18n } from "@/hooks/useI18n";
 import { AgentTasksPanel } from "./AgentTasksPanel";
 import type { AgentTask } from "@/lib/agent-task-types";
@@ -311,7 +312,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
 
   // Choosing another directory restarts the empty chat there; the unsent
-  // draft (text and in-memory images) moves with it.
+  // draft (text and in-memory images) and its translate toggle move with it.
   const handleNewSessionCwdChange = useCallback((cwd: string) => {
     if (!onNewSession || !newSessionCwd || cwd === newSessionCwd) return;
     const fromKey = `new:${engine}:${newSessionCwd}`;
@@ -320,6 +321,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       setDraft(`new:${engine}:${cwd}`, draft);
       clearDraft(fromKey);
     }
+    moveSendTranslation(fromKey, `new:${engine}:${cwd}`);
     onNewSession(cwd, engine);
   }, [engine, newSessionCwd, onNewSession]);
 

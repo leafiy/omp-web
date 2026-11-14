@@ -92,22 +92,84 @@ export async function requestTranslation(texts: string[], direction: TranslateDi
   return translated as string[];
 }
 
-const SEND_TRANSLATION_KEY = "omp-web:translate-before-send";
+type PreferenceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-/** The composer's translate-before-send direction, remembered per browser; null when off. */
-export function readSendTranslation(): TranslateDirection | null {
-  try {
-    const value = localStorage.getItem(SEND_TRANSLATION_KEY);
-    return isTranslateDirection(value) ? value : null;
-  } catch { return null; }
+const SEND_TRANSLATION_KEY = "omp-web:translate-before-send:v2";
+// The old browser-wide setting has no per-conversation meaning; it is dropped.
+const LEGACY_SEND_TRANSLATION_KEY = "omp-web:translate-before-send";
+const MAX_SEND_TRANSLATION_CONVERSATIONS = 200;
+
+/**
+ * The composer's translate-before-send direction per conversation, keyed like
+ * drafts (a web session ID, or `new:<engine>:<cwd>` for an unsent new chat).
+ * A conversation without an entry is off, so turning it on never reaches
+ * another one. Storage is re-read on every call so tabs do not clobber each other.
+ */
+export function createSendTranslationStore(storage: () => PreferenceStorage | undefined) {
+  let memory = new Map<string, TranslateDirection>();
+  let legacyDropped = false;
+
+  function load(): Map<string, TranslateDirection> {
+    try {
+      const store = storage();
+      if (!store) return memory;
+      if (!legacyDropped) {
+        legacyDropped = true;
+        store.removeItem(LEGACY_SEND_TRANSLATION_KEY);
+      }
+      const raw = store.getItem(SEND_TRANSLATION_KEY);
+      const entries: unknown = raw ? (JSON.parse(raw) as { entries?: unknown } | null)?.entries : [];
+      memory = new Map(Array.isArray(entries)
+        ? entries.filter((entry): entry is [string, TranslateDirection] => Array.isArray(entry) && typeof entry[0] === "string" && !!entry[0] && isTranslateDirection(entry[1]))
+        : []);
+    } catch { /* Blocked or corrupt storage: keep this page's choices. */ }
+    return memory;
+  }
+
+  function save(directions: Map<string, TranslateDirection>): void {
+    // Oldest choices go first; insertion order is recency.
+    while (directions.size > MAX_SEND_TRANSLATION_CONVERSATIONS) {
+      const oldest = directions.keys().next().value;
+      if (oldest === undefined) break;
+      directions.delete(oldest);
+    }
+    memory = directions;
+    try {
+      const store = storage();
+      if (!directions.size) store?.removeItem(SEND_TRANSLATION_KEY);
+      else store?.setItem(SEND_TRANSLATION_KEY, JSON.stringify({ version: 2, entries: [...directions] }));
+    } catch { /* The toggle still works for this page when storage is unavailable. */ }
+  }
+
+  function readSendTranslation(key: string | undefined): TranslateDirection | null {
+    return key ? load().get(key) ?? null : null;
+  }
+
+  function writeSendTranslation(key: string | undefined, direction: TranslateDirection | null): void {
+    if (!key) return;
+    const directions = load();
+    directions.delete(key);
+    if (direction) directions.set(key, direction);
+    save(directions);
+  }
+
+  /** The same conversation under a new key (a new chat that became a session, or moved directory). */
+  function moveSendTranslation(from: string, to: string): void {
+    if (from === to) return;
+    const directions = load();
+    const direction = directions.get(from) ?? null;
+    directions.delete(from);
+    directions.delete(to);
+    if (direction) directions.set(to, direction);
+    save(directions);
+  }
+
+  return { readSendTranslation, writeSendTranslation, moveSendTranslation };
 }
 
-export function writeSendTranslation(direction: TranslateDirection | null): void {
-  try {
-    if (direction) localStorage.setItem(SEND_TRANSLATION_KEY, direction);
-    else localStorage.removeItem(SEND_TRANSLATION_KEY);
-  } catch { /* The toggle still works for this page when storage is unavailable. */ }
-}
+export const { readSendTranslation, writeSendTranslation, moveSendTranslation } = createSendTranslationStore(
+  () => typeof window === "undefined" ? undefined : window.localStorage,
+);
 
 const MAX_CACHED_TRANSLATIONS = 200;
 const translationCache = new Map<string, string>();

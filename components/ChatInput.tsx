@@ -21,7 +21,7 @@ import {
   pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens, summarizePastedBlocks,
   type PastedText,
 } from "@/lib/pasted-text";
-import { readSendTranslation, requestTranslation, writeSendTranslation } from "@/lib/translate-client";
+import { moveSendTranslation, readSendTranslation, requestTranslation, writeSendTranslation } from "@/lib/translate-client";
 import { convertPromptPunctuation, readPunctuationConversion } from "@/lib/punctuation-conversion";
 import { TRANSLATE_DIRECTIONS, type TranslateDirection } from "@/lib/translate-text";
 import { useTranslateAvailable } from "@/hooks/useTranslate";
@@ -769,9 +769,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, []);
 
-  // Translate-before-send toggle: a browser preference that applies only while an API is configured.
+  // Translate-before-send toggle: remembered per conversation (keyed like its
+  // draft) and applied only while an API is configured. Other chats stay off.
   const translateAvailable = useTranslateAvailable();
-  const [sendTranslation, setSendTranslation] = useState<TranslateDirection | null>(() => readSendTranslation());
+  const [sendTranslation, setSendTranslation] = useState<TranslateDirection | null>(() => readSendTranslation(draftKey));
+  const sendTranslationKeyRef = useRef(draftKey);
+  useEffect(() => {
+    const previousKey = sendTranslationKeyRef.current;
+    if (previousKey === draftKey) return;
+    sendTranslationKeyRef.current = draftKey;
+    // A new chat keeps its choice when it becomes a session; the next new chat starts off.
+    if (previousKey?.startsWith("new:") && draftKey && !draftKey.startsWith("new:")) moveSendTranslation(previousKey, draftKey);
+    setSendTranslation(readSendTranslation(draftKey));
+  }, [draftKey]);
   const activeSendTranslation = translateAvailable ? sendTranslation : null;
   const [translatingForSend, setTranslatingForSend] = useState<TranslateDirection | null>(null);
   // An error belongs to the exact draft it was produced for; any edit or draft switch retires it.
@@ -782,7 +792,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Off → ZH→EN → EN→ZH → off.
   const cycleSendTranslation = useCallback(() => {
     const next = sendTranslation === null ? TRANSLATE_DIRECTIONS[0] : sendTranslation === TRANSLATE_DIRECTIONS[0] ? TRANSLATE_DIRECTIONS[1] : null;
-    writeSendTranslation(next);
+    writeSendTranslation(sendTranslationKeyRef.current, next);
     setSendTranslation(next);
     setTranslateError(null);
   }, [sendTranslation]);
