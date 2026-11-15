@@ -352,6 +352,9 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   const [filter, setFilter] = useState("");
   const [projectExpansion, setProjectExpansion] = useState<Record<string, boolean>>(() => loadProjectExpansion());
   const [expandedSessionLists, setExpandedSessionLists] = useState<Set<string>>(() => new Set());
+  // An explicit collapse wins over auto-revealing the currently selected row.
+  // Selecting a different conversation may reveal its row again.
+  const [collapsedForSelection, setCollapsedForSelection] = useState<Record<string, string | null>>({});
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
@@ -581,11 +584,17 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     });
   };
 
-  const toggleSessionList = (root: string) => {
+  const toggleSessionList = (root: string, showingAll: boolean) => {
     setExpandedSessionLists((prev) => {
       const next = new Set(prev);
-      if (next.has(root)) next.delete(root);
+      if (showingAll) next.delete(root);
       else next.add(root);
+      return next;
+    });
+    setCollapsedForSelection((prev) => {
+      const next = { ...prev };
+      if (showingAll) next[root] = selectedSessionId;
+      else delete next[root];
       return next;
     });
   };
@@ -749,6 +758,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
           const tree = expanded ? buildSessionTree(group.sessions) : [];
           const listExpanded = expandedSessionLists.has(group.root);
           const selectedHidden = !listExpanded
+            && collapsedForSelection[group.root] !== selectedSessionId
             && tree.slice(PROJECT_SESSION_PREVIEW).some((node) => treeContains(node, selectedSessionId));
           const showAll = Boolean(query) || listExpanded || selectedHidden;
           const visibleNodes = showAll ? tree : tree.slice(0, PROJECT_SESSION_PREVIEW);
@@ -766,6 +776,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                 waiting={group.sessions.some((s) => waitingSessionIds.has(s.id))}
                 unread={group.sessions.some((s) => unreadSessionIds.has(s.id))}
                 onMarkRead={() => void markSessionsRead(allSessions.filter(s => sessionProjectRoot(s) === group.root).map(s => s.id))}
+                onCollapseList={expanded && showAll && !query ? () => toggleSessionList(group.root, true) : undefined}
                 sessionCount={group.sessions.length}
                 onToggle={() => toggleProject(group.root, expanded)}
                 onNewSession={onNewSession ? () => startNewSession(group.root) : undefined}
@@ -790,11 +801,11 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                       depth={0}
                     />
                   ))}
-                  {(hiddenCount > 0 || (listExpanded && !query && tree.length > PROJECT_SESSION_PREVIEW)) && (
+                  {(hiddenCount > 0 || (showAll && !query && tree.length > PROJECT_SESSION_PREVIEW)) && (
                     <button
                       type="button"
                       className="sidebar-show-more"
-                      onClick={() => toggleSessionList(group.root)}
+                      onClick={() => toggleSessionList(group.root, showAll)}
                       style={{
                         display: "block",
                         height: 26,
@@ -949,6 +960,7 @@ function ProjectGroupHeader({
   waiting,
   unread,
   onMarkRead,
+  onCollapseList,
   sessionCount,
   onToggle,
   onNewSession,
@@ -964,6 +976,7 @@ function ProjectGroupHeader({
   waiting: boolean;
   unread: boolean;
   onMarkRead: () => void;
+  onCollapseList?: () => void;
   sessionCount: number;
   onToggle: () => void;
   onNewSession?: () => void;
@@ -1021,16 +1034,28 @@ function ProjectGroupHeader({
         {!expanded && !waiting && running && <RunningSessionIndicator label={t("sidebar.projectRunning")} />}
         {!expanded && !waiting && !running && unread && <UnreadSessionIndicator label={t("sidebar.projectUnread")} />}
       </button>
-      <ToolbarIconButton
-        onClick={onMarkRead}
-        title={t("sidebar.markProjectRead")}
-        disabled={!unread}
-        color={unread ? "var(--accent)" : "var(--text-dim)"}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m3 12 4 4L17 6M11 16l2 2L23 8" />
-        </svg>
-      </ToolbarIconButton>
+      {unread && (
+        <ToolbarIconButton
+          onClick={onMarkRead}
+          title={t("sidebar.markProjectRead")}
+          color="var(--accent)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m3 12 4 4L17 6M11 16l2 2L23 8" />
+          </svg>
+        </ToolbarIconButton>
+      )}
+      {onCollapseList && (
+        <button
+          type="button"
+          onClick={onCollapseList}
+          title={t("sidebar.showLess")}
+          aria-label={t("sidebar.showLess")}
+          style={{ height: 24, padding: "0 5px", border: "none", borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, fontSize: 11.5 }}
+        >
+          {t("sidebar.showLess")}
+        </button>
+      )}
       <span
         className="sidebar-project-count"
         aria-hidden="true"
