@@ -3,6 +3,7 @@
 import { useMemo, type CSSProperties, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
+import { markdownUrlTransform } from "@/lib/markdown-urls";
 import { ChatImage } from "./ChatImage";
 import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
@@ -93,6 +94,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
       <ReactMarkdown
+        urlTransform={markdownUrlTransform}
         remarkPlugins={markdownRemarkPlugins}
         rehypePlugins={markdownRehypePlugins}
         components={components}

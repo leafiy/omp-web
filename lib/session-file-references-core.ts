@@ -32,7 +32,7 @@ function hasReferenceBoundaryAfter(text: string, index: number): boolean {
 
 function containsExactPathReference(text: string, filePath: string): boolean {
   const target = normalizeSlashes(filePath);
-  const targets = target.startsWith("/") ? [target, `file://${target}`] : [target];
+  const targets = target.startsWith("/") ? [target, `file://${target}`, `sandbox:${target}`] : [target];
   const haystacks = new Set([normalizeSlashes(text), normalizeSlashes(safeDecode(text))]);
 
   for (const haystack of haystacks) {

@@ -81,7 +81,10 @@ export function resolveLocalFileHref(
 ): string | null {
   if (!href) return null;
 
-  const cleanHref = href.split("#", 1)[0].split("?", 1)[0].trim();
+  // `sandbox:` is a model-generated local file reference, not a browser URL.
+  // Accept only an absolute path, never a host or a nested URL scheme.
+  const localHref = href.replace(/^sandbox:(\/)(?!\/)/i, "$1");
+  const cleanHref = localHref.split("#", 1)[0].split("?", 1)[0].trim();
   if (!cleanHref) return null;
 
   let candidate: string | null = null;
