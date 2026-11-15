@@ -73,6 +73,23 @@ test("keeps local file markdown links in the app", () => {
   assert.doesNotMatch(html, /target=|rel=|\snode=/);
 });
 
+test("preserves sandbox download links through the full sanitization pipeline", () => {
+  for (const path of ["/tmp/review2_已补齐人工标注.tsv", "/outside/project/report.tsv"]) {
+    const html = renderMarkdown(`[下载文件](sandbox:${path})`);
+    const href = path.split("/").map(encodeURIComponent).join("/");
+    assert.ok(html.includes(`<a href="${href}">下载文件</a>`), html);
+    assert.doesNotMatch(html, /target=/);
+  }
+});
+
+test("keeps unsafe links blocked with local protocol normalization enabled", () => {
+  for (const url of ["javascript:alert%281%29", "data:text/html,hello", "sandbox://host/file", "sandbox:relative.tsv"]) {
+    const html = renderMarkdown(`[link](${url})`);
+    assert.doesNotMatch(html, /href="(?:javascript:|data:|sandbox:|\/\/host)/);
+  }
+  assert.doesNotMatch(renderMarkdown('<a href="javascript:alert(1)" onclick="alert(1)">bad</a>'), /href="javascript:|onclick=/);
+});
+
 test("renders LaTeX parenthesis delimiters as inline math", () => {
   const html = renderMarkdown(String.raw`射线为 \(r_c = K^{-1}p\)。`);
 
