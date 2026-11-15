@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Share+Tech+Mono&display=swap');
 @import "tailwindcss";
 
 /* ── Local font: HarmonyOS Sans (UI chrome) ─────────────────────────────── */
@@ -68,605 +67,114 @@
   --bg-subtle: rgba(0,0,0,0.03);
 }
 
+/* Workbench palette adapted from VS Code Dark Modern.
+   Sources and intentional web adaptations: docs/theme-comparison.zh-CN.md. */
 html.dark {
-  --bg: #1a1a1a;
-  --bg-panel: #242424;
-  --bg-hover: #2e2e2e;
-  --bg-selected: #383838;
-  --border: #3a3a3a;
-  --text: #e8e8e8;
-  --text-muted: #9ca3af;
-  --text-dim: #6b7280;
-  --accent: #60a5fa;
-  --accent-hover: #93c5fd;
-  --user-bg: #1e293b;
-  --assistant-bg: #1a1a1a;
-  --tool-bg: #1f2937;
-  --bg-subtle: rgba(255,255,255,0.04);
+  color-scheme: dark;
+  --bg: #1f1f1f;
+  --bg-panel: #181818;
+  --bg-hover: #2b2b2b;
+  --bg-selected: #263c50;
+  --border: #3c3c3c;
+  --text: #cccccc;
+  --text-muted: #adadad;
+  --text-dim: #989898;
+  --accent: #4daafc;
+  --accent-hover: #85b6ff;
+  --user-bg: #243447;
+  --assistant-bg: #1f1f1f;
+  --tool-bg: #232323;
+  --bg-subtle: rgba(255,255,255,0.045);
+  --input-bg: #313131;
+  --focus-ring: #4daafc;
+  --button-bg: #0078d4;
+  --button-hover: #026ec1;
+  --button-text: #ffffff;
+  --selection-bg: #264f78;
+  --scrollbar-thumb: #626262;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STARFIELD THEME  —  NASA-punk · Constellation Field · Deep Space HUD
-   Applied via `html.starfield`.  All overrides are scoped under this class
-   so the light and dark themes are completely unaffected.
-   ══════════════════════════════════════════════════════════════════════════ */
-
-/* ── 1. Design tokens ──────────────────────────────────────────────────── */
+/* Starfield uses Tokyo Night's blue-gray surfaces, with a restrained gold
+   identity. Keep shared typography, geometry and semantic status colors;
+   syntax colors belong to the highlighter, never inline-style selectors. */
 html.starfield {
-  --bg:           #08090d;
-  --bg-panel:     #0d1117;
-  --bg-hover:     #161d2e;
-  --bg-selected:  #1a2540;
-  --bg-subtle:    rgba(217,155,38,0.05);
-  --border:       #1e2d45;
-  --text:         #e8eeff;
-  --text-muted:   #8fa3c0;
-  --text-dim:     #3d5070;
-  --accent:       #d99b26;
-  --accent-hover: #f0b840;
-  --user-bg:      #0c1a2e;
-  --assistant-bg: #08090d;
-  --tool-bg:      #0a1020;
-  /* Typography — NASA-punk Orbitron & Share Tech Mono */
-  --font-display: 'Orbitron', 'Noto Sans SC', -apple-system, sans-serif;
-  --font-mono:    'Share Tech Mono', ui-monospace, monospace;
-  --font-mono-font: var(--font-mono);
-  /* Internal palette */
-  --sf-navy:      #1b365d;
-  --sf-gold:      #d99b26;
-  --sf-gold-dim:  #a07018;
-  --sf-orange:    #e05a2b;
-  --sf-red:       #c81d25;
-  --sf-green:     #22c55e;
-  --sf-cyan:      #38bdf8;
-  --sf-glow:      rgba(217,155,38,0.22);
-  --sf-stripe:    linear-gradient(90deg,
-    #1b365d 0% 25%, #d99b26 25% 50%,
-    #e05a2b 50% 75%, #c81d25 75% 100%);
+  color-scheme: dark;
+  --bg: #1a1b26;
+  --bg-panel: #16161e;
+  --bg-hover: #292e42;
+  --bg-selected: #303d60;
+  --bg-subtle: rgba(169,177,214,0.06);
+  --border: #414868;
+  --text: #c0caf5;
+  --text-muted: #a9b1d6;
+  --text-dim: #929bbd;
+  --accent: #7aa2f7;
+  --accent-hover: #a4c2ff;
+  --user-bg: #242b42;
+  --assistant-bg: #1a1b26;
+  --tool-bg: #202230;
+  --input-bg: #202230;
+  --focus-ring: #7aa2f7;
+  --button-bg: #e0af68;
+  --button-hover: #edc48b;
+  --button-text: #1a1b26;
+  --selection-bg: #364a82;
+  --scrollbar-thumb: #626e97;
+  --sf-gold: #e0af68;
 }
 
-/* UI Chrome Typography: Orbitron for titles & Share Tech Mono for controls */
-html.starfield .sidebar-container,
-html.starfield .file-viewer-toolbar,
-html.starfield button,
-html.starfield input,
-html.starfield select {
-  font-family: var(--font-mono) !important;
+html:is(.dark, .starfield) {
+  --terminal-bg: var(--bg-panel);
+  --steer-text: #e0af68;
+  --follow-up-text: #a5b4fc;
 }
 
-html.starfield .brand-title,
-html.starfield .section-title,
-html.starfield .comp-title {
-  font-family: var(--font-display) !important;
-  letter-spacing: 0.12em !important;
-  text-transform: uppercase !important;
+/* Dark-only control treatment. A light link color is not a button fill.
+   These few !important declarations override existing inline composer
+   styles, without changing their sizing or disabled/busy lifecycle. */
+html:is(.dark, .starfield) .sf-chat-input-box {
+  background: var(--input-bg) !important;
 }
-
-/* ── 2. Global background: deep-space dot-grid ─────────────────────────── */
-html.starfield body {
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(circle, rgba(217,155,38,0.06) 1px, transparent 1px),
-    radial-gradient(circle, rgba(27,54,93,0.18) 1px, transparent 1px);
-  background-size: 40px 40px, 20px 20px;
-  background-position: 0 0, 10px 10px;
+html:is(.dark, .starfield) .sf-chat-input-box:focus-within {
+  border-color: var(--focus-ring) !important;
+  box-shadow: 0 0 0 1px var(--focus-ring) !important;
 }
-
-/* ── 3. Top 4-color mission stripe ─────────────────────────────────────── */
-html.starfield body::before {
-  content: "";
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: var(--sf-stripe);
-  z-index: 9999;
-  pointer-events: none;
+html:is(.dark, .starfield) .sf-send-btn:not(:disabled) {
+  background: var(--button-bg) !important;
+  color: var(--button-text) !important;
 }
-
-/* ── 4. Sidebar ──────────────────────────────────────────────────────────── */
-html.starfield .sidebar-container {
-  background: #0b0f18 !important;
-  border-right: 2px solid var(--sf-navy) !important;
-  box-shadow: inset -8px 0 24px rgba(27,54,93,0.12) !important;
-  position: relative;
+html:is(.dark, .starfield) .sf-send-btn:hover:not(:disabled) {
+  background: var(--button-hover) !important;
 }
-/* Gold accent bar on inner edge of sidebar */
-html.starfield .sidebar-container::after {
-  content: "";
-  position: absolute;
-  top: 0; right: -1px; bottom: 0;
-  width: 1px;
-  background: linear-gradient(180deg,
-    transparent 0%, var(--sf-gold) 20%,
-    var(--sf-gold) 80%, transparent 100%);
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-/* ── 5. Top bar ─────────────────────────────────────────────────────────── */
-html.starfield [class*="top-bar"],
-html.starfield [style*="height: 36"][style*="bg-panel"],
-html.starfield div[style*="height: 36px"],
-html.starfield div[style*="height:36px"] {
-  background: #0b0f18 !important;
-}
-
-/* ── 6. Scrollbars ──────────────────────────────────────────────────────── */
-html.starfield ::-webkit-scrollbar { width: 3px; height: 3px; }
-html.starfield ::-webkit-scrollbar-track { background: transparent; }
-html.starfield ::-webkit-scrollbar-thumb {
-  background: var(--sf-navy);
-  border-radius: 0;
-}
-html.starfield ::-webkit-scrollbar-thumb:hover { background: var(--sf-gold); }
-
-/* ── 7. Text selection ──────────────────────────────────────────────────── */
-html.starfield ::selection {
-  background: rgba(217,155,38,0.30);
-  color: #f0f4ff;
-}
-
-/* ── 8. User message bubble ─────────────────────────────────────────────── */
-html.starfield .sf-user-bubble {
-  border-radius: 0 !important;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%) !important;
-  border: 1px solid rgba(217,155,38,0.35) !important;
-  border-left: 3px solid var(--sf-gold) !important;
-  background: linear-gradient(135deg, #0f1e38 0%, #0c1a2e 100%) !important;
-  box-shadow: inset 0 1px 0 rgba(217,155,38,0.12), 0 4px 20px rgba(27,54,93,0.2) !important;
-  position: relative;
-}
-/* Corner crosshair — top-right */
-html.starfield .sf-user-bubble::before {
-  content: "";
-  position: absolute;
-  top: 4px; right: 4px;
-  width: 8px; height: 8px;
-  border-top: 1.5px solid var(--sf-gold);
-  border-right: 1.5px solid var(--sf-gold);
-  opacity: 0.6;
-  pointer-events: none;
-}
-/* Corner crosshair — bottom-left */
-html.starfield .sf-user-bubble::after {
-  content: "";
-  position: absolute;
-  bottom: 4px; left: 6px;
-  width: 8px; height: 8px;
-  border-bottom: 1.5px solid var(--sf-gold);
-  border-left: 1.5px solid var(--sf-gold);
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-/* ── 9. Tool call blocks ────────────────────────────────────────────────── */
-html.starfield .sf-tool-block {
-  border-radius: 0 !important;
-  border: 1px solid rgba(27,54,93,0.8) !important;
-  border-left: 2px solid var(--sf-orange) !important;
-  background: #0a1020 !important;
-  position: relative;
-  overflow: hidden;
-}
-html.starfield .sf-tool-block.sf-tool-error {
-  border-left-color: var(--sf-red) !important;
-  border-color: rgba(200,29,37,0.4) !important;
-  background: rgba(200,29,37,0.04) !important;
-}
-/* Scan-line shimmer on tool header hover */
-html.starfield .sf-tool-block::before {
-  content: "";
-  position: absolute;
-  top: 0; left: -100%; right: 0; bottom: 0;
-  background: linear-gradient(90deg,
-    transparent, rgba(217,155,38,0.04), transparent);
-  transition: left 0.6s ease;
-  pointer-events: none;
-}
-html.starfield .sf-tool-block:hover::before { left: 100%; }
-
-/* ── 10. Code blocks ────────────────────────────────────────────────────── */
-html.starfield .markdown-code-block {
-  border-radius: 0 !important;
-  border: 1px solid var(--sf-navy) !important;
-  border-left: 3px solid var(--sf-gold) !important;
-  background: #06080f !important;
-  box-shadow: inset 0 0 30px rgba(27,54,93,0.12) !important;
-}
-html.starfield .markdown-code-header {
-  background: linear-gradient(90deg, var(--sf-navy), #0d1a33) !important;
-  color: var(--sf-gold) !important;
-  border-bottom: 1px solid rgba(217,155,38,0.3) !important;
-  font-family: var(--font-mono) !important;
-  letter-spacing: 0.08em !important;
-  border-radius: 0 !important;
-}
-html.starfield .markdown-code-lang {
-  color: var(--sf-orange) !important;
-  font-weight: 700 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.12em !important;
-}
-html.starfield .markdown-code-action {
-  color: var(--sf-gold) !important;
-  border-radius: 0 !important;
-}
-html.starfield .markdown-code-action:hover:not(:disabled) {
-  background: rgba(217,155,38,0.12) !important;
-  color: #f0b840 !important;
-}
-
-/* ── 11. Inline code ────────────────────────────────────────────────────── */
-html.starfield .markdown-inline-code {
-  background: rgba(27,54,93,0.5) !important;
-  color: var(--sf-gold) !important;
-  border-radius: 0 !important;
-  border: 1px solid rgba(27,54,93,0.7) !important;
-  padding: 1px 5px !important;
-  font-weight: 700 !important;
-}
-
-/* ── 12. Blockquote ─────────────────────────────────────────────────────── */
-html.starfield .markdown-body blockquote {
-  border-left: 3px solid var(--sf-orange) !important;
-  background: rgba(224,90,43,0.06) !important;
-  border-radius: 0 !important;
-}
-
-/* ── 13. Tables ─────────────────────────────────────────────────────────── */
-html.starfield .markdown-body th {
-  background: var(--sf-navy) !important;
-  color: #f0f4ff !important;
-  border: 1px solid rgba(217,155,38,0.3) !important;
-  font-family: var(--font-mono) !important;
-  letter-spacing: 0.06em !important;
-  text-transform: uppercase !important;
-  font-size: 0.78em !important;
-}
-html.starfield .markdown-body td {
-  border-color: #1e2d45 !important;
-}
-html.starfield .markdown-body tbody tr:nth-child(even) td {
-  background: rgba(27,54,93,0.15) !important;
-}
-html.starfield .markdown-body table {
-  border: 1px solid var(--sf-navy) !important;
-}
-
-/* ── 14. Headings in chat ───────────────────────────────────────────────── */
-html.starfield .markdown-body h1,
-html.starfield .markdown-body h2,
-html.starfield .markdown-body h3 {
-  color: var(--sf-gold) !important;
-  font-family: var(--font-mono) !important;
-  letter-spacing: 0.06em !important;
-  border-bottom: 1px solid rgba(217,155,38,0.2) !important;
-  padding-bottom: 4px !important;
-}
-html.starfield .markdown-body h1::before { content: "// "; color: var(--sf-orange); }
-html.starfield .markdown-body h2::before { content: "// "; color: rgba(217,155,38,0.6); }
-html.starfield .markdown-body h3::before { content: "// "; color: rgba(217,155,38,0.35); }
-
-/* ── 15. HR separator ───────────────────────────────────────────────────── */
-html.starfield .markdown-body hr {
-  border: none !important;
-  height: 1px !important;
-  background: linear-gradient(90deg,
-    transparent, var(--sf-gold), var(--sf-orange), var(--sf-red), transparent) !important;
-  opacity: 0.35 !important;
-}
-
-/* ── 16. Thinking block ─────────────────────────────────────────────────── */
-html.starfield .sf-thinking-block {
-  border-left: 2px solid var(--sf-cyan) !important;
-  background: rgba(56,189,248,0.04) !important;
-  border-radius: 0 !important;
-}
-
-/* ── 17. Chat input area ─────────────────────────────────────────────────── */
-html.starfield .sf-chat-input-wrap {
-  border-top: 1px solid var(--sf-navy) !important;
-  background: #0b0f18 !important;
-  position: relative;
-}
-html.starfield .sf-chat-input-wrap::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 0%, var(--sf-gold) 20%,
-    var(--sf-orange) 60%, transparent 100%);
-  opacity: 0.5;
-  pointer-events: none;
-}
-html.starfield .sf-chat-input-box {
-  border: 1px solid var(--sf-navy) !important;
-  border-radius: 0 !important;
-  background: #0a1020 !important;
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%) !important;
-  transition: border-color 0.2s, box-shadow 0.2s !important;
-}
-html.starfield .sf-chat-input-box:focus-within {
-  border-color: rgba(217,155,38,0.6) !important;
-  box-shadow: 0 0 0 1px rgba(217,155,38,0.2), inset 0 0 20px rgba(27,54,93,0.1) !important;
-}
-
-/* ── 18. Send button ────────────────────────────────────────────────────── */
-html.starfield .sf-send-btn {
-  border-radius: 0 !important;
-  background: var(--sf-navy) !important;
-  border: 1px solid var(--sf-gold) !important;
-  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%) !important;
-  color: var(--sf-gold) !important;
-  transition: background 0.2s, color 0.2s !important;
-}
-html.starfield .sf-send-btn:hover:not(:disabled) {
-  background: var(--sf-gold) !important;
-  color: var(--sf-navy) !important;
-}
-html.starfield .sf-send-btn:disabled {
-  opacity: 0.4 !important;
-}
-
-/* ── 19. Model/tool/control chips in input bar ───────────────────────────── */
-html.starfield .sf-control-chip {
-  border-radius: 0 !important;
-  border: 1px solid rgba(27,54,93,0.8) !important;
-  background: rgba(27,54,93,0.3) !important;
-  color: var(--sf-gold) !important;
-  font-family: var(--font-mono) !important;
-  letter-spacing: 0.04em !important;
-  font-size: 10px !important;
-  text-transform: uppercase !important;
-}
-html.starfield .sf-control-chip:hover {
-  border-color: var(--sf-gold) !important;
-  background: rgba(217,155,38,0.1) !important;
-}
-
-/* ── 20. Notice / alert shelf ───────────────────────────────────────────── */
-html.starfield .sf-notice {
-  border-left: 3px solid var(--sf-gold) !important;
-  border-radius: 0 !important;
-  background: rgba(27,54,93,0.35) !important;
-  font-family: var(--font-mono) !important;
-}
-html.starfield .sf-notice.sf-notice-error {
-  border-left-color: var(--sf-red) !important;
-  background: rgba(200,29,37,0.08) !important;
-}
-html.starfield .sf-notice.sf-notice-success {
-  border-left-color: var(--sf-green) !important;
-  background: rgba(34,197,94,0.06) !important;
-}
-
-/* ── 21. Mermaid diagram container ─────────────────────────────────────── */
-html.starfield .mermaid-block {
-  border: 1px solid var(--sf-navy) !important;
-  background: #06080f !important;
-  border-left: 3px solid var(--sf-cyan) !important;
-  border-radius: 0 !important;
-}
-
-/* ── 22. Session info / stats popover ───────────────────────────────────── */
-html.starfield .session-info-popover {
-  border-radius: 0 !important;
-  border: 1px solid var(--sf-navy) !important;
-  border-top: 2px solid var(--sf-gold) !important;
-  box-shadow: 0 8px 40px rgba(27,54,93,0.5) !important;
-}
-
-/* ── 23. Branch navigator ───────────────────────────────────────────────── */
-html.starfield .sf-branch-nav {
-  border-bottom: 1px solid var(--sf-navy) !important;
-  background: #0b0f18 !important;
-}
-
-/* ── 24. Right Panel & File Viewer (NASA-punk Source Code & Preview) ─────── */
-html.starfield .right-panel-container {
-  background: #06080f !important;
-  border-left: 2px solid var(--sf-navy) !important;
-  position: relative;
-}
-
-/* File viewer toolbar */
-html.starfield .file-viewer-toolbar {
-  background: #0b0f18 !important;
-  border-bottom: 1px solid var(--sf-navy) !important;
-  font-family: var(--font-mono) !important;
-}
-html.starfield .file-viewer-path {
-  color: var(--sf-gold) !important;
-  font-family: var(--font-mono) !important;
-  font-weight: 600 !important;
-}
-html.starfield .file-viewer-meta {
+html:is(.dark, .starfield) .sf-send-btn:disabled {
+  background: var(--bg-panel) !important;
   color: var(--text-dim) !important;
-  font-family: var(--font-mono) !important;
+  box-shadow: none !important;
 }
-
-/* View mode switcher (Source / Preview / Diff) */
-html.starfield .file-viewer-mode-switch {
-  background: #06080f !important;
-  border: 1px solid var(--sf-navy) !important;
-  border-radius: 0 !important;
-  padding: 1px !important;
+html:is(.dark, .starfield) :is(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
-html.starfield .file-viewer-mode-button {
-  border-radius: 0 !important;
-  font-family: var(--font-mono) !important;
-  font-size: 10px !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  border: none !important;
-  padding: 2px 8px !important;
+html:is(.dark, .starfield) ::selection {
+  background: var(--selection-bg);
+  color: var(--text);
 }
-html.starfield .file-viewer-mode-button[aria-pressed="true"] {
-  background: var(--sf-navy) !important;
-  color: var(--sf-gold) !important;
-  font-weight: 700 !important;
-  box-shadow: inset 0 0 8px rgba(217,155,38,0.18) !important;
+html:is(.dark, .starfield) ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-
-/* Icon buttons in file viewer toolbar (word wrap, copy, download) */
-html.starfield .file-viewer-icon-button {
-  border-radius: 0 !important;
-  color: var(--text-muted) !important;
-  border: 1px solid transparent !important;
+html:is(.dark, .starfield) ::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
 }
-html.starfield .file-viewer-icon-button:hover {
-  background: rgba(27,54,93,0.4) !important;
-  color: var(--sf-gold) !important;
-  border-color: rgba(217,155,38,0.3) !important;
+html:is(.dark, .starfield) ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
 }
-html.starfield .file-viewer-icon-button[aria-pressed="true"] {
-  background: var(--sf-navy) !important;
-  color: var(--sf-gold) !important;
-}
-
-/* Source Code Container & Syntax Highlighter */
-html.starfield .file-source-view,
-html.starfield pre.file-source-view,
-html.starfield div.file-source-view {
-  background: #06080f !important;
-  color: #e8eeff !important;
-  font-family: var(--font-mono) !important;
-  border-radius: 0 !important;
-  font-size: 12.5px !important;
-  line-height: 1.6 !important;
-}
-
-/* Line numbers in source viewer */
-html.starfield .file-source-view span.linenumber,
-html.starfield span.linenumber {
-  background: #0b0f18 !important;
-  color: #3d5070 !important;
-  border-right: 1px solid #1e2d45 !important;
-  font-family: var(--font-mono) !important;
-  font-size: 11px !important;
-  padding-right: 10px !important;
-}
-
-/* Custom NASA-punk Syntax Highlighting for source code preview */
-html.starfield .file-source-view .token.keyword,
-html.starfield .file-source-view span[style*="color: rgb(0, 0, 255)"],
-html.starfield .file-source-view span[style*="color: rgb(86, 156, 214)"],
-html.starfield .file-source-view span[style*="color: #569cd6"] {
-  color: #e05a2b !important; /* Starfield Orange for keywords */
-  font-weight: 700 !important;
-}
-html.starfield .file-source-view .token.string,
-html.starfield .file-source-view span[style*="color: rgb(163, 21, 21)"],
-html.starfield .file-source-view span[style*="color: rgb(206, 145, 120)"],
-html.starfield .file-source-view span[style*="color: #ce9178"] {
-  color: #22c55e !important; /* Tactical Green for strings */
-}
-html.starfield .file-source-view .token.function,
-html.starfield .file-source-view span[style*="color: rgb(220, 220, 170)"],
-html.starfield .file-source-view span[style*="color: #dcdcaa"] {
-  color: #d99b26 !important; /* Starfield Gold for functions */
-}
-html.starfield .file-source-view .token.comment,
-html.starfield .file-source-view span[style*="color: rgb(0, 128, 0)"],
-html.starfield .file-source-view span[style*="color: rgb(106, 153, 85)"],
-html.starfield .file-source-view span[style*="color: #6a9955"] {
-  color: #4b5a72 !important; /* Muted Space Slate for comments */
-  font-style: italic !important;
-}
-html.starfield .file-source-view .token.number,
-html.starfield .file-source-view .token.boolean,
-html.starfield .file-source-view span[style*="color: rgb(181, 206, 168)"],
-html.starfield .file-source-view span[style*="color: #b5cea8"] {
-  color: #38bdf8 !important; /* Telemetry Cyan for numbers/booleans */
-}
-html.starfield .file-source-view .token.class-name,
-html.starfield .file-source-view .token.type-name,
-html.starfield .file-source-view span[style*="color: rgb(78, 201, 176)"],
-html.starfield .file-source-view span[style*="color: #4ec9b0"] {
-  color: #f0f4ff !important;
-  font-weight: 600 !important;
-}
-
-/* Markdown Document Preview in Right Panel */
-html.starfield .markdown-file-preview {
-  background: #06080f !important;
-  color: #e8eeff !important;
-}
-html.starfield .markdown-file-preview h1,
-html.starfield .markdown-file-preview h2,
-html.starfield .markdown-file-preview h3,
-html.starfield .markdown-file-preview h4 {
-  color: var(--sf-gold) !important;
-  font-family: var(--font-mono) !important;
-  border-bottom: 1px solid rgba(217,155,38,0.25) !important;
-  padding-bottom: 6px !important;
-}
-html.starfield .markdown-file-preview h1::before { content: "// "; color: var(--sf-orange); }
-html.starfield .markdown-file-preview h2::before { content: "// "; color: rgba(217,155,38,0.7); }
-html.starfield .markdown-file-preview pre {
-  background: #0a1020 !important;
-  border: 1px solid var(--sf-navy) !important;
-  border-left: 3px solid var(--sf-gold) !important;
-  border-radius: 0 !important;
-}
-
-/* Git Diff View in Right Panel */
-html.starfield .file-diff-view {
-  background: #06080f !important;
-  font-family: var(--font-mono) !important;
-}
-html.starfield .file-diff-line {
-  border-radius: 0 !important;
-}
-
-/* ── 25. Decorative ambient corner reticle on main chat panel ─────────────
-   The chat scroll container has no suitable class hook, so we use
-   a pure-CSS SVG background layered at low opacity in the top-right corner. */
-html.starfield [style*="flex: 1"][style*="overflow: hidden"][style*="position: relative"]::after,
-html.starfield div[style*="flex:1"][style*="overflow:hidden"]::after {
-  content: "";
-  position: absolute;
-  top: 12px; right: 12px;
-  width: 48px; height: 48px;
-  pointer-events: none;
-  opacity: 0.08;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none' stroke='%23d99b26' stroke-width='1.5'%3E%3Cline x1='0' y1='0' x2='12' y2='0'/%3E%3Cline x1='0' y1='0' x2='0' y2='12'/%3E%3Cline x1='48' y1='0' x2='36' y2='0'/%3E%3Cline x1='48' y1='0' x2='48' y2='12'/%3E%3Cline x1='0' y1='48' x2='12' y2='48'/%3E%3Cline x1='0' y1='48' x2='0' y2='36'/%3E%3Cline x1='48' y1='48' x2='36' y2='48'/%3E%3Cline x1='48' y1='48' x2='48' y2='36'/%3E%3Ccircle cx='24' cy='24' r='6'/%3E%3Ccircle cx='24' cy='24' r='2'/%3E%3Cline x1='18' y1='24' x2='14' y2='24'/%3E%3Cline x1='30' y1='24' x2='34' y2='24'/%3E%3Cline x1='24' y1='18' x2='24' y2='14'/%3E%3Cline x1='24' y1='30' x2='24' y2='34'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-size: contain;
-}
-
-/* ── 26. Animated scanline overlay on the whole page ─────────────────────── */
-html.starfield body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0,0,0,0.06) 2px,
-    rgba(0,0,0,0.06) 4px
-  );
-  pointer-events: none;
-  z-index: 9998;
-}
-
-/* ── 27. Keyframes for starfield animations ─────────────────────────────── */
-@keyframes sf-pulse-gold {
-  0%, 100% { opacity: 0.6; }
-  50%       { opacity: 1; }
-}
-@keyframes sf-scan {
-  0%   { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
-}
-
-/* Running agent indicator pulse in starfield */
-html.starfield .sf-running-dot {
-  animation: sf-pulse-gold 1.2s ease-in-out infinite !important;
-  background: var(--sf-gold) !important;
-  border-radius: 0 !important;
+@supports not selector(::-webkit-scrollbar) {
+  html:is(.dark, .starfield) * {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 /* Theme toggle: circular wipe via View Transitions API.
@@ -909,9 +417,10 @@ pre, code {
   white-space: pre-wrap;
 }
 
-/* Spacious reading rhythm for conversation prose only. Keep technical
-   output, file previews and the opt-in Starfield theme in their own styles. */
-html:not(.starfield) .markdown-reading {
+/* Spacious reading rhythm for conversation prose in every theme. Keep
+   technical output and file previews in their own styles. :is preserves
+   the previous selector specificity for the light/dark cascade. */
+html:is(:root) .markdown-reading {
   font-family: 'HarmonyOS Sans', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 16px;
   font-weight: 400;
@@ -920,28 +429,28 @@ html:not(.starfield) .markdown-reading {
   text-align: left;
   color: color-mix(in srgb, var(--text) 90%, var(--bg));
 }
-html:not(.starfield) .markdown-reading > * {
+html:is(:root) .markdown-reading > * {
   margin-top: 0;
   margin-bottom: 0;
 }
-html:not(.starfield) .markdown-reading > * + * {
+html:is(:root) .markdown-reading > * + * {
   margin-top: 10px;
 }
-html:not(.starfield) .markdown-reading :is(h1, h2, h3, h4, h5, h6) {
+html:is(:root) .markdown-reading :is(h1, h2, h3, h4, h5, h6) {
   font-weight: 600;
   line-height: 1.35;
   letter-spacing: normal;
   text-align: left;
   color: var(--text);
 }
-html:not(.starfield) .markdown-reading h1 { font-size: 24px; }
-html:not(.starfield) .markdown-reading h2 { font-size: 20px; }
-html:not(.starfield) .markdown-reading h3 { font-size: 18px; }
-html:not(.starfield) .markdown-reading strong {
+html:is(:root) .markdown-reading h1 { font-size: 24px; }
+html:is(:root) .markdown-reading h2 { font-size: 20px; }
+html:is(:root) .markdown-reading h3 { font-size: 18px; }
+html:is(:root) .markdown-reading strong {
   color: var(--text);
   font-weight: 700;
 }
-html:not(.starfield) .markdown-reading blockquote {
+html:is(:root) .markdown-reading blockquote {
   margin-right: 0;
   margin-left: 0;
   padding: 12px 20px;
@@ -955,17 +464,17 @@ html:not(.starfield) .markdown-reading blockquote {
   color: var(--text-muted);
   text-align: left;
 }
-html:not(.starfield) .markdown-reading blockquote > p {
+html:is(:root) .markdown-reading blockquote > p {
   margin: 0;
 }
-html:not(.starfield) .markdown-reading blockquote > * + * {
+html:is(:root) .markdown-reading blockquote > * + * {
   margin-top: 8px;
 }
 /* Lists, tables and code remain scan-friendly rather than inheriting 2.5. */
-html:not(.starfield) .markdown-reading :is(ul, ol, table, pre, .markdown-code-block) {
+html:is(:root) .markdown-reading :is(ul, ol, table, pre, .markdown-code-block) {
   line-height: 1.7;
 }
-html:not(.starfield) .markdown-reading li::marker {
+html:is(:root) .markdown-reading li::marker {
   color: var(--text-muted);
   font-weight: 400;
 }

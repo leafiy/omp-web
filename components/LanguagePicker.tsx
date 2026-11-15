@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useTheme } from "@/hooks/useTheme";
 
 const LANG_OPTIONS: { id: "en" | "zh-CN"; label: string; sub: string; flag: string }[] = [
   { id: "en", label: "English", sub: "English", flag: "🇺🇸" },
@@ -30,7 +29,6 @@ const GlobeIcon = ({ size = 13 }: { size?: number }) => (
 
 export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean; onOpen?: () => void } = {}) {
   const { locale, setLocale } = useI18n();
-  const { isStarfield } = useTheme();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -92,7 +90,7 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
           background: "none",
           border: "none",
           borderRight: compact ? "none" : "1px solid var(--border)",
-          color: isStarfield ? "#d99b26" : "var(--text-muted)",
+          color: "var(--text-muted)",
           cursor: "pointer",
           fontSize: 11,
           whiteSpace: "nowrap",
@@ -150,29 +148,12 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             boxShadow: "0 8px 32px rgba(0,0,0,0.28)",
-            borderRadius: isStarfield ? 0 : 8,
+            borderRadius: 8,
             overflow: "hidden",
             overflowY: compact ? "auto" : undefined,
-            borderTop: isStarfield ? "2px solid #d99b26" : "1px solid var(--border)",
+            borderTop: "1px solid var(--border)",
           }}
         >
-          {isStarfield && (
-            <div
-              style={{
-                padding: "6px 12px 4px",
-                fontFamily: "var(--font-mono, monospace)",
-                fontSize: 9,
-                letterSpacing: "0.14em",
-                color: "#d99b26",
-                opacity: 0.7,
-                textTransform: "uppercase",
-                borderBottom: "1px solid #1e2d45",
-              }}
-            >
-              ◈ Language / 语言
-            </div>
-          )}
-
           {LANG_OPTIONS.map((opt) => {
             const isActive = locale === opt.id;
             return (
@@ -192,11 +173,7 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
                   padding: "8px 12px",
                   background: isActive ? "var(--bg-selected)" : "none",
                   border: "none",
-                  borderLeft: isActive
-                    ? isStarfield
-                      ? "3px solid #d99b26"
-                      : "3px solid var(--accent)"
-                    : "3px solid transparent",
+                  borderLeft: isActive ? "3px solid var(--accent)" : "3px solid transparent",
                   cursor: "pointer",
                   textAlign: "left",
                   transition: "background 0.1s",
@@ -214,8 +191,8 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
                     style={{
                       fontSize: 12,
                       fontWeight: 600,
-                      color: isStarfield && isActive ? "#d99b26" : "var(--text)",
-                      fontFamily: isStarfield ? "var(--font-mono, monospace)" : "inherit",
+                      color: "var(--text)",
+                      fontFamily: "inherit",
                     }}
                   >
                     {opt.label}
@@ -224,7 +201,7 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
                     style={{
                       fontSize: 10,
                       color: "var(--text-dim)",
-                      fontFamily: isStarfield ? "var(--font-mono, monospace)" : "inherit",
+                      fontFamily: "inherit",
                     }}
                   >
                     {opt.sub}
@@ -237,7 +214,7 @@ export function LanguagePicker({ compact = false, onOpen }: { compact?: boolean;
                     height="11"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke={isStarfield ? "#d99b26" : "var(--accent)"}
+                    stroke="var(--accent)"
                     strokeWidth="2.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"

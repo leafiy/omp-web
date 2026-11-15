@@ -85,16 +85,16 @@ const THEMES: ThemeOption[] = [
   {
     id: "dark",
     label: "Dark",
-    sub: "Neutral dark",
+    sub: "Dark Modern inspired",
     icon: <MoonIcon />,
-    swatch: "linear-gradient(135deg, #1a1a1a 50%, #2e2e2e 50%)",
+    swatch: "linear-gradient(135deg, #1f1f1f 50%, #181818 50%)",
   },
   {
     id: "starfield",
     label: "Starfield",
-    sub: "NASA-punk HUD",
+    sub: "Deep blue · soft gold",
     icon: <StarIcon />,
-    swatch: "linear-gradient(135deg, #0b0e14 0%, #1b365d 50%, #d99b26 100%)",
+    swatch: "linear-gradient(135deg, #1a1b26 0%, #414868 65%, #e0af68 100%)",
   },
 ];
 
@@ -107,7 +107,7 @@ const CURRENT_LABEL: Record<Theme, string> = {
 const CURRENT_COLOR: Record<Theme, string> = {
   light: "var(--text-muted)",
   dark: "var(--text-muted)",
-  starfield: "#d99b26",
+  starfield: "var(--sf-gold)",
 };
 
 export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; onOpen?: () => void } = {}) {
@@ -213,30 +213,12 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             boxShadow: "0 8px 32px rgba(0,0,0,0.28)",
-            borderRadius: theme === "starfield" ? 0 : 8,
+            borderRadius: 8,
             overflow: "hidden",
             overflowY: compact ? "auto" : undefined,
-            /* Starfield: top gold bar */
-            borderTop: theme === "starfield"
-              ? "2px solid #d99b26"
-              : "1px solid var(--border)",
+            borderTop: "1px solid var(--border)",
           }}
         >
-          {/* Starfield header decoration */}
-          {theme === "starfield" && (
-            <div style={{
-              padding: "6px 12px 4px",
-              fontFamily: "var(--font-mono, monospace)",
-              fontSize: 9,
-              letterSpacing: "0.14em",
-              color: "#d99b26",
-              opacity: 0.7,
-              textTransform: "uppercase",
-              borderBottom: "1px solid #1e2d45",
-            }}>
-              ◈ Theme Selection
-            </div>
-          )}
           {/* Section 1: App Theme */}
           <div style={{
             padding: "8px 12px 4px",
@@ -265,10 +247,7 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                   width: "100%", padding: "9px 12px",
                   background: isActive ? "var(--bg-selected)" : "none",
                   border: "none",
-                  borderLeft: isActive
-                    ? opt.id === "starfield" ? "3px solid #d99b26"
-                    : "3px solid var(--accent)"
-                    : "3px solid transparent",
+                  borderLeft: isActive ? "3px solid var(--accent)" : "3px solid transparent",
                   cursor: "pointer",
                   textAlign: "left",
                   transition: "background 0.1s",
@@ -281,14 +260,14 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                   width: 26, height: 18, flexShrink: 0,
                   background: opt.swatch,
                   border: "1px solid var(--border)",
-                  borderRadius: opt.id === "starfield" ? 0 : 3,
+                  borderRadius: 3,
                   boxShadow: isActive ? "0 0 0 1.5px var(--accent)" : "none",
                 }} />
 
                 {/* Icon + text */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0,
-                  color: opt.id === "starfield" && isActive ? "#d99b26" : "var(--text)",
+                  color: "var(--text)",
                 }}>
                   <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.65 }}>
                     {opt.icon}
@@ -296,17 +275,15 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                   <div style={{ minWidth: 0 }}>
                     <div style={{
                       fontSize: 12, fontWeight: 600,
-                      fontFamily: opt.id === "starfield"
-                        ? "var(--font-mono, monospace)" : "inherit",
-                      letterSpacing: opt.id === "starfield" ? "0.06em" : 0,
+                      fontFamily: "inherit",
+                      letterSpacing: 0,
                       color: "inherit",
                     }}>
                       {opt.label}
                     </div>
                     <div style={{
                       fontSize: 10, color: "var(--text-dim)",
-                      fontFamily: opt.id === "starfield"
-                        ? "var(--font-mono, monospace)" : "inherit",
+                      fontFamily: "inherit",
                       marginTop: 1,
                     }}>
                       {opt.sub}
@@ -317,7 +294,7 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                 {/* Active checkmark */}
                 {isActive && (
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                    stroke={opt.id === "starfield" ? "#d99b26" : "var(--accent)"}
+                    stroke="var(--accent)"
                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                     style={{ flexShrink: 0 }} aria-hidden="true">
                     <polyline points="20 6 9 17 4 12" />
@@ -357,10 +334,7 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                   width: "100%", padding: "8px 12px",
                   background: isActive ? "var(--bg-selected)" : "none",
                   border: "none",
-                  borderLeft: isActive
-                    ? theme === "starfield" ? "3px solid #d99b26"
-                    : "3px solid var(--accent)"
-                    : "3px solid transparent",
+                  borderLeft: isActive ? "3px solid var(--accent)" : "3px solid transparent",
                   cursor: "pointer",
                   textAlign: "left",
                   transition: "background 0.1s",
@@ -390,7 +364,7 @@ export function ThemePicker({ compact = false, onOpen }: { compact?: boolean; on
                 {/* Active checkmark */}
                 {isActive && (
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                    stroke={theme === "starfield" ? "#d99b26" : "var(--accent)"}
+                    stroke="var(--accent)"
                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                     style={{ flexShrink: 0 }} aria-hidden="true">
                     <polyline points="20 6 9 17 4 12" />

@@ -1408,7 +1408,7 @@ export function AppShell() {
                 {isStarfield && (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
                     <StarfieldEmblem size={120} />
-                    <div style={{ fontFamily: "var(--font-display)", fontSize: 13, letterSpacing: "0.16em", color: "#d99b26", textTransform: "uppercase" }}>
+                    <div style={{ fontSize: 13, color: "var(--sf-gold)" }}>
                       {t("CONSTELLATION // READY", "星群 // 就绪")}
                     </div>
                   </div>
@@ -1420,15 +1420,15 @@ export function AppShell() {
                 {isStarfield ? (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, textAlign: "center", maxWidth: 540 }}>
                     <StarfieldEmblem size={160} />
-                    <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 900, letterSpacing: "0.2em", color: "var(--text)", textTransform: "uppercase" }}>
-                      STARFIELD // CONSTELLATION FIELD
+                    <div style={{ fontSize: 20, fontWeight: 600, color: "var(--text)" }}>
+                      Starfield
                     </div>
-                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "#d99b26", letterSpacing: "0.1em" }}>
-                      SYS.LOC // OMP-WEB-INTERFACE · MISSION AGENT ACTIVE
+                    <div style={{ fontSize: 14, color: "var(--sf-gold)" }}>
+                      {t("Get Started", "开始使用")}
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, background: "rgba(27,54,93,0.3)", border: "1px solid #1e2d45", borderLeft: "3px solid #d99b26", padding: "14px 20px", textAlign: "left", width: "100%" }}>
-                      <span style={{ color: "#e05a2b", fontFamily: "var(--font-mono)", fontWeight: 700 }}>01.</span> {t("Select a project directory from the sidebar", "从左侧边栏选择目标项目目录")}<br />
-                      <span style={{ color: "#e05a2b", fontFamily: "var(--font-mono)", fontWeight: 700 }}>02.</span> {t("Open Settings at the bottom left to manage software updates", "点击左下角“设置”，查看和更新软件")}
+                    <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.8, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "14px 20px", textAlign: "left", width: "100%" }}>
+                      <span style={{ color: "var(--sf-gold)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>01.</span> {t("Select a project directory from the sidebar", "从左侧边栏选择目标项目目录")}<br />
+                      <span style={{ color: "var(--sf-gold)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>02.</span> {t("Open Settings at the bottom left to manage software updates", "点击左下角“设置”，查看和更新软件")}
                     </div>
                   </div>
                 ) : (

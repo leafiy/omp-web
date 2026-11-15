@@ -37,15 +37,42 @@ export default function TerminalViewport({ id, cwd, launch, onStatus }: Props) {
     let pendingOutput = 0;
     let inputEpoch = 0;
     let replayTruncated = false;
+    function readTerminalTheme() {
+      const root = document.documentElement;
+      // Preserve the existing light-mode terminal. Dark palettes follow the
+      // workbench without reconnecting or recreating the running shell.
+      if (!root.classList.contains("dark") && !root.classList.contains("starfield")) {
+        return { background: "#161b22", foreground: "#e6edf3", cursor: "#e6edf3" };
+      }
+      const css = getComputedStyle(host!);
+      const color = (name: string) => css.getPropertyValue(name).trim();
+      return {
+        background: color("--bg-panel"), foreground: color("--text"),
+        cursor: color("--accent"), cursorAccent: color("--bg-panel"),
+        selectionBackground: color("--selection-bg"),
+        ...(root.classList.contains("starfield") ? {
+          // Tokyo Night ANSI palette; brighter normal text for web readability.
+          black: "#363b54", red: "#f7768e", green: "#73daca", yellow: "#e0af68",
+          blue: "#7aa2f7", magenta: "#bb9af7", cyan: "#7dcfff", white: "#a9b1d6",
+          brightBlack: "#929bbd", brightRed: "#f7768e", brightGreen: "#73daca",
+          brightYellow: "#e0af68", brightBlue: "#7aa2f7", brightMagenta: "#bb9af7",
+          brightCyan: "#7dcfff", brightWhite: "#c0caf5",
+        } : {}),
+      };
+    }
     const terminal = new Terminal({
       cursorBlink: true, fontSize: 13,
       fontFamily: getComputedStyle(host).getPropertyValue("--font-mono").trim() || "monospace",
       scrollback: 3000, disableStdin: true,
-      theme: { background: "#161b22", foreground: "#e6edf3", cursor: "#e6edf3" },
+      theme: readTerminalTheme(),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
+    const themeObserver = new MutationObserver(() => {
+      terminal.options.theme = readTerminalTheme();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
     function fitTerminal() {
       if (disposed || host!.clientWidth < 40 || host!.clientHeight < 40) return;
@@ -172,6 +199,7 @@ export default function TerminalViewport({ id, cwd, launch, onStatus }: Props) {
       source?.close();
       clearTimeout(resizeTimer);
       observer.disconnect();
+      themeObserver.disconnect();
       input.dispose();
       resize.dispose();
       terminal.dispose();

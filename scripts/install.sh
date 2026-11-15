@@ -21,6 +21,8 @@
 #   --host HOST      listen address for the service (default 127.0.0.1)
 #   --port PORT      listen port for the service (default 30141)
 #   --ref REF        Git branch to install (default main; update keeps the current branch)
+#   --force-build    rebuild even when the successful build is current
+#   --force-install  reinstall dependencies and rebuild (repair missing/broken packages)
 #
 # Unattended login setup: set OMP_WEB_USERNAME and OMP_WEB_PASSWORD.
 set -euo pipefail
@@ -37,6 +39,7 @@ main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
   local mode="install" ref="" host="127.0.0.1" port="30141" service="ask"
   local dir="$HOME/code/omp-web"
+  local force_build="no" force_install="no" total_started=$SECONDS
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,7 +49,9 @@ main() {
       --host) host="${2:?--host needs a value}"; shift ;;
       --port) port="${2:?--port needs a value}"; shift ;;
       --ref) ref="${2:?--ref needs a value}"; shift ;;
-      -h|--help) sed -n '2,25p' "$0" 2>/dev/null || true; return 0 ;;
+      --force-build) force_build="yes" ;;
+      --force-install) force_install="yes"; force_build="yes" ;;
+      -h|--help) sed -n '2,27p' "$0" 2>/dev/null || true; return 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
     shift
@@ -84,7 +89,7 @@ main() {
     git -C "$dir" checkout --quiet "$ref"
     git -C "$dir" pull --ff-only --quiet origin "$ref"
     after="$(git -C "$dir" rev-parse --short HEAD)"
-    if [ "$before" = "$after" ]; then echo "  Already at $after; rebuilding anyway."; else echo "  $before -> $after"; fi
+    if [ "$before" = "$after" ]; then echo "  Already at $after; checking reusable dependencies and build."; else echo "  $before -> $after"; fi
   elif [ -e "$dir" ]; then
     fail "$dir exists but is not a Git checkout. Move it away and run the installer again."
   elif [ "$mode" = "update" ]; then
@@ -97,9 +102,20 @@ main() {
   fi
   cd "$dir"
 
+  local keys dependency_key build_key install_needed="yes" build_needed="yes"
+  keys="$(node scripts/install-state.mjs keys)" || fail "Could not calculate update fingerprints."
+  read -r dependency_key build_key <<<"$keys"
+  if [ "$force_install" = "no" ] && node scripts/install-state.mjs check dependencies "$dependency_key"; then
+    install_needed="no"
+  fi
+  if [ "$install_needed" = "no" ] && [ "$force_build" = "no" ] && node scripts/install-state.mjs check build "$build_key"; then
+    build_needed="no"
+  fi
+
   # The build guard refuses to overwrite .next while the service runs.
+  # A no-op update must not interrupt chats or terminals.
   local was_active="no"
-  if service_active; then
+  if [ "$build_needed" = "yes" ] && service_active; then
     if inside_service; then
       fail "This shell runs inside omp-web (its terminal or one of its agents). Stopping the service would kill this run halfway. Run it from a separate terminal, e.g. over SSH."
     fi
@@ -111,7 +127,7 @@ main() {
   fi
   # Other units can start the service by themselves (a Wants= dependency, a
   # timer, a restart loop). Keep it stopped until the new build is complete.
-  if service_installed; then hold_service; fi
+  if [ "$build_needed" = "yes" ] && service_installed; then hold_service; fi
   if [ "$was_active" = "yes" ]; then
     say "Stopping $(service_name)"
     service_stop
@@ -119,10 +135,32 @@ main() {
 
   local stopped_note=""
   if [ "$was_active" = "yes" ] && [ "$HOLD_ACTIVE" = "no" ]; then stopped_note=" $(service_name) is stopped; fix the problem and run this again."; fi
-  say "Installing dependencies"
-  npm ci --include=dev --no-audit --no-fund || fail "npm ci failed.$stopped_note"
-  say "Building"
-  npm run build || fail "Build failed.$stopped_note"
+  local phase_started
+  if [ "$build_needed" = "yes" ]; then
+    # Invalidate BEFORE touching dependencies/output, including on failed/aborted runs.
+    rm -f .next/.omp-web-build.json
+  fi
+  if [ "$install_needed" = "yes" ]; then
+    rm -f node_modules/.omp-web-install.json
+    say "Installing dependencies"
+    phase_started=$SECONDS
+    npm ci --include=dev --no-audit --no-fund || fail "npm ci failed.$stopped_note"
+    node scripts/install-state.mjs record dependencies "$dependency_key" || fail "Could not record dependency installation.$stopped_note"
+    say "Dependencies installed in $((SECONDS - phase_started))s"
+  else
+    say "Dependencies unchanged; skipping npm ci (use --force-install to repair)"
+  fi
+  if [ "$build_needed" = "yes" ]; then
+    say "Building (preserving .next/cache)"
+    phase_started=$SECONDS
+    npm run build || fail "Build failed.$stopped_note"
+    node scripts/install-state.mjs record build "$build_key" || fail "Could not record build.$stopped_note"
+    say "Build completed in $((SECONDS - phase_started))s"
+  else
+    say "Successful build is current; skipping build (use --force-build to rebuild)"
+    # Recover a hold left by an interrupted update only after validating the build.
+    if [ "$PLATFORM" = "systemd" ] && [ -f "$HOLD_DROPIN" ]; then HOLD_ACTIVE="yes"; fi
+  fi
 
   # An update keeps the existing login; it only asks when there is none yet.
   if [ "$mode" != "update" ] || ! has_login; then
@@ -137,14 +175,14 @@ main() {
   if [ "$service" = "yes" ]; then
     install_service "$dir" "$host" "$port"
     started="yes"
-  elif [ "$was_active" = "yes" ] || { [ "$mode" = "update" ] && service_installed; }; then
+  elif [ "$was_active" = "yes" ] || { [ "$mode" = "update" ] && service_installed && ! service_active; }; then
     say "Starting $(service_name)"
     service_start
     started="yes"
   fi
 
   echo
-  say "Done."
+  say "Done in $((SECONDS - total_started))s."
   if [ "$started" = "yes" ]; then
     if [ "$service" = "yes" ]; then
       echo "  $(service_name) is running: http://$host:$port"
@@ -152,6 +190,8 @@ main() {
       echo "  $(service_name) is running again with its existing settings."
     fi
     echo "  Logs: $(service_logs_hint "$dir")"
+  elif service_active; then
+    echo "  $(service_name) was left running; no restart was needed."
   else
     if [ "$mode" = "update" ]; then
       echo "  No background service is installed. Restart your running omp-web to load the new build."

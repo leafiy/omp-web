@@ -316,12 +316,12 @@ function PiWebTitle() {
         onClick={handleClick}
         style={{
           background: "none", border: "none", padding: 0, cursor: "default",
-          fontWeight: 800, fontSize: isStarfield ? 14 : 15,
-          letterSpacing: isStarfield ? "0.12em" : "-0.01em",
+          fontWeight: 800, fontSize: 15,
+          letterSpacing: "-0.01em",
           color: showVersion ? "var(--accent)" : "var(--text)",
-          fontFamily: isStarfield ? "var(--font-display, 'Orbitron', sans-serif)" : "var(--font-mono)",
+          fontFamily: "var(--font-mono)",
           minWidth: "6ch",
-          textTransform: isStarfield ? "uppercase" : "none",
+          textTransform: "none",
         }}
       >
         {display}

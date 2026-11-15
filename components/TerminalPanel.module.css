@@ -51,7 +51,7 @@
   overflow: auto;
   overflow-wrap: anywhere;
 }
-.viewport { flex: 1; min-height: 0; overflow: hidden; padding: 4px 8px; background: #161b22; }
+.viewport { flex: 1; min-height: 0; overflow: hidden; padding: 4px 8px; background: var(--terminal-bg, #161b22); }
 .resize {
   position: absolute;
   height: 6px;

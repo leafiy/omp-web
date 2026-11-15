@@ -33,14 +33,14 @@ export function ComposerActions({ mobile, streaming, sendEnabled, steerEnabled, 
     {streaming ? <>
       {onSteer && <button type="button" onClick={onSteer} disabled={!steerEnabled} aria-label={t("chat.steer")} title={steerHint} style={{ ...common,
         background: steerEnabled ? "rgba(234,179,8,0.12)" : "none", border: "1px solid rgba(234,179,8,0.35)",
-        color: steerEnabled ? "rgba(180,130,0,1)" : "var(--text-dim)", cursor: steerEnabled ? "pointer" : "not-allowed",
+        color: steerEnabled ? "var(--steer-text, rgba(180,130,0,1))" : "var(--text-dim)", cursor: steerEnabled ? "pointer" : "not-allowed",
       }}>
         <svg width={size} height={size} viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" /></svg>
         {!mobile && t("chat.steer")}
       </button>}
       {onFollowUp && <button type="button" onClick={onFollowUp} disabled={!followUpEnabled} aria-label={t("chat.followUp")} title={followUpHint} style={{ ...common,
         background: followUpEnabled ? "rgba(129,140,248,0.12)" : "none", border: "1px solid rgba(129,140,248,0.35)",
-        color: followUpEnabled ? "rgba(99,102,241,1)" : "var(--text-dim)", cursor: followUpEnabled ? "pointer" : "not-allowed",
+        color: followUpEnabled ? "var(--follow-up-text, rgba(99,102,241,1))" : "var(--text-dim)", cursor: followUpEnabled ? "pointer" : "not-allowed",
       }}>
         <svg width={size} height={size} viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" /><line x1="2" y1="9" x2="8" y2="9" /></svg>
         {!mobile && t("chat.followUp")}

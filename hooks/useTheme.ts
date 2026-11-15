@@ -150,7 +150,9 @@ export function useTheme() {
     cycleTheme,
     toggleTheme,
     setTheme,
-    isDark: theme === "dark",
+    // Color-scheme predicate, not the identity of the "dark" preset.
+    // Auto syntax highlighting and Mermaid must also be dark in Starfield.
+    isDark: theme !== "light",
     isStarfield: theme === "starfield",
   };
 }
