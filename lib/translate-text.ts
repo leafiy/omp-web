@@ -3,6 +3,8 @@
  * browser (direction labels) and the server route (prompting and chunking).
  */
 
+import { splitPastedBlocks } from "./pasted-text";
+
 export type TranslateDirection = "zh2en" | "en2zh";
 export const TRANSLATE_DIRECTIONS: readonly TranslateDirection[] = ["zh2en", "en2zh"];
 export const DEFAULT_TRANSLATE_MODEL = "index-translate:2b";
@@ -137,13 +139,18 @@ export type TranslationPiece =
   | { translate: true; lead: string; core: string; trail: string };
 
 /**
- * Split text into verbatim pieces (code fences, whitespace, text without
+ * Split text into verbatim pieces (pasted attachments, code fences, whitespace, text without
  * letters) and prose chunks to translate. Surrounding whitespace of each
  * chunk is kept so the translation keeps the original layout.
  */
 export function planTranslation(text: string, max = MAX_TRANSLATE_CHUNK_CHARS): TranslationPiece[] {
   const pieces: TranslationPiece[] = [];
-  for (const segment of splitCodeFences(text)) {
+  const segments = splitPastedBlocks(text).flatMap((part): TranslatableSegment[] => (
+    part.type === "paste"
+      ? [{ translate: false, text: `<pasted-text>\n${part.text}\n</pasted-text>` }]
+      : splitCodeFences(part.text)
+  ));
+  for (const segment of segments) {
     if (!segment.translate) { pieces.push({ translate: false, text: segment.text }); continue; }
     for (const chunk of chunkProse(segment.text, max)) {
       const lead = chunk.match(/^\s*/)![0];
