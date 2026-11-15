@@ -601,7 +601,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     : groups;
 
   const visiblePinnedSessions = pinnedSessions.filter((session) => !query
-    || sessionProjectRoot(session).toLowerCase().includes(query)
+    || (sessionProjectRoot(session) ?? "").toLowerCase().includes(query)
     || (session.name ?? "").toLowerCase().includes(query)
     || (session.firstMessage ?? "").toLowerCase().includes(query));
 
