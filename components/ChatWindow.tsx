@@ -730,7 +730,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               );
             })()}
             {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} sessionId={session?.id ?? sessionIdRef.current ?? undefined} onOpenFile={onOpenFile} />
             )}
 
             {agentRunning && !streamState.streamingMessage && agentPhase && (

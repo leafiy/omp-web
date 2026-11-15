@@ -3,6 +3,8 @@
 import { useMemo, type CSSProperties, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
+import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
+import { useI18n } from "@/hooks/useI18n";
 import { markdownUrlTransform } from "@/lib/markdown-urls";
 import { ChatImage } from "./ChatImage";
 import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
@@ -13,10 +15,12 @@ interface MarkdownBodyProps {
   className?: string;
   isStreaming?: boolean;
   cwd?: string;
+  sessionId?: string;
   onOpenFile?: (filePath: string) => void;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, sessionId, onOpenFile }: MarkdownBodyProps) {
+  const { t } = useI18n();
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
@@ -64,10 +68,23 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         openFile(filePath);
       };
 
+      const downloadParams = new URLSearchParams({ type: "download" });
+      if (sessionId) downloadParams.set("sessionId", sessionId);
       return (
-        <a href={href} {...props} onClick={handleClick}>
-          {children}
-        </a>
+        <>
+          <a href={href} {...props} onClick={handleClick}>
+            {children}
+          </a>
+          {" "}
+          <a
+            href={`/api/files/${encodeFilePathForApi(filePath)}?${downloadParams}`}
+            download={getFileName(filePath)}
+            title={t("i18n.downloadFile")}
+            style={{ fontSize: "0.85em", whiteSpace: "nowrap" }}
+          >
+            ↓ {t("files.download")}
+          </a>
+        </>
       );
     },
     img({ src, alt, ...props }) {
@@ -89,7 +106,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile]);
+  }), [cwd, isStreaming, onOpenFile, sessionId, t]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>

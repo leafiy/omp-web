@@ -12,12 +12,13 @@ const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 const { normalizeDisplayMath } = await jiti.import("../lib/markdown.ts");
 
-function renderMarkdown(markdown) {
+function renderMarkdown(markdown, props = {}) {
   return renderToStaticMarkup(
     React.createElement(I18nProvider, null,
       React.createElement(MarkdownBody, {
         cwd: "/home/me/project",
         onOpenFile() {},
+        ...props,
       }, markdown),
     ),
   );
@@ -88,6 +89,14 @@ test("keeps unsafe links blocked with local protocol normalization enabled", () 
     assert.doesNotMatch(html, /href="(?:javascript:|data:|sandbox:|\/\/host)/);
   }
   assert.doesNotMatch(renderMarkdown('<a href="javascript:alert(1)" onclick="alert(1)">bad</a>'), /href="javascript:|onclick=/);
+});
+
+test("offers a separate session-scoped download next to the preview link", () => {
+  const sessionId = "pi:12345678-1234-1234-1234-123456789abc";
+  const html = renderMarkdown("[下载文件](sandbox:/tmp/标注.tsv)", { sessionId });
+  assert.match(html, /<a href="\/tmp\/%E6%A0%87%E6%B3%A8.tsv">下载文件<\/a>/);
+  assert.match(html, /href="\/api\/files\/[^" ]+\?type=download&amp;sessionId=pi%3A12345678-1234-1234-1234-123456789abc"/);
+  assert.match(html, /download="标注.tsv"/);
 });
 
 test("renders LaTeX parenthesis delimiters as inline math", () => {
