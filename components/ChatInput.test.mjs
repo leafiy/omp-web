@@ -11,6 +11,24 @@ const jiti = createJiti(import.meta.url, {
 const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, filterModelOptions, buildSlashCommandLayout, slashCommandsForEngine } = await jiti.import("./ChatInput.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
+test("ordinary file drafts render removable cards outside the textarea and enable file-only sends", async () => {
+  const { setDraft, clearDraft } = await jiti.import("../lib/draft-store.ts");
+  const key = "attachment-render-test";
+  setDraft(key, { value: "", images: [], files: [{ name: "review.csv", path: "/project/.omp-web-attachment-a/review.csv", size: 12 }] });
+  try {
+    const html = renderToStaticMarkup(React.createElement(I18nProvider, null,
+      React.createElement(ChatInput, { draftKey: key, onSend() {}, onAbort() {}, isStreaming: false })));
+    assert.match(html, /data-file-attachment/);
+    assert.match(html, /aria-label="Remove attachment: review.csv"/);
+    assert.match(html, />review.csv</);
+    assert.match(html, /<textarea[^>]*><\/textarea>/);
+    assert.doesNotMatch(html, /&lt;file-attachment&gt;|\[@review.csv\]/);
+    const sendButton = html.match(/<button[^>]*class="sf-send-btn"[^>]*>/)?.[0];
+    assert.ok(sendButton, "send button is present");
+    assert.doesNotMatch(sendButton, /disabled/);
+  } finally { clearDraft(key); }
+});
+
 test("renders the upstream model error", () => {
   const html = renderToStaticMarkup(
     React.createElement(ModelErrorBanner, {

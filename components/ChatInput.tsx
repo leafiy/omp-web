@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, QueuedMessageItem, SlashCommandInfo } from "@/hooks/useAgentSession";
-import { clearDraft, clearDraftIfUnchanged, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
+import { clearDraft, clearDraftIfUnchanged, getDraft, prependDraftMessage, setDraft, type ChatDraftImage } from "@/lib/draft-store";
 import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { slashArgumentCompletions, type SlashArgumentCompletion } from "@/lib/slash-command-arguments";
 import {
@@ -16,9 +16,12 @@ import {
 } from "@/lib/file-fuzzy";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload-limits";
+import { appendFileAttachments, isAttachedFile, type AttachedFile } from "@/lib/file-attachments";
+import { extractMessageFiles, summarizeUserMessage } from "@/lib/user-message-content";
+import { FileAttachment } from "./FileAttachment";
 import {
   collapsePastedBlocks, expandPastedTokens, isCommandDraft, livePastedTexts, nextPastedTextId, normalizePastedText,
-  pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens, summarizePastedBlocks,
+  pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens,
   type PastedText,
 } from "@/lib/pasted-text";
 import { moveSendTranslation, readSendTranslation, requestTranslation, writeSendTranslation } from "@/lib/translate-client";
@@ -279,7 +282,7 @@ function revokeImagePreview(image: AttachedImage): void {
 function QueuedMessageRow({ kind, text, onEdit, disabled, state }: { kind: "steer" | "follow-up"; text: string; onEdit?: () => void; disabled?: boolean; state?: QueuedMessageItem["state"] }) {
   const { locale } = useI18n();
   // Queued text is already expanded; show the marker, not the pasted content.
-  const label = summarizePastedBlocks(text);
+  const label = summarizeUserMessage(text);
   return (
     <div
       title={label}
@@ -393,7 +396,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [draftNotice, setDraftNotice] = useState(() => draftKey ? getDraft(draftKey)?.notice : undefined);
-  const [pendingEdit, setPendingEdit] = useState<{ text: string; expected: string } | null>(null);
+  const [pendingEdit, setPendingEdit] = useState<{ text: string; expected: string; revision: number } | null>(null);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [modelFilter, setModelFilter] = useState("");
@@ -402,6 +405,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
+  ));
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>(() => (
+    draftKey ? getDraft(draftKey)?.files ?? [] : []
   ));
   // Content behind the `[paste #n …]` markers in `value`; expanded when sending.
   const [pastedTexts, setPastedTexts] = useState<PastedText[]>(() => (
@@ -418,7 +424,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
-  const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
+  const bashMode = attachedImages.length === 0 && attachedFiles.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -460,13 +466,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const valueRef = useRef(value);
   const editRevisionRef = useRef(0);
   const attachedImagesRef = useRef(attachedImages);
+  const attachedFilesRef = useRef(attachedFiles);
   const attachmentJobRef = useRef<AbortController | null>(null);
   const pastedTextsRef = useRef(pastedTexts);
   const pendingCaretRef = useRef<{ value: string; caret: number } | null>(null);
   const lastCaretRef = useRef<number | null>(null);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
+  attachedFilesRef.current = attachedFiles;
   pastedTextsRef.current = pastedTexts;
+
+  const replaceAttachedFiles = useCallback((files: AttachedFile[]) => {
+    attachedFilesRef.current = files;
+    setAttachedFiles(files);
+  }, []);
 
   const replacePastedTexts = useCallback((next: PastedText[]) => {
     pastedTextsRef.current = next;
@@ -475,30 +488,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const replaceDraftText = useCallback((sent: string) => {
     // A sent message carries its pastes expanded; fold them back into markers.
-    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(sent);
+    const restored = extractMessageFiles(sent);
+    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(restored.text);
     editRevisionRef.current++;
+    replaceAttachedFiles(restored.files);
     valueRef.current = text;
     replacePastedTexts(pasted);
     setValue(text); setDraftNotice(undefined); setHistoryMenuOpen(false); setAtQuery(null);
-    if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage), pastedTexts: pasted });
+    if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: text, images: attachedImagesRef.current.map(imageToDraftImage), files: restored.files, pastedTexts: pasted });
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (ta) { ta.focus(); ta.setSelectionRange(text.length, text.length); ta.scrollIntoView({ block: "nearest" }); }
     });
-  }, [replacePastedTexts]);
+  }, [replacePastedTexts, replaceAttachedFiles]);
 
   useImperativeHandle(ref, () => ({
     editText(text: string) {
       const current = valueRef.current;
-      if (current.trim() && current !== text) setPendingEdit({ text, expected: current });
+      if (attachedFilesRef.current.length || (current.trim() && current !== text)) setPendingEdit({ text, expected: current, revision: editRevisionRef.current });
       else replaceDraftText(text);
     },
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
-      if (current.trim()) return;
-      editRevisionRef.current++;
-      setValue(text);
+      if (current.trim() || attachedFilesRef.current.length) return;
+      replaceDraftText(text);
       setAtQuery(null);
       requestAnimationFrame(() => {
         if (!ta) return;
@@ -514,9 +528,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const current = ta ? ta.value : value;
       // Mirrors the TUI's queue restore: queued text first, then whatever
       // the user already typed, separated by a blank line.
-      const adopted = text === current ? null : collapsePastedBlocks(text, livePastedTexts(current, pastedTextsRef.current));
-      const combined = adopted ? [adopted.value, current].filter((t) => t.trim()).join("\n\n") : current;
-      if (adopted) replacePastedTexts(adopted.pastedTexts);
+      const restored = prependDraftMessage({ value: current, images: [], files: attachedFilesRef.current, pastedTexts: pastedTextsRef.current }, text);
+      const combined = restored.value;
+      replaceAttachedFiles(restored.files ?? []);
+      replacePastedTexts(restored.pastedTexts ?? []);
       editRevisionRef.current++;
       valueRef.current = combined;
       setValue(combined);
@@ -568,9 +583,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, [draftKey, cwd]);
 
-  // Attachments can be prepared while the agent runs: uploaded files become
-  // @references (plain text, so they can still be queued); images stay in the
-  // draft and go out with the next normal send, since queues are text-only.
+  // Files stay as independent cards; only the native prompt carries their disk metadata.
+  // They can still be queued as text. Images keep their existing native attachment lifecycle.
   const processFiles = useCallback(async (files: File[]) => {
     if (!files.length) return;
     if (attachmentJobRef.current) {
@@ -625,43 +639,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (uploadFiles.length && cwd) {
         const formData = new FormData();
         uploadFiles.forEach((file) => formData.append("files", file, file.name));
-        const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=error`, {
+        const response = await fetch(`/api/files/${encodeFilePathForApi(cwd)}?type=attachment`, {
           method: "POST",
           body: formData,
           signal: job.signal,
         });
         const result = await response.json().catch(() => ({})) as {
-          uploaded?: string[];
+          attachments?: AttachedFile[];
           errors?: Array<{ name: string; error: string }>;
-          conflicts?: string[];
           error?: string;
         };
         if (job.signal.aborted) return;
-        if (response.status === 409) {
-          throw new Error(t("chat.uploadConflict", { names: (result.conflicts ?? []).join(", ") }));
-        }
         if (!response.ok) throw new Error(result.error ?? t("chat.uploadFailed", { status: response.status }));
-        if (result.uploaded?.length) {
+        const files = Array.isArray(result.attachments) ? result.attachments.filter(isAttachedFile) : [];
+        if (files.length) {
           window.dispatchEvent(new Event("omp-web:files-changed"));
-          const references = result.uploaded.map((name) => {
-            const label = name.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
-            const href = encodeURIComponent(name).replace(/[()]/g, (char) => char === "(" ? "%28" : "%29");
-            return `[@${label}](./${href})`;
-          }).join(" ");
           editRevisionRef.current++;
-          if (references) {
-            // Ordinary files still need prompt references. Prepend them so an
-            // existing /command or !shell draft cannot accidentally execute.
-            setValue((current) => `${references}\n${current}`);
-            setAtQuery(null);
-          }
+          replaceAttachedFiles([...attachedFilesRef.current, ...files]);
+          setAtQuery(null);
           setFileIndex(null);
           fileIndexMetaRef.current = null;
           textareaRef.current?.focus();
         }
         if (result.errors?.length) {
           setAttachmentError(result.errors.map(({ name, error }) => `${name}: ${error}`).join("\n"));
-        } else if (!result.uploaded?.length) {
+        } else if (!files.length) {
           throw new Error(t("chat.uploadFailed", { status: response.status }));
         } else {
           setAttachmentError(null);
@@ -679,7 +681,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         setAttachmentBusy(false);
       }
     }
-  }, [cwd, t, locale]);
+  }, [cwd, t, locale, replaceAttachedFiles]);
+
+  const removeFile = useCallback((index: number) => {
+    editRevisionRef.current++;
+    replaceAttachedFiles(attachedFilesRef.current.filter((_, i) => i !== index));
+    setAttachmentError(null);
+  }, [replaceAttachedFiles]);
 
   const removeImage = useCallback((index: number) => {
     editRevisionRef.current++;
@@ -707,21 +715,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (draftKey) clearDraft(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
+    replaceAttachedFiles([]);
     replacePastedTexts([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey, replacePastedTexts]);
+  }, [clearImages, draftKey, replacePastedTexts, replaceAttachedFiles]);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
     setDraft(draftKey, {
       value,
       images: attachedImages.map(imageToDraftImage),
+      files: attachedFiles,
       pastedTexts: livePastedTexts(value, pastedTexts),
       notice: draftNotice,
     });
-  }, [attachedImages, pastedTexts, draftKey, value, draftNotice]);
+  }, [attachedImages, attachedFiles, pastedTexts, draftKey, value, draftNotice]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
@@ -731,6 +741,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setDraft(previousDraftKey, {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
+        files: attachedFilesRef.current,
         pastedTexts: livePastedTexts(valueRef.current, pastedTextsRef.current),
         notice: getDraft(previousDraftKey)?.notice,
       });
@@ -746,6 +757,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     draftKeyRef.current = draftKey;
     setPendingEdit(null);
     setValue(draft?.value ?? "");
+    replaceAttachedFiles(draft?.files ?? []);
     setPastedTexts(draft?.pastedTexts ?? []);
     setDraftNotice(draft?.notice);
     setAtQuery(null);
@@ -754,7 +766,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       prev.forEach(revokeImagePreview);
       return draftImagesToAttachedImages(draft?.images);
     });
-  }, [draftKey]);
+  }, [draftKey, replaceAttachedFiles]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -803,10 +815,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
    * and punctuation-converted according to browser settings. Null means
    * do not send: the translation failed or was cancelled, or the draft changed.
    */
-  const prepareOutgoing = useCallback(async (draft: string, pasted: PastedText[]): Promise<string | null> => {
+  const prepareOutgoing = useCallback(async (draft: string, pasted: PastedText[], files: AttachedFile[]): Promise<string | null> => {
     const raw = expandPastedTokens(draft, pasted).trim();
-    if (isCommandDraft(draft)) return raw;
-    const convert = (text: string) => convertPromptPunctuation(text, readPunctuationConversion());
+    if (isCommandDraft(draft)) return appendFileAttachments(raw, files);
+    // Add metadata last: translation and punctuation conversion must never rewrite a filename/path.
+    const convert = (text: string) => appendFileAttachments(convertPromptPunctuation(text, readPunctuationConversion()), files);
     const direction = activeSendTranslation;
     if (!direction) return convert(raw);
     const parts = splitPastedTokens(draft);
@@ -855,14 +868,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [draftKey]);
 
   const handleSend = useCallback(async () => {
-    const msg = expandPastedTokens(value, pastedTexts).trim();
+    const msg = appendFileAttachments(expandPastedTokens(value, pastedTexts).trim(), attachedFiles);
     if (!msg && !attachedImages.length) return;
     if (isStreaming || attachmentJobRef.current || normalSendRef.current) return;
     onAudioUnlock?.();
     normalSendRef.current = true;
     const sentKey = draftKeyRef.current;
     const sentRevision = editRevisionRef.current;
-    const sentDraft = { value, images: attachedImages.map(imageToDraftImage), pastedTexts: livePastedTexts(value, pastedTexts) };
+    const sentDraft = { value, images: attachedImages.map(imageToDraftImage), files: attachedFiles, pastedTexts: livePastedTexts(value, pastedTexts) };
     const clearAccepted = () => {
       if (editRevisionRef.current !== sentRevision) return;
       if (sentKey) clearDraftIfUnchanged(sentKey, sentDraft);
@@ -870,7 +883,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const sameComposer = currentKey === sentKey || (sentKey?.startsWith("new:") && currentKey && !currentKey.startsWith("new:"));
       const sameImages = attachedImagesRef.current.length === attachedImages.length
         && attachedImagesRef.current.every((image, i) => image.data === attachedImages[i].data && image.mimeType === attachedImages[i].mimeType);
-      if (composerMountedRef.current && sameComposer && valueRef.current === value && sameImages) clearInput();
+      const sameFiles = attachedFilesRef.current.length === attachedFiles.length
+        && attachedFilesRef.current.every((file, i) => file.path === attachedFiles[i].path);
+      if (composerMountedRef.current && sameComposer && valueRef.current === value && sameImages && sameFiles) clearInput();
     };
     try {
       if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
@@ -880,15 +895,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           return;
         }
       }
-      const outgoing = msg ? await prepareOutgoing(value, pastedTexts) : msg;
+      const outgoing = msg ? await prepareOutgoing(value, pastedTexts, attachedFiles) : msg;
       if (outgoing === null) return;
       const accepted = await onSend(outgoing, attachedImages.length ? attachedImages : undefined);
       if (accepted !== false) clearAccepted();
     } catch { /* A failed or ambiguous send retains the draft. */ }
     finally { normalSendRef.current = false; }
-  }, [value, attachedImages, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, prepareOutgoing]);
+  }, [value, attachedImages, attachedFiles, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, prepareOutgoing]);
 
-  const slashQuery = value.startsWith("/") && !/[\r\n]/.test(value)
+  const slashQuery = !attachedFiles.length && value.startsWith("/") && !/[\r\n]/.test(value)
     ? value.slice(1).toLowerCase()
     : null;
   const slashArgumentMode = slashQuery !== null && /\s/.test(slashQuery);
@@ -925,10 +940,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const slashCommandCountLabel = filteredSlashCommands.length === 1
     ? t(slashQuery ? "chat.match" : "chat.command")
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
-  const hasInputText = Boolean(value.trim());
+  const hasInputText = Boolean(value.trim() || attachedFiles.length);
+  const commandDraft = attachedFiles.length === 0 && value.trimStart().startsWith("/");
   const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy && !queuedSendBusy
-    && !(engine === "claude" && value.trimStart().startsWith("/"));
-  const canQueueFollowUpMessage = canQueueStreamingMessage && !value.trimStart().startsWith("/");
+    && !(engine === "claude" && commandDraft);
+  const canQueueFollowUpMessage = canQueueStreamingMessage && !commandDraft;
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -1084,8 +1100,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [historyActiveIndex, historyMenuOpen]);
 
   const applyHistoryInput = useCallback((sent: string) => {
-    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(sent);
+    const restored = extractMessageFiles(sent);
+    const { value: text, pastedTexts: pasted } = collapsePastedBlocks(restored.text);
     editRevisionRef.current++;
+    replaceAttachedFiles(restored.files);
     replacePastedTexts(pasted);
     setValue(text);
     setHistoryMenuOpen(false);
@@ -1099,7 +1117,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
-  }, [replacePastedTexts]);
+  }, [replacePastedTexts, replaceAttachedFiles]);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
     editRevisionRef.current++;
@@ -1125,24 +1143,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [value]);
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
-    const msg = expandPastedTokens(value, pastedTexts).trim();
+    const msg = appendFileAttachments(expandPastedTokens(value, pastedTexts).trim(), attachedFiles);
     if (!msg || normalSendRef.current || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
     if ((engine === "claude" || mode === "followup") && msg.startsWith("/")) return;
     onAudioUnlock?.();
     queuedSendRef.current = true; setQueuedSendBusy(true);
+    const sentKey = draftKeyRef.current;
     const sentRevision = editRevisionRef.current;
+    const sentDraft = { value, images: [], files: attachedFiles, pastedTexts: livePastedTexts(value, pastedTexts) };
     let accepted: void | boolean = false;
     try {
-      const outgoing = await prepareOutgoing(value, pastedTexts);
+      const outgoing = await prepareOutgoing(value, pastedTexts, attachedFiles);
       if (outgoing === null) return;
       if (msg.startsWith("/") && onPromptWithStreamingBehavior) accepted = await onPromptWithStreamingBehavior(msg, mode === "steer" ? "steer" : "followUp");
       else if (mode === "steer" && onSteer) accepted = await onSteer(outgoing);
       else if (mode === "followup" && onFollowUp) accepted = await onFollowUp(outgoing);
       // A failed/ambiguous POST keeps the draft; a newer edit is never cleared.
-      if (accepted !== false && editRevisionRef.current === sentRevision && valueRef.current === value) clearInput();
+      if (accepted !== false && editRevisionRef.current === sentRevision) {
+        if (sentKey) clearDraftIfUnchanged(sentKey, sentDraft);
+        const sameFiles = attachedFilesRef.current.length === attachedFiles.length
+          && attachedFilesRef.current.every((file, i) => file.path === attachedFiles[i].path);
+        if (composerMountedRef.current && draftKeyRef.current === sentKey && valueRef.current === value && sameFiles) clearInput();
+      }
     } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
     finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
-  }, [value, attachedImages, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, prepareOutgoing]);
+  }, [value, attachedImages, attachedFiles, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, prepareOutgoing]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1282,7 +1307,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (e.key === "ArrowUp" && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0) {
+      if (e.key === "ArrowUp" && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0 && attachedFiles.length === 0) {
         e.preventDefault();
         setSlashMenuOpen(false);
         setAtMenuOpen(false);
@@ -1308,7 +1333,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuVisible, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuVisible, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, attachedFiles.length]
   );
 
   const handleInput = useCallback(() => {
@@ -1483,7 +1508,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const composerActions = <ComposerActions
     mobile={isMobile} streaming={isStreaming}
-    sendEnabled={Boolean(value.trim() || attachedImages.length)}
+    sendEnabled={Boolean(value.trim() || attachedImages.length || attachedFiles.length)}
     steerEnabled={canQueueStreamingMessage} followUpEnabled={canQueueFollowUpMessage}
     attachmentBusy={attachmentBusy || translatingForSend !== null}
     steerHint={engine === "claude" ? t("chat.claudeSteerHint") : attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
@@ -1519,7 +1544,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         {pendingEdit && <InlineConfirmation key={pendingEdit.text} title={t("chat.replaceDraft")} message={t("chat.replaceDraftMessage")} confirmLabel={t("chat.replaceDraft")} cancelLabel={t("i18n.cancel")} onCancel={() => setPendingEdit(null)} onConfirm={() => {
           const edit = pendingEdit; setPendingEdit(null);
-          if (valueRef.current !== edit.expected) { setDraftNotice(t("chat.draftChanged")); return; }
+          if (valueRef.current !== edit.expected || editRevisionRef.current !== edit.revision) { setDraftNotice(t("chat.draftChanged")); return; }
           replaceDraftText(edit.text);
         }} />}
         <ModelErrorBanner error={modelError} />
@@ -1616,6 +1641,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }}
           >
             {compactError}
+          </div>
+        )}
+        {attachedFiles.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {attachedFiles.map((file, index) => <FileAttachment key={`${file.path}:${index}`} file={file} onRemove={() => removeFile(index)} />)}
           </div>
         )}
         {/* Image previews */}
@@ -1730,7 +1760,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         {index + 1}
                       </span>
                       <span style={{ minWidth: 0, display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, overflow: "hidden", overflowWrap: "anywhere" }}>
-                        {summarizePastedBlocks(item)}
+                        {summarizeUserMessage(item)}
                       </span>
                     </button>
                   );
@@ -2014,7 +2044,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               editRevisionRef.current++;
               valueRef.current = nextValue;
               setValue(nextValue);
-              if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: nextValue, images: attachedImagesRef.current.map(imageToDraftImage), pastedTexts: livePastedTexts(nextValue, pastedTextsRef.current), notice: draftNotice });
+              if (draftKeyRef.current) setDraft(draftKeyRef.current, { value: nextValue, images: attachedImagesRef.current.map(imageToDraftImage), files: attachedFilesRef.current, pastedTexts: livePastedTexts(nextValue, pastedTextsRef.current), notice: draftNotice });
               setSlashCursorAtEnd(atEnd);
               setHistoryMenuOpen(false);
               updateAtQuery(nextValue, caret);
@@ -2115,7 +2145,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 width: 44, height: 44, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 9,
-                color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
+                color: attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text-muted)",
                 cursor: attachmentBusy ? "not-allowed" : "pointer",
                 opacity: attachmentBusy ? 0.5 : 1,
                 transition: "background 0.12s, color 0.12s",
@@ -2123,11 +2153,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               onMouseEnter={(e) => {
                 if (attachmentBusy) return;
                 e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
+                e.currentTarget.style.color = attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text)";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = "none";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
+                e.currentTarget.style.color = attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

@@ -21,6 +21,22 @@ function renderMessage(message, props = {}) {
   );
 }
 
+test("sent ordinary files render as cards beside images, not path references or metadata", async () => {
+  const { appendFileAttachments } = await jiti.import("../lib/file-attachments.ts");
+  const text = appendFileAttachments("Please review", [{ name: "review.csv", path: "/project/.omp-web-attachment-a/review.csv", size: 12 }]);
+  const html = renderMessage({ role: "user", content: [
+    { type: "text", text },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+  ] });
+  assert.match(html, /data-file-attachment/);
+  assert.match(html, />review.csv</);
+  assert.match(html, />12 B</);
+  assert.match(html, /Please review/);
+  assert.match(html, /<img/);
+  assert.doesNotMatch(html, /&lt;file-attachment&gt;|&quot;path&quot;|\[@review.csv\]/);
+  assert.doesNotMatch(html, /Remove attachment/);
+});
+
 test("sent text has a quick edit action without native history navigation", () => {
   const html = renderMessage({ role: "user", content: "original input", timestamp: 1 }, { onEditContent() {} });
   assert.match(html, /aria-label="Edit"/);

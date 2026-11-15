@@ -9,7 +9,9 @@ import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getToolPreview } from "@/lib/tool-preview";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
-import { countLines, pastedTextPreview, splitPastedBlocks, unwrapPastedBlocks } from "@/lib/pasted-text";
+import { countLines, pastedTextPreview } from "@/lib/pasted-text";
+import { copyUserMessage, splitUserMessage } from "@/lib/user-message-content";
+import { FileAttachment } from "./FileAttachment";
 import { TranslateButtons, TranslationPanel, useMessageTranslation } from "./MessageTranslation";
 import type {
   AgentMessage,
@@ -176,9 +178,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     ? content.replace(/^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\][ \t]*(?:\r?\n|$)/gm, "")
     : content;
 
-  // Long pastes sent from the web composer render as attachments, not inline text.
-  const segments = useMemo(() => splitPastedBlocks(displayContent), [displayContent]);
-  // Pasted attachments are not translated; only the typed text is.
+  // Uploaded files and long pastes render as cards, never as transport metadata.
+  const segments = useMemo(() => splitUserMessage(displayContent), [displayContent]);
+  // Attachments are not translated; only the typed text is.
   const translationSource = useMemo(() => segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join("\n\n").trim(), [segments]);
   const translation = useMessageTranslation(translationSource);
 
@@ -187,7 +189,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
   const copyContent = () => {
-    copyText(unwrapPastedBlocks(content)).then(() => {
+    copyText(copyUserMessage(content)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -241,11 +243,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               })}
             </div>
           )}
-          {displayContent && segments.map((segment, i) => segment.type === "paste"
-            ? <PastedTextAttachment key={i} text={segment.text} />
-            : segments.length === 1 || segment.text.trim()
+          {displayContent && segments.map((segment, i) => {
+            if (segment.type === "file") return <div key={i} style={{ margin: "4px 0" }}><FileAttachment file={segment.file} onOpenFile={onOpenFile} /></div>;
+            if (segment.type === "paste") return <PastedTextAttachment key={i} text={segment.text} />;
+            return segments.length === 1 || segment.text.trim()
               ? <MarkdownBody key={i} className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{segment.text}</MarkdownBody>
-              : null)}
+              : null;
+          })}
         </div>
 
       </div>

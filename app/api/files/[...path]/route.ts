@@ -26,9 +26,11 @@ import {
   inspectUploadTargets,
   pinUploadDirectory,
   writeUploadFile,
+  writeChatAttachment,
   parseUploadConflictStrategy,
   validateUploadFileNames,
 } from "@/lib/file-upload";
+import type { AttachedFile } from "@/lib/file-attachments";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES, MAX_UPLOAD_REQUEST_BYTES } from "@/lib/file-upload-limits";
 
@@ -152,7 +154,8 @@ export async function POST(
       return NextResponse.json(inspectUploadTargets(directory, fileNames));
     }
 
-    if (type !== "upload") {
+    const isAttachment = type === "attachment";
+    if (type !== "upload" && !isAttachment) {
       return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
     }
 
@@ -178,12 +181,29 @@ export async function POST(
       return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
     }
     const fileNames = files.map((file) => file.name);
-    const validationError = validateUploadFileNames(fileNames);
+    const validationError = validateUploadFileNames(isAttachment ? [...new Set(fileNames)] : fileNames);
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     pinned.assertCurrent();
+    if (isAttachment) {
+      const attachments: AttachedFile[] = [];
+      const errors: Array<{ name: string; error: string }> = [];
+      for (const file of files) {
+        try {
+          const bytes = Buffer.from(await file.arrayBuffer());
+          pinned.assertCurrent();
+          const attachment = writeChatAttachment(directory, file.name, bytes);
+          // Keep the selected (possibly symlinked) cwd spelling so file GETs stay
+          // inside the same lexical allow-list root. Never return a /proc/fd path.
+          attachments.push({ ...attachment, path: path.join(filePathFromSegments(segments), path.basename(path.dirname(attachment.path)), file.name) });
+        } catch (error) {
+          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return NextResponse.json({ attachments, errors }, { status: errors.length ? 207 : 200 });
+    }
     const inspection = inspectUploadTargets(directory, fileNames);
     if (strategy === "error" && inspection.conflicts.length > 0) {
       return NextResponse.json({

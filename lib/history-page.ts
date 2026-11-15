@@ -1,4 +1,5 @@
 import type { AgentMessage, SessionContext, SessionTreeNode } from "./types";
+import { summarizeUserMessage } from "./user-message-content";
 import { summarizeTurn, turnRanges, type HistoryTurnSummary } from "./history-turns";
 
 export interface HistoryTotals {
@@ -74,7 +75,8 @@ export function lightHistoryTree(tree: SessionTreeNode[]): SessionTreeNode[] {
     if (e.type === "message") {
       const m = e.message;
       const content = "content" in m ? m.content : "";
-      const preview = typeof content === "string" ? content.slice(0, 120) : content.filter(b => b.type === "text").map(b => b.text.slice(0, 120)).join(" ").slice(0, 120);
+      const text = typeof content === "string" ? content : content.filter(b => b.type === "text").map(b => b.text).join(" ");
+      const preview = summarizeUserMessage(text).slice(0, 120);
       entry = { ...base, type: "message", message: { role: m.role, content: preview } } as typeof e;
     }
     return { entry, children: [], ...(node.label ? { label: node.label.slice(0, 160) } : {}), ...(node.compressedEntryIds ? { compressedEntryIds: node.compressedEntryIds } : {}) };

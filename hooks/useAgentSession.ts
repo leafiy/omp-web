@@ -17,7 +17,7 @@ import { resolveContextUsage } from "@/lib/context-usage";
 import { fetchHistoryTurn, historyClientCache, historyUrl, HistoryRequestError } from "@/lib/history-client-cache";
 import type { HistoryPage } from "@/lib/history-page";
 import { historyTurnKey, type HistoryTurnSummary } from "@/lib/history-turns";
-import { getDraft, setDraft } from "@/lib/draft-store";
+import { getDraft, prependDraftMessage, setDraft } from "@/lib/draft-store";
 import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { preferredModel, rememberChatChoice } from "@/lib/chat-preferences";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
@@ -2075,7 +2075,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (notice) addNotice({ type: "warning", message: notice });
       } else {
         const draft = getDraft(sid);
-        setDraft(sid, { value: text + (draft?.value ? `\n\n${draft.value}` : ""), images: draft?.images ?? [], notice });
+        setDraft(sid, prependDraftMessage(draft, text, notice));
       }
     };
     try {
@@ -2123,7 +2123,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // Restore confirmed removals before another network request can fail.
       if (text) {
         if (mountedRef.current && sessionIdRef.current === sid) opts.chatInputRef?.current?.prependText(text);
-        else { const old = getDraft(sid); setDraft(sid, { value: text + (old?.value ? `\n\n${old.value}` : ""), images: old?.images ?? [] }); }
+        else { setDraft(sid, prependDraftMessage(getDraft(sid), text)); }
       }
       const state = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
       if (mountedRef.current && sessionIdRef.current === sid) setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages, state?.queuedItems));

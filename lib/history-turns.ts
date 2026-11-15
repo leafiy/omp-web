@@ -1,4 +1,4 @@
-import { summarizePastedBlocks } from "./pasted-text";
+import { summarizeUserMessage } from "./user-message-content";
 import type { AgentMessage, CustomMessage, ImageContent, TextContent } from "./types";
 
 /**
@@ -60,7 +60,7 @@ export function summarizeTurn(messages: AgentMessage[], entryIds: string[], star
   let text = "", images = 0, toolCalls = 0;
   if (first.role === "user") {
     const blocks: (TextContent | ImageContent)[] = typeof first.content === "string" ? [{ type: "text", text: first.content }] : first.content;
-    text = clipText(summarizePastedBlocks(blocks.map((block) => block.type === "text" ? block.text : "").join(" ")).replace(/\s+/g, " ").trim(), TURN_PREVIEW_CHARS);
+    text = clipText(summarizeUserMessage(blocks.map((block) => block.type === "text" ? block.text : "").join(" ")).replace(/\s+/g, " ").trim(), TURN_PREVIEW_CHARS);
     images = blocks.filter((block) => block.type === "image").length;
   }
   for (let i = start; i < end; i++) {

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "node:crypto";
+import type { AttachedFile } from "./file-attachments";
 
 export const UPLOAD_CONFLICT_STRATEGIES = ["error", "overwrite", "skip"] as const;
 export type UploadConflictStrategy = typeof UPLOAD_CONFLICT_STRATEGIES[number];
@@ -75,6 +76,17 @@ export function writeUploadFile(directory: string, name: string, bytes: Buffer, 
     fs.closeSync(fd);
     try { const current = fs.lstatSync(temporary); if (current.dev === identity.dev && current.ino === identity.ino) fs.unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
+}
+
+/** Chat copies are independent of project uploads and earlier messages. Never overwrite by filename. */
+export function writeChatAttachment(directory: string, name: string, bytes: Buffer): AttachedFile {
+  const error = validateUploadFileNames([name]);
+  if (error) throw new Error(error);
+  // A fresh private directory also permits several attachments with the same display name.
+  // The parent can be a pinned /proc/self/fd path; return its durable canonical path instead.
+  const storedDirectory = fs.mkdtempSync(path.join(directory, ".omp-web-attachment-"));
+  writeUploadFile(storedDirectory, name, bytes, "error");
+  return { name, path: path.join(fs.realpathSync(storedDirectory), name), size: bytes.length };
 }
 
 export function inspectUploadTargets(directory: string, fileNames: string[]): UploadTargetInspection {
