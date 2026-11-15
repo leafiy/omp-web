@@ -191,7 +191,7 @@ interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 
-function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
+function buildSessionTree(sessions: SessionInfo[], runningSessionIds: ReadonlySet<string>): SessionTreeNode[] {
   const byId = new Map<string, SessionTreeNode>();
   for (const s of sessions) {
     byId.set(s.id, { session: s, children: [] });
@@ -226,10 +226,19 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
     }
   }
 
-  // Sort each level by modified desc
+  // Promote running branches without detaching forks from their parents.
+  const runningBranches = new Set<string>();
   const sort = (nodes: SessionTreeNode[]) => {
-    nodes.sort((a, b) => b.session.modified.localeCompare(a.session.modified));
-    nodes.forEach((n) => sort(n.children));
+    for (const node of nodes) {
+      sort(node.children);
+      if (runningSessionIds.has(node.session.id)
+        || node.children.some((child) => runningBranches.has(child.session.id))) {
+        runningBranches.add(node.session.id);
+      }
+    }
+    nodes.sort((a, b) =>
+      Number(runningBranches.has(b.session.id)) - Number(runningBranches.has(a.session.id))
+      || b.session.modified.localeCompare(a.session.modified));
   };
   sort(roots);
   return roots;
@@ -545,6 +554,12 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     return [{ ...pendingSession, projectRoot }, ...allSessions];
   }, [allSessions, pendingSession]);
   const groups = groupSessionsByProject(displaySessions);
+  const runningProjects = new Set(groups
+    .filter((group) => group.sessions.some((session) => runningSessionIds.has(session.id)))
+    .map((group) => group.root));
+  groups.sort((a, b) =>
+    Number(runningProjects.has(b.root)) - Number(runningProjects.has(a.root))
+    || b.latest.localeCompare(a.latest) || a.root.localeCompare(b.root));
   const groupIndex = new Map(groups.map((group, index) => [group.root, index]));
   const query = filter.trim().toLowerCase();
   const visibleGroups = query
@@ -755,7 +770,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
             : projectExpansion[group.root] ?? (index < DEFAULT_EXPANDED_PROJECTS || group.root === activeProjectRoot);
           const name = projectDisplayName(group.root);
           const detail = (nameCounts.get(name) ?? 0) > 1 ? displayCwd(projectParentPath(group.root), homeDir) : null;
-          const tree = expanded ? buildSessionTree(group.sessions) : [];
+          const tree = expanded ? buildSessionTree(group.sessions, runningSessionIds) : [];
           const listExpanded = expandedSessionLists.has(group.root);
           const selectedHidden = !listExpanded
             && collapsedForSelection[group.root] !== selectedSessionId
