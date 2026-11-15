@@ -8,6 +8,35 @@ These are the agents already on your machine. They keep their own logins, model 
 
 <img width="3460" height="2148" alt="image" src="https://github.com/user-attachments/assets/bd2c98e2-be32-44fe-b4f9-91cdb922e1d2" />
 
+## A four-card introduction
+
+**Bring Claude, Pi, and Codex from your remote machine into the browser.**
+
+Open your existing agents from a phone, tablet, or laptop. These Chinese-language promotional cards illustrate features, not actual UI screenshots. Click an image for the full-size version.
+
+| Browser workspace | Remote architecture |
+| --- | --- |
+| [![Remote Claude, Pi, and Codex in the browser (Chinese)](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![omp-web invokes native Claude Code on a US host; the CLI connects to the model service (Chinese)](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| **Input helpers** | **Everyday development** |
+| [![Punctuation conversion, optional translation, and screenshot paste previews (Chinese)](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![Multiple engines, files and diffs, embedded terminals, and work continuing after browser disconnects (Chinese)](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
+
+### Strengths: a more convenient daily interface than mobile SSH
+
+- **Multiple agents, one page:** Claude Code, Pi, Codex CLI, and OMP retain their own native logins and configuration, with sessions organized by project.
+- **Easier screenshots, files, and replies:** paste and preview screenshots, drop files to upload, copy Markdown replies, and expand tool calls and subagent conversations.
+- **Chinese input helpers:** enable punctuation conversion to turn supported Chinese punctuation into English punctuation on send. Configure a translation service and enable Chinese-to-English input translation to write requests in Chinese and send them in English. This translates input; it does not force the agent to reply in English.
+- **Development tools together:** file previews, Git diffs, tabbed terminals, session forks, and worktrees reduce switching between SSH and other tools.
+- **A browser disconnect does not itself stop a task:** work runs on the remote host, not on your phone. An already-started task can continue while the host, network, service, and agent process remain operational.
+
+### Trade-offs and limits
+
+- **You maintain the host:** install and log into the native CLIs, deploy the web service, and secure remote access. Browser convenience is not zero maintenance.
+- **The web layer does not call the Claude API directly; the CLI still needs network access:** in the US-host example, omp-web invokes Claude Code on that same host, and Claude Code connects to the model service. Remote deployment does not bypass account eligibility, regional restrictions, or provider terms.
+- **Not every TUI feature has a web control:** support varies by engine. Use the embedded terminal for native TUI-only features. Multiple engine sessions do not mean automatic cross-agent orchestration.
+- **Translation is an optional additional service:** it requires separate configuration, receives the text being translated, and may add latency or cost. Command drafts skip input translation. Failed or cancelled translations leave the draft unsent.
+- **Disconnect tolerance is not failure recovery:** host connectivity loss, process exit, or a web service restart can still interrupt work. This is not a durable job queue or automatic failover system.
+- **Protect the web entry point:** the web interface and terminal have the service account's permissions. Use web login and HTTPS or private networking; do not treat it as a sandbox.
+
 ## My setup
 
 ```text

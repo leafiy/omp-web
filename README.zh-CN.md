@@ -8,6 +8,35 @@ Agent 还是你机器上原来的那几个，继续用它们自己的登录、�
 
 <img width="3458" height="2158" alt="image" src="https://github.com/user-attachments/assets/1795000f-0d74-4fb4-95e5-a7ea8c681b2d" />
 
+## 四张图了解 omp-web
+
+**把远程机器的Claude Pi Codex搬到浏览器,随时随地当牛马**
+
+手机、平板、电脑打开网页，继续使用远程机器上的原生 Agent。以下为功能宣传示意，不是实际界面截图；点击图片可查看原图。
+
+| 浏览器工作台 | 远程架构 |
+| --- | --- |
+| [![把远程机器的 Claude、Pi、Codex 搬到浏览器](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![美国远程主机上的 omp-web 调用原生 Claude Code，由 CLI 连接模型服务](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| **中文输入优化** | **日常开发工作流** |
+| [![中文标点转换、可选中译英和截图粘贴预览](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![多引擎会话、文件与 diff、内嵌终端和浏览器断线后继续运行](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
+
+### 优点：比手机 SSH 更顺手的日常入口
+
+- **多个 Agent，一个网页**：Claude Code、Pi、Codex CLI、OMP 各自保留原生登录和配置，按项目管理会话，不必为网页重建工作流。
+- **截图、文件和回复更好操作**：截图可粘贴预览，文件可拖入上传；回复按 Markdown 展示并可复制，工具调用和子 Agent 对话可展开。
+- **中文输入少折腾**：开启标点转换后，发送时自动把支持的中文标点转为英文标点；配置翻译服务并开启中译英后，可用中文写需求、以英文发送给 Agent。它转换的是输入，不强制 Agent 用英文回复。
+- **开发工具放在一起**：文件预览、Git diff、多标签终端、会话 Fork 和 worktree 都在同一个工作区，减少在 SSH 和其他工具间切换。
+- **浏览器断线不等于任务停止**：任务在远程主机上运行，不依赖手机持续保持网页连接；主机、网络、服务与 Agent 进程正常运行时，已开始的任务可继续执行。
+
+### 缺点与限制：不是万能的远程代理
+
+- **需要自己维护主机**：先安装并登录原生 CLI，再部署网页服务、配置安全的远程访问。浏览器访问方便，不代表零运维。
+- **网页不直接调用 Claude API，但 CLI 仍需联网**：例如部署在美国机器上时，omp-web 调用同机的原生 Claude Code，由 Claude Code 连接模型服务。远程部署不绕过提供方的账号资格、服务地区或使用条款。
+- **不是所有 TUI 功能都有网页按钮**：支持范围因引擎而异，原生 TUI 独有能力需在内嵌终端使用；多引擎会话也不等于跨 Agent 自动编排。
+- **翻译是可选的额外服务**：需单独配置，会把待译文本发送给该服务，并可能增加延迟或费用；命令草稿不参与输入翻译。翻译失败或取消时不会发送原草稿。
+- **断线继续不等于故障恢复**：远程主机掉线、进程退出或网页服务重启仍可能中断任务；这不是持久任务队列或自动容灾系统。
+- **必须保护网页入口**：网页和终端具有服务账户的权限；使用网页登录及 HTTPS／私有网络，不要把它当作沙箱。
+
 ## 我的使用环境
 
 ```text
