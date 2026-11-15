@@ -1605,7 +1605,7 @@ function SessionItem({
             </span>
           )}
 
-          <button
+          {hovered && <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
             title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
@@ -1616,7 +1616,7 @@ function SessionItem({
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M16 3l5 5-4 1-4 4-1 5-6-6 5-1 4-4zM2 22l7-7" />
             </svg>
-          </button>
+          </button>}
 
           {/* Collapse toggle — always visible when has children */}
           {hasChildren && (
