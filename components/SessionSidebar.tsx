@@ -104,6 +104,18 @@ interface Props {
   onAtMentions?: (relativePaths: string[]) => void;
 }
 
+const PINNED_SESSIONS_STORAGE_KEY = "omp-web:pinned-sessions";
+
+function loadPinnedSessions(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]");
+    return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === "string"))] : [];
+  } catch {
+    return [];
+  }
+}
+
 const PROJECT_EXPANSION_STORAGE_KEY = "omp-web:sidebar-project-expansion";
 const RUNNING_SESSIONS_POLL_MS = 2500;
 /** Projects expanded until the user toggles them (most recent first). */
@@ -553,7 +565,24 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
       || pendingSession.cwd;
     return [{ ...pendingSession, projectRoot }, ...allSessions];
   }, [allSessions, pendingSession]);
-  const groups = groupSessionsByProject(displaySessions);
+  const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>(loadPinnedSessions);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify(pinnedSessionIds));
+    } catch {
+      // Storage may be unavailable in privacy mode.
+    }
+  }, [pinnedSessionIds]);
+  const togglePin = (id: string) => {
+    setPinnedSessionIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [id, ...ids]);
+  };
+  const pinnedIds = new Set(pinnedSessionIds);
+  const sessionsById = new Map(displaySessions.map((session) => [session.id, session]));
+  const pinnedSessions = pinnedSessionIds.flatMap((id) => {
+    const session = sessionsById.get(id);
+    return session ? [session] : [];
+  });
+  const groups = groupSessionsByProject(displaySessions.filter((session) => !pinnedIds.has(session.id)));
   const runningProjects = new Set(groups
     .filter((group) => group.sessions.some((session) => runningSessionIds.has(session.id)))
     .map((group) => group.root));
@@ -570,6 +599,11 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
         return sessions.length > 0 ? [{ ...group, sessions }] : [];
       })
     : groups;
+
+  const visiblePinnedSessions = pinnedSessions.filter((session) => !query
+    || sessionProjectRoot(session).toLowerCase().includes(query)
+    || (session.name ?? "").toLowerCase().includes(query)
+    || (session.firstMessage ?? "").toLowerCase().includes(query));
 
   // The project that owns the open session (transient sessions resolve by cwd).
   const selectedSessionInfo = selectedSessionId ? displaySessions.find((s) => s.id === selectedSessionId) : undefined;
@@ -753,14 +787,38 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
             {error}
           </div>
         )}
-        {!loading && !error && groups.length === 0 && (
+        {!loading && !error && displaySessions.length === 0 && (
           <div style={{ padding: "12px 16px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noSessions")}
           </div>
         )}
-        {!loading && !error && groups.length > 0 && visibleGroups.length === 0 && (
+        {!loading && !error && displaySessions.length > 0 && visibleGroups.length === 0 && visiblePinnedSessions.length === 0 && (
           <div style={{ padding: "12px 16px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noMatches")}
+          </div>
+        )}
+        {visiblePinnedSessions.length > 0 && (
+          <div role="group" aria-label={t("sidebar.pinned")}>
+            <div style={{ padding: "8px 12px 4px", fontSize: 11, color: "var(--text-dim)" }}>{t("sidebar.pinned")}</div>
+            {visiblePinnedSessions.map((session) => (
+              <SessionItem
+                key={session.id}
+                session={session}
+                isSelected={session.id === selectedSessionId}
+                isRunning={runningSessionIds.has(session.id)}
+                isWaiting={waitingSessionIds.has(session.id)}
+                isUnread={unreadSessionIds.has(session.id)}
+                isPinned
+                onTogglePin={() => togglePin(session.id)}
+                onClick={() => onSelectSession(session)}
+                onRenamed={loadSessions}
+                onDeleted={(id) => {
+                  setPinnedSessionIds((ids) => ids.filter((item) => item !== id));
+                  onSessionDeleted?.(id);
+                  loadSessions();
+                }}
+              />
+            ))}
           </div>
         )}
         {visibleGroups.map((group) => {
@@ -803,6 +861,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                     <SessionTreeItem
                       key={node.session.id}
                       node={node}
+                      onTogglePin={togglePin}
                       selectedSessionId={selectedSessionId}
                       runningSessionIds={runningSessionIds}
                       waitingSessionIds={waitingSessionIds}
@@ -1112,6 +1171,7 @@ function ProjectGroupHeader({
 
 function SessionTreeItem({
   node,
+  onTogglePin,
   selectedSessionId,
   runningSessionIds,
   waitingSessionIds,
@@ -1122,6 +1182,7 @@ function SessionTreeItem({
   depth,
 }: {
   node: SessionTreeNode;
+  onTogglePin: (id: string) => void;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   waitingSessionIds: Set<string>;
@@ -1150,6 +1211,7 @@ function SessionTreeItem({
         )}
         <SessionItem
           session={node.session}
+          onTogglePin={() => onTogglePin(node.session.id)}
           isSelected={node.session.id === selectedSessionId}
           isRunning={runningSessionIds.has(node.session.id)}
           isWaiting={waitingSessionIds.has(node.session.id)}
@@ -1169,6 +1231,7 @@ function SessionTreeItem({
             <SessionTreeItem
               key={child.session.id}
               node={child}
+              onTogglePin={onTogglePin}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
               waitingSessionIds={waitingSessionIds}
@@ -1290,6 +1353,8 @@ function SessionItem({
   onClick,
   onRenamed,
   onDeleted,
+  isPinned = false,
+  onTogglePin,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -1303,6 +1368,8 @@ function SessionItem({
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
+  isPinned?: boolean;
+  onTogglePin: () => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -1537,6 +1604,19 @@ function SessionItem({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.worktreeBranch}</span>
             </span>
           )}
+
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
+            title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
+            aria-label={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
+            aria-pressed={isPinned}
+            style={{ ...actionButtonStyle, color: isPinned ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 3l5 5-4 1-4 4-1 5-6-6 5-1 4-4zM2 22l7-7" />
+            </svg>
+          </button>
 
           {/* Collapse toggle — always visible when has children */}
           {hasChildren && (
