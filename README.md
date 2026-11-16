@@ -1,123 +1,167 @@
-# omp-web
+# omp-web · Leafiy's fork
 
 [English](./README.md) · [简体中文](./README.zh-CN.md) · [Website](https://leafiy.github.io/omp-web/)
 
-**Use your local OMP, Pi, Claude Code, and Codex CLI from one browser workspace, with a terminal and file manager right beside them. No workflow to rebuild.**
+**Your remote OMP, Pi, Claude Code, and Codex in one browser page, with chat, a terminal, and files side by side.**
 
-These are the agents already on your machine. They keep their own logins, model configuration, skills, and project instructions. omp-web puts them in one web page that you can open from a laptop or a phone.
+This is my personal fork of [17380936778/omp-web](https://github.com/17380936778/omp-web). Upstream already had a solid chat and file-preview interface. My changes add more agents and everyday development tools, and rework session management, input, and the mobile experience.
 
-<img width="3460" height="2148" alt="image" src="https://github.com/user-attachments/assets/bd2c98e2-be32-44fe-b4f9-91cdb922e1d2" />
+These are still the agents installed on your machine, using their own logins, models, skills, and project configuration. Your laptop, phone, or tablet only needs a browser.
 
-## A four-card introduction
+## Automatic fullwidth-to-halfwidth conversion
 
-**Bring Claude, Pi, and Codex from your remote machine into the browser.**
-
-Open your existing agents from a phone, tablet, or laptop. These Chinese-language promotional cards illustrate features, not actual UI screenshots. Click an image for the full-size version.
-
-| Browser workspace | Remote architecture |
-| --- | --- |
-| [![Remote Claude, Pi, and Codex in the browser (Chinese)](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![omp-web invokes native Claude Code on a US host; the CLI connects to the model service (Chinese)](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
-| **Input helpers** | **Everyday development** |
-| [![Punctuation conversion, optional translation, and screenshot paste previews (Chinese)](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![Multiple engines, files and diffs, embedded terminals, and work continuing after browser disconnects (Chinese)](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
-
-### Strengths: a more convenient daily interface than mobile SSH
-
-- **Multiple agents, one page:** Claude Code, Pi, Codex CLI, and OMP retain their own native logins and configuration, with sessions organized by project.
-- **Easier screenshots, files, and replies:** paste and preview screenshots, drop files to upload, copy Markdown replies, and expand tool calls and subagent conversations.
-- **Chinese input helpers:** enable punctuation conversion to turn supported Chinese punctuation into English punctuation on send. Configure a translation service and enable Chinese-to-English input translation to write requests in Chinese and send them in English. This translates input; it does not force the agent to reply in English.
-- **Development tools together:** file previews, Git diffs, tabbed terminals, session forks, and worktrees reduce switching between SSH and other tools.
-- **A browser disconnect does not itself stop a task:** work runs on the remote host, not on your phone. An already-started task can continue while the host, network, service, and agent process remain operational.
-
-### Trade-offs and limits
-
-- **You maintain the host:** install and log into the native CLIs, deploy the web service, and secure remote access. Browser convenience is not zero maintenance.
-- **The web layer does not call the Claude API directly; the CLI still needs network access:** in the US-host example, omp-web invokes Claude Code on that same host, and Claude Code connects to the model service. Remote deployment does not bypass account eligibility, regional restrictions, or provider terms.
-- **Not every TUI feature has a web control:** support varies by engine. Use the embedded terminal for native TUI-only features. Multiple engine sessions do not mean automatic cross-agent orchestration.
-- **Translation is an optional additional service:** it requires separate configuration, receives the text being translated, and may add latency or cost. Command drafts skip input translation. Failed or cancelled translations leave the draft unsent.
-- **Disconnect tolerance is not failure recovery:** host connectivity loss, process exit, or a web service restart can still interrupt work. This is not a durable job queue or automatic failover system.
-- **Protect the web entry point:** the web interface and terminal have the service account's permissions. Use web login and HTTPS or private networking; do not treat it as a sandbox.
-
-## My setup
+**Keep typing with your Chinese IME—no switching modes for punctuation or cleaning it up by hand.** Chinese commas, periods, quotes, and brackets, plus fullwidth letters, digits, and spaces, are converted to their halfwidth/English equivalents before sending:
 
 ```text
-A low-spec, always-on Linux box at a remote home
-├── Claude Code / Codex / OMP / Pi   ← each logged in; models run in the cloud
-├── project checkouts
-└── omp-web (systemd service, listening on 127.0.0.1 only)
-        │
-        │  Tailscale Serve (HTTPS) or an EasyTier virtual network
-        ▼
-Whatever laptop, phone, or tablet I have with me: just a browser
+请检查：“ＡＢＣ１２３”（测试）。
+        ↓ Automatically converted before sending
+请检查:"ABC123"(测试).
 ```
 
-SSH got me connected, but copying long replies, scrolling back, reading diffs, and moving screenshots or files around were clumsy, especially from a phone. Now I open the page to read, copy, review changes, and upload files. When I need a shell, the terminal is right there.
+On by default, with an off switch remembered in this browser. The same input handling serves all four engines for send, Steer, and Follow-up, **including code and long pastes inside the message**. Conversion happens in the browser, without a model call or translation service.
 
-Because the models run in the cloud, the host doesn't need to run a large model. The CLIs, the web service, and your builds still need resources. This is my personal setup, not a minimum hardware spec.
+`!` and `/` command drafts are skipped. Leading fullwidth symbols cannot accidentally turn a message into a command; uploaded files, attachment paths, and existing history are untouched. Characters without a conversion rule stay as typed.
 
-## Making it convenient
+<img width="3460" height="2148" alt="omp-web: project sessions, chat, and files in one workspace" src="https://github.com/user-attachments/assets/bd2c98e2-be32-44fe-b4f9-91cdb922e1d2" />
 
-### One-time setup
+## What I changed from upstream
 
-1. **Install on the agent host.** Run the [installer](#install) as the OS user that already has the agents logged in, and let it install the systemd service so omp-web starts on boot.
-2. **Reach it over a private network.**
-   - **Tailscale:** keep omp-web on `127.0.0.1` and put Serve in front of it for HTTPS: `tailscale serve --bg 30141`. Open `https://<machine>.<tailnet>.ts.net`, and add that hostname to `PI_WEB_ALLOWED_HOSTS` (for example, run `sudo systemctl edit omp-web.service` and add `Environment=PI_WEB_ALLOWED_HOSTS=<machine>.<tailnet>.ts.net`).
-   - **EasyTier:** have the service listen on the host's virtual IP (`--host <virtual-ip>` when installing). Other devices connect by IP, so no hostname setting is needed.
-3. **On your phone, use "Add to Home Screen".** The page then opens full-screen like a standalone app.
+This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** with this fork at **[`d5b77fa`](https://github.com/leafiy/omp-web/commit/d5b77fa)**, not with the original pi-web. The upstream remote still pointed to that commit when checked. [Full source diff](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...d5b77fa). Related commits are grouped by feature; repeated fixes are not counted as separate features.
 
-### Everyday use
+**Credit where it's due:** Chinese localization, Markdown and syntax highlighting, Mermaid and math, file previews, Git diffs, worktrees, forks and branches, image paste, completion sounds, and PWA support already existed upstream. Upstream also included title-generation code and optional Basic Auth. This fork extends, redesigns, or fixes those features; it did not build the whole project from scratch.
 
-- **Projects and sessions:** the sidebar lists sessions by project, and a tag at the start of each row shows its engine (OMP / Pi / CC / CX). Choose a directory and an agent when you start a session. An existing session always continues on its original engine.
-- **Don't wait for it to finish:** paste screenshots, or drop and attach files, while the agent is running. Follow-up messages are queued, and you can pull one back to edit it before it's sent.
-- **Read results:** replies are rendered as Markdown with copy buttons. Tool calls and subagent conversations expand inline. Long history folds by user turn, and expanding a turn loads all of it.
-- **Changes and files:** preview files and view Git diffs from the file tree. Right-click (or tap "More" on touch devices) to copy, move, rename, download, or delete, or to upload into the current directory.
-- **Terminal:** tabbed in-page terminals that are separate from the conversation, so you don't need a separate SSH session. For features only the native TUI has, run `claude`, `codex`, and so on right there.
-- **Forks and worktrees:** fork a new session from any user message. For Git projects, pick or create a worktree when you start a session.
-- **Native controls:** models, reasoning effort, slash commands, skills, approval prompts, context, and subscription usage (day/week/month tokens) all come from the selected agent. What's available varies by agent.
-- **Completion sound:** turn it on to get a sound when a run finishes, even while you're on another tab.
+### 1. From an OMP interface to a shared home for four agents
 
-## How it differs from Herdr, Orca, and Paseo
-
-> I've tried a number of agent integration tools. They do more, but for the workflow I already had, the extra configuration, terminal management, and workspace conventions often got in the way. I just wanted to keep using my existing agents from a browser.
-
-| Project | Focus |
+| Change | Why it matters |
 | --- | --- |
-| [Herdr](https://github.com/herdrdev/herdr) | A terminal runtime for agents: background sessions, panes, agent status, and local or SSH machines. There's also a [desktop app](https://github.com/herdrdev/herdr-app). |
-| [Orca](https://github.com/stablyai/orca) | An agent orchestration workspace: parallel worktrees, Chat/Terminal modes, code review, remote runtimes, and a mobile companion app. |
-| [Paseo](https://github.com/getpaseo/paseo) | A local daemon with desktop, mobile, web, and CLI clients. It runs parallel agents, each in its own worktree, and can orchestrate across providers. Devices connect through an end-to-end encrypted relay or a VPN such as Tailscale. |
-| **omp-web** | A single web page on the host: your local OMP, Pi, Claude Code, and Codex CLI, plus a terminal and a file manager. |
+| **Replaced the execution backend:** OMP and Pi now use the installed CLIs over native RPC, rather than the web app's older in-process Pi SDK | The browser and terminal use the same agent installation, reducing version and login mismatches. |
+| **Added Claude Code and Codex CLI:** Claude Agent SDK with the local Claude executable; Codex through app-server | No separate web interface for each agent. Missing installations are clearly marked. |
+| **Separated each engine's login, configuration, history, and model catalog; pinned existing sessions to their engine** | Accounts and conversations do not get mixed up. Switching engines starts a new chat. |
+| **Native models and reasoning controls:** actual catalogs and selections, Claude Effort, and remembered engine/model choices per directory | Less repeated setup, without applying one agent's model choice to another. |
+| **Native command menus and argument completion:** added Claude commands and suggestions from native enum hints | Find commands and their arguments after typing `/`; terminal-only actions are not presented as supported web features. |
+| **A read-only skills panel scoped to engine and project; disabled the old unscoped auth/model/plugin/skill editors** | See what the selected agent actually exposes. Installation, login, and configuration stay with its CLI, avoiding edits to the wrong store. |
 
-All of these run the native CLIs, and each has its own remote, terminal, or file features, so none of those are unique to omp-web. omp-web keeps a narrower scope: one page with conversations, a terminal, and files. It doesn't orchestrate agents, it has no separate client to install or device to pair, and a plain conversation doesn't require you to adopt new workspace conventions first.
+### 2. Sessions that are easier to find and follow
 
-The comparison is based on official documentation (Herdr and Orca checked 2026-11-07, Paseo checked 2026-11-08): [sources and scope](./docs/agent-workspace-comparison-research.zh-CN.md).
+| Change | Why it matters |
+| --- | --- |
+| **Rebuilt the project → session sidebar:** multiple projects, folding, search, expandable lists, and OMP/Pi/CC/CX tags | No constant project-dropdown switching, and no guessing which agent owns a chat. |
+| **Moved directory selection into new chats:** recent projects, path browsing, project/folder creation, and worktree selection/creation | Start a chat, then choose where to work. Changing the directory keeps the unsent draft. |
+| **Connected native titles:** prefer the agent's title, generate missing titles for new web sessions through that agent, and show new sessions immediately | Chats are easier to identify before the first reply finishes; a long first prompt is no longer used as a substitute title. Fallback naming can make an extra model request. |
+| **Added a separate pinned section, stored on the server** | A chat pinned on your laptop is also pinned on your phone, without duplicate rows in project groups. |
+| **Synced read/unread state across devices, with project-wide “mark read”** | Reading a result on your phone clears the reminder on your laptop. A late acknowledgement cannot clear a newer result. |
+| **Added waiting-for-input badges and sounds, including on collapsed projects** | Find the chat waiting for approval or an answer. Completion sounds also wait for known background work to finish. |
+
+### 3. More useful input, less lost work
+
+| Change | Why it matters |
+| --- | --- |
+| **Automatic fullwidth-to-halfwidth conversion, on by default:** Chinese punctuation and fullwidth letters, digits, and spaces are converted before send/Steer/Follow-up | Keep using your Chinese IME without switching modes or fixing symbols by hand. Includes code and long pastes in messages; can be disabled in Settings. |
+| **Persistent drafts, scoped to the session or new-chat directory and engine; clear only after confirmed sending** | Refreshing, switching chats, or a failed send is less likely to lose your text. File metadata and long pastes persist; images remain in memory only. |
+| **One web Follow-up queue for all four engines, with individual take-back-to-edit** | Write the next request while the agent works. Closing the browser does not pause the server queue, but restarting the service does not preserve it. |
+| **Added native Claude Steer, keeping OMP/Pi's own steering behavior** | Supported engines can receive guidance during the current run instead of always waiting for another turn. Codex has no web Steer control yet. |
+| **Added “Edit” to sent messages, with confirmation before replacing a draft** | Bring text back, revise, and resend. It does not rewrite history the agent has already consumed. |
+| **Ordinary files now have attachment cards:** paste, drop, or select files, including while the agent is running | See names, sizes, previews, and downloads instead of long paths in the composer. Same-name attachments get separate copies, not overwritten project files. Images cannot enter the Follow-up queue. |
+| **Completed image previews:** drafts, history, assistant images, and tool images are clickable; Pi's image-coordinate note is hidden | Check screenshots before sending and inspect image results. Viewing an image does not write it into the project. |
+| **Long pastes become `[paste #n …]` markers and expandable transcript attachments** | Logs, code, and long requirements no longer fill the composer or conversation. The agent still receives the full text; this does not save tokens. |
+| **Added translate-before-send, separately enabled per conversation, for send/Steer/Follow-up** | Write in Chinese and send in English, or vice versa. Failure, cancellation, or editing the draft during translation sends nothing stale. |
+| **Added message translations in both directions, alongside the original** | Read replies in your preferred language without changing history. Fenced code stays verbatim; attachment contents are not translated. |
+
+Translation needs a separately configured OpenAI-compatible service, with templates for Index-Translate and Hunyuan-MT. It sends the text to that service and may add latency or cost. Message translation buttons stay hidden without configuration. Translating input does not force the agent's reply language; `!` and `/` command drafts skip translation.
+
+### 4. Less decoration, more readable content
+
+| Change | Why it matters |
+| --- | --- |
+| **Retuned chat typography:** consistent body text, bubbles, spacing, lists, and controls; fixed CJK emphasis and large ordered-list numbers | Long replies are easier to scan, without stray `**` or crowded text. |
+| **Reworked Dark and Starfield:** removed distracting scanlines, clipped corners, and tiny text; fixed dark code/Mermaid detection and made terminal colors follow the theme | Keep the visual identity without sacrificing content or controls. Decorative CSS no longer overrides the chosen syntax colors. |
+| **Rebuilt narrow-screen toolbars and composer actions:** compact menus, separate send/stop controls, larger touch targets, keyboard-height and safe-area fixes | Keep typing and stopping within reach when the phone keyboard is open. |
+| **Replaced blocking browser confirmations with inline prompts; fixed shortcut conflicts** | Confirmations do not freeze streaming. Closing a menu or typing in the terminal should not accidentally stop chat. |
+| **Tool summaries show actual questions/answers and readable structured arguments** | Understand a tool call without opening a long record or seeing `[object Object]`. |
+
+### 5. Clearer history, background work, and usage
+
+| Change | Why it matters |
+| --- | --- |
+| **History now folds and loads by complete user turn, with browser and server caches** | Read recent work first, expand an entire older turn on demand, and avoid downloading everything again. One task is no longer split across message pages. |
+| **Separate subagent/background-task status, with related conversations in right-side tabs** | See what is still working after the main reply ends, without mixing child conversations into the main chat. It observes supported native tasks; it is not a new scheduler. |
+| **Engine-specific reconnect, completion, and send acknowledgement handling:** state reconciliation, approval replay, stale-response filtering, and message deduplication | Fewer premature “done” states, duplicate messages after refresh, or lost approval prompts. |
+| **Native context usage, with the last reported value saved** | No fixed 128K fallback or cumulative billing totals pretending to be current context. Keep the last observation after restart; missing data stays unknown. |
+| **Added subscription usage and day/week/month token tables** | See limits, reset times, and consumption. Codex account data is clearly separated from local Claude/OMP/Pi totals, not added into a misleading grand total. |
+
+### 6. Files and a terminal within reach
+
+| Change | Why it matters |
+| --- | --- |
+| **Added an independent PTY terminal:** tabs, adjustable height, shell/login-shell selection, and reconnect after refresh | Run commands, inspect logs, or open a native TUI without another SSH window. Terminal output is not automatically added to the AI conversation. |
+| **Turned the file tree into a file manager:** create, copy, cut, paste, move, rename, delete, download; touch-friendly “More” menus | Do simple file work yourself rather than asking an agent. Operations check allowed paths, conflicts, and changed files. There is no trash/recycle bin. |
+| **Uploads target the selected folder, including drag-to-folder, with progress and conflict handling** | Not just the chat root. Navigating during an upload cannot silently change its destination, and replacement does not delete the old file before writing. |
+| **Local file links in replies now offer preview and direct download, including `file:`/`sandbox:` links** | Take the generated report straight from the reply instead of hunting for its path. File-access restrictions still apply. |
+
+### 7. Built for regular self-hosted use
+
+| Change | Why it matters |
+| --- | --- |
+| **Replaced optional Basic Auth with mandatory form login and session cookies; added account changes, logout, and login rate limits** | No browser password popup. Passwords use salted hashes, and changing credentials signs out other browsers. |
+| **Added authentication and origin checks to chat/terminal event streams** | Long-lived connections are protected even when they bypass proxy buffering. |
+| **CLI versions and individual update controls in Settings** | Update the installed CLI, not the web app's SDK. Update buttons require a verified Linux/root/systemd deployment and recognized installation; success restarts the web service and interrupts work. |
+| **Added an installer, Linux systemd/macOS launchd services, and one-step updates; skip unchanged installs/builds using saved state** | Less service setup and redundant work. A dependent service cannot bring the web app back up halfway through a rebuild. |
+| **One source/build/runtime directory at `~/code/omp-web`, with location and stop-before-build guards** | Avoid editing one checkout while running another, or starting an incomplete build after failure. |
+
+<details>
+<summary>Other compatibility fixes and release work</summary>
+
+- **OMP model compatibility:** corrected provider IDs in cached catalogs, empty endpoints, and API-key overrides shadowing OAuth. Chat subsequently moved to native CLIs; legacy compatibility helpers do not mean the web app manages agent credentials again.
+- **Native history protection:** read OMP title slots, model roles, and active branches without rewriting them. Resume, Fork, and export use the owning engine, preserving native IDs and files.
+- **Session deletion:** added Claude native transcript/subagent-history and web-display-record deletion, with explicit busy, concurrent-operation, and failure handling. Codex web deletion remains unavailable.
+- **Regression coverage and simulated-browser scripts:** RPC, queues, attachments, file operations, auth, mobile layouts, and more. Code checks are manually triggered and separate from production deployment; this is not a claim that the full suite passes.
+- **Release materials:** rewritten English/Chinese documentation, feature notes, a bilingual showcase site, screenshots, and promotional cards. Upstream history and MIT notices are retained. This fork installs from GitHub source, not a new public npm release under the same name.
+
+</details>
+
+## Support at a glance
+
+| Web action | OMP | Pi | Claude Code | Codex CLI |
+| --- | --- | --- | --- | --- |
+| Chat, images, stop, resume web sessions, model selection | ✓ | ✓ | ✓ | ✓ |
+| Web Follow-up queue / take back to edit | ✓ | ✓ | ✓ | ✓ |
+| Steer during a run | ✓ | ✓ | When supported by the native version | — |
+| Reasoning level / Effort | Model-dependent | Model-dependent | Native-capability-dependent | — |
+| Fork / HTML export | ✓ | ✓ | — | — |
+| In-file branch navigation | ✓ | — | — | — |
+| Session deletion | ✓ | ✓ | ✓ | — |
+
+Claude/Codex currently focus on web-created sessions, not importing all terminal history or taking over running terminal sessions. Task visibility depends on native interfaces or Pi extensions reporting it. Use the embedded terminal for the full TUI.
 
 ## Install
 
-**The host needs:** Linux or macOS, Node.js 22.19.0+, npm, Git, and at least one agent CLI that's already logged in: `omp` (Oh My Pi), `pi`, `claude`, or `codex`. Nothing needs to be installed on the devices you browse from.
+**Host requirements:** Linux or macOS, Node.js 22.19.0+, npm, Git, and at least one installed, logged-in CLI: `omp`, `pi`, `claude`, or `codex`. Install as the OS user who normally runs those agents. The file manager's mutation backend is currently Linux-only; macOS installer support does not imply all file operations are available there.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 
-# Also install a background service (Linux: systemd, starts on boot; macOS: launchd, starts at login)
+# Also install a background service: Linux at boot, macOS at user login
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
 ```
 
-The installer checks for runtimes but never installs them. It clones or updates `~/code/omp-web`, builds it, and asks you to choose a web username and password. For unattended installs, set `OMP_WEB_USERNAME` and `OMP_WEB_PASSWORD`.
+The installer checks runtimes but does not install Node or agents. It installs and builds in `~/code/omp-web` and asks you to choose a web username and password. For unattended installation, set `OMP_WEB_USERNAME` and `OMP_WEB_PASSWORD`.
 
-To update and restart in one step:
+Update:
 
 ```bash
 bash ~/code/omp-web/scripts/install.sh update
 ```
 
-`update` asks nothing: it pulls the current branch, stops the service, rebuilds, and starts the service again, keeping the login and the service's address and port. It refuses if there are uncommitted changes. The restart interrupts active chats and terminals, so run it from a terminal outside omp-web (SSH, for example); it refuses to run from omp-web's own terminal or agents. Running the installer again without `update` also updates, but asks before stopping the service.
+It pulls the current branch, installs dependencies and builds when needed, and preserves login, address, and port. Uncommitted changes cause it to refuse; an unchanged build does not require stopping the service. **A rebuild stops the service and interrupts chats and terminals, so run updates outside omp-web.** Use `--force-build` to rebuild, or `--force-install` to reinstall dependencies and rebuild.
 
-On macOS the service is a per-user LaunchAgent (`~/Library/LaunchAgents/io.github.leafiy.omp-web.plist`). It needs no sudo and logs to `~/code/omp-web/.local/logs/omp-web.log`.
-
-Without the service, start omp-web manually and open [http://127.0.0.1:30141](http://127.0.0.1:30141):
+Without a background service:
 
 ```bash
-cd ~/code/omp-web && node bin/omp-web.js --hostname 127.0.0.1 --port 30141
+cd ~/code/omp-web
+node bin/omp-web.js --hostname 127.0.0.1 --port 30141
 ```
+
+Open [http://127.0.0.1:30141](http://127.0.0.1:30141). Reset the web login with `npm run passwd`.
 
 <details>
 <summary>Manual installation</summary>
@@ -128,39 +172,61 @@ git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
 cd ~/code/omp-web
 npm ci --include=dev
 npm run build
-npm run passwd   # choose the web username and password
+npm run passwd
 npm start
 ```
 
+For existing deployments, stop the service before building. Keep one active source/build directory; see the [single-workspace procedure](./docs/workspace.zh-CN.md). An npm package named `omp-web` may be a different upstream release.
+
 </details>
 
-This fork runs from source. An npm package named `omp-web` may be a different upstream release. Development, builds, and runtime all use the single `~/code/omp-web` directory. Stop the service before building. See the [single-workspace procedure](./docs/workspace.zh-CN.md).
+## Remote access and limits
 
-## Sign-in and security
+- **Prefer loopback behind HTTPS or private networking.** With Tailscale, use `tailscale serve --bg 30141` and add the access hostname to `PI_WEB_ALLOWED_HOSTS`. With EasyTier, install using `--host <virtual-ip>`. On a phone, add the page to your home screen.
+- **The web interface has the service account's permissions; the terminal is not a sandbox.** Login is mandatory. Do not expose it publicly over plain HTTP; prefer a least-privileged account. Web credentials default to `~/.config/omp-web/credentials.json`, separate from agent logins.
+- **Closing the browser does not itself stop an already-started task; restarting the service can.** Queues, terminals, and task tracking are not a durable job system across service restarts.
+- **This is an access layer, not a cross-agent orchestrator.** You still maintain the host, CLIs, and network. Remote deployment does not bypass provider account eligibility, regional availability, or terms.
 
-- **Login is always required.** There is no anonymous mode. Set or reset it with `npm run passwd` (or `node bin/omp-web.js passwd`). Credentials are stored as a salted scrypt hash in `~/.config/omp-web/credentials.json` (mode 0600; override the path with `OMP_WEB_AUTH_FILE`) and are separate from every agent's own login. You can change the password or sign out under **Settings → Web account**. Changing it signs out every other browser.
-- **omp-web listens on loopback by default.** For remote access, use an HTTPS reverse proxy or a private network such as Tailscale or EasyTier. Never expose it to the public internet over plain HTTP.
-- **Access to the page means access to the service account.** Agents and the terminal run as that user, and the terminal is not a sandbox. Prefer a least-privileged account.
+<details>
+<summary>My setup: an always-on remote box, a browser wherever I am</summary>
 
-## Limits
+```text
+A small Linux box at a remote home
+├── Logged-in Claude Code / Codex / OMP / Pi
+├── Project checkouts
+└── omp-web background service
+        │ HTTPS / Tailscale / EasyTier
+        ▼
+    Laptop, phone, or tablet
+```
 
-- Native behavior comes first. Browser support varies by agent; use the terminal for TUI-only features.
-- Credentials are never migrated, and configuration is never shared between agents. Web history and caches are for display only; they are not the model's context.
-- Restarting the web service interrupts running agents and terminals.
-- Remote access doesn't change a provider's account eligibility, regional availability, or terms of use.
+Models run in the cloud, so the host need not run a large model. The CLIs, web service, and project builds still need resources; this is not a minimum hardware specification. My reason for changing it was simple: mobile SSH works, but copying replies, moving screenshots, browsing files, and reading diffs takes too much effort.
 
-## Documentation
+</details>
+
+<details>
+<summary>Four feature cards (Chinese illustrations, not UI screenshots)</summary>
+
+| Browser workspace | Remote architecture |
+| --- | --- |
+| [![Browser workspace](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![Native CLIs connect to model services](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| [![Chinese input helpers](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![Everyday development](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
+
+</details>
+
+## Documentation and credits
 
 Most detailed notes are in Chinese:
 
-- [Self-hosting and terminal](./docs/self-hosting.zh-CN.md) · [Native agents, auth, and deployment](./docs/native-host-deployment.zh-CN.md)
-- [File browser and uploads](./docs/file-browser.zh-CN.md) · [Worktrees](./docs/worktrees.md) · [History folding and caching](./docs/history-cache.zh-CN.md)
-- [Native skills](./docs/native-skills.zh-CN.md) · [Subscription usage](./docs/subscription-usage.zh-CN.md)
-- [Claude Code commands](./docs/claude-code-commands.zh-CN.md) · [Steering and follow-ups](./docs/claude-code-steering.zh-CN.md) · [Follow-up queues and editing](./docs/queued-message-editing.zh-CN.md) · [Codex CLI](./docs/codex-cli.zh-CN.md)
+- Integration: [Native agents](./docs/native-omp.zh-CN.md) · [Claude commands](./docs/claude-code-commands.zh-CN.md) · [Claude models/Effort](./docs/claude-models-effort.zh-CN.md) · [Codex](./docs/codex-cli.zh-CN.md) · [Skills](./docs/native-skills.zh-CN.md)
+- Everyday use: [Terminal](./docs/self-hosting.zh-CN.md) · [Files/attachments](./docs/file-browser.zh-CN.md) · [Queue editing](./docs/queued-message-editing.zh-CN.md) · [Worktrees](./docs/worktrees.md)
+- UI: [Sessions/drafts](./docs/ui-refinements.zh-CN.md) · [Mobile layout](./docs/mobile-layout.zh-CN.md) · [Themes](./docs/theme-comparison.zh-CN.md) · [Pins](./docs/session-pins.zh-CN.md) · [Read-state sync](./docs/session-read-state.zh-CN.md)
+- Status: [History caching](./docs/history-cache.zh-CN.md) · [Subtasks](./docs/subagent-status.zh-CN.md) · [Context](./docs/claude-code-context.zh-CN.md) · [Usage](./docs/subscription-usage.zh-CN.md)
+- Maintenance: [Single workspace](./docs/workspace.zh-CN.md) · [CLI updates](./docs/software-updates.zh-CN.md) · [Positioning alongside Herdr/Orca/Paseo](./docs/agent-workspace-comparison-research.zh-CN.md)
 
-## Origin and credits
+Some detailed notes include earlier designs and deployment records. Follow the [single-workspace procedure](./docs/workspace.zh-CN.md) for current paths and updates. This page summarizes source capabilities, not validation of every engine version, platform, or real account combination.
 
-This project grew out of [17380936778/omp-web](https://github.com/17380936778/omp-web), which builds on [agegr/pi-web](https://github.com/agegr/pi-web). Thanks to the upstream authors, and to the maintainers of OMP, Pi, Claude Code, and Codex, whose tools provide all of the agent capabilities you see in the browser.
+This project grew out of [17380936778/omp-web](https://github.com/17380936778/omp-web), which builds on [agegr/pi-web](https://github.com/agegr/pi-web). Thanks to both upstream authors and the maintainers of OMP, Pi, Claude Code, and Codex. Those tools provide the agent capabilities; this fork works on browser access and usability.
 
 ## License
 

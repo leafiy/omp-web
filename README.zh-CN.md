@@ -1,123 +1,167 @@
-# omp-web
+# omp-web · Leafiy 的改版
 
 [English](./README.md) · [简体中文](./README.zh-CN.md) · [项目主页](https://leafiy.github.io/omp-web/?lang=zh)
 
-**在同一个浏览器工作区使用你本地的 OMP、Pi、Claude Code 和 Codex CLI，旁边就是终端和文件管理器。不用重新配置工作流。**
+**把远程机器上的 OMP、Pi、Claude Code、Codex 放进一个网页，聊天、终端、文件都在旁边。**
 
-Agent 还是你机器上原来的那几个，继续用它们自己的登录、模型配置、技能和项目指令。omp-web 只是把它们放进一个网页，电脑和手机都能打开。
+这是我基于 [17380936778/omp-web](https://github.com/17380936778/omp-web) 做的个人改版。原版已经有很好的聊天和文件预览基础；我主要补上多 Agent 接入、日常开发工具，并重做了会话管理、输入和手机体验。
 
-<img width="3458" height="2158" alt="image" src="https://github.com/user-attachments/assets/1795000f-0d74-4fb4-95e5-a7ea8c681b2d" />
+Agent 还是你机器上原来的那几个，继续用自己的登录、模型、技能和项目配置。电脑、手机、平板只需要浏览器。
 
-## 四张图了解 omp-web
+## 中文输入法照常用，全角符号自动转半角
 
-**把远程机器的Claude Pi Codex搬到浏览器,随时随地当牛马**
-
-手机、平板、电脑打开网页，继续使用远程机器上的原生 Agent。以下为功能宣传示意，不是实际界面截图；点击图片可查看原图。
-
-| 浏览器工作台 | 远程架构 |
-| --- | --- |
-| [![把远程机器的 Claude、Pi、Codex 搬到浏览器](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![美国远程主机上的 omp-web 调用原生 Claude Code，由 CLI 连接模型服务](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
-| **中文输入优化** | **日常开发工作流** |
-| [![中文标点转换、可选中译英和截图粘贴预览](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![多引擎会话、文件与 diff、内嵌终端和浏览器断线后继续运行](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
-
-### 优点：比手机 SSH 更顺手的日常入口
-
-- **多个 Agent，一个网页**：Claude Code、Pi、Codex CLI、OMP 各自保留原生登录和配置，按项目管理会话，不必为网页重建工作流。
-- **截图、文件和回复更好操作**：截图可粘贴预览，文件可拖入上传；回复按 Markdown 展示并可复制，工具调用和子 Agent 对话可展开。
-- **中文输入少折腾**：开启标点转换后，发送时自动把支持的中文标点转为英文标点；配置翻译服务并开启中译英后，可用中文写需求、以英文发送给 Agent。它转换的是输入，不强制 Agent 用英文回复。
-- **开发工具放在一起**：文件预览、Git diff、多标签终端、会话 Fork 和 worktree 都在同一个工作区，减少在 SSH 和其他工具间切换。
-- **浏览器断线不等于任务停止**：任务在远程主机上运行，不依赖手机持续保持网页连接；主机、网络、服务与 Agent 进程正常运行时，已开始的任务可继续执行。
-
-### 缺点与限制：不是万能的远程代理
-
-- **需要自己维护主机**：先安装并登录原生 CLI，再部署网页服务、配置安全的远程访问。浏览器访问方便，不代表零运维。
-- **网页不直接调用 Claude API，但 CLI 仍需联网**：例如部署在美国机器上时，omp-web 调用同机的原生 Claude Code，由 Claude Code 连接模型服务。远程部署不绕过提供方的账号资格、服务地区或使用条款。
-- **不是所有 TUI 功能都有网页按钮**：支持范围因引擎而异，原生 TUI 独有能力需在内嵌终端使用；多引擎会话也不等于跨 Agent 自动编排。
-- **翻译是可选的额外服务**：需单独配置，会把待译文本发送给该服务，并可能增加延迟或费用；命令草稿不参与输入翻译。翻译失败或取消时不会发送原草稿。
-- **断线继续不等于故障恢复**：远程主机掉线、进程退出或网页服务重启仍可能中断任务；这不是持久任务队列或自动容灾系统。
-- **必须保护网页入口**：网页和终端具有服务账户的权限；使用网页登录及 HTTPS／私有网络，不要把它当作沙箱。
-
-## 我的使用环境
+**不用为了几个符号来回切输入法，也不用发之前逐个改。** 中文逗号、句号、引号、括号，以及全角字母、数字和空格，发送前自动转成对应的半角／英文形式：
 
 ```text
-异地家里一台常开的低配小电脑（Linux）
-├── Claude Code / Codex / OMP / Pi   ← 各自登录好，模型走云端
-├── 项目代码
-└── omp-web（systemd 服务，只监听 127.0.0.1）
-        │
-        │  Tailscale Serve（HTTPS）或 EasyTier 虚拟网络
-        ▼
-手边的笔记本、手机、平板 —— 只需要浏览器
+请检查：“ＡＢＣ１２３”（测试）。
+        ↓ 发送前自动转换
+请检查:"ABC123"(测试).
 ```
 
-以前用 SSH 也能连上，但复制长回复、翻滚屏、看 diff、传截图和文件都很别扭，手机上更难受。现在打开网页就能阅读、复制、检查改动、上传文件；需要命令行时，旁边就有终端。
+默认开启，可在设置里关闭，记住当前浏览器的选择。四个引擎共用这套输入处理，发送、插话（Steer）和追加（Follow-up）都适用，**消息里的代码和长粘贴也会转换**。转换在浏览器内完成，不调用模型或翻译服务。
 
-模型在云端，所以主机不用跑大模型；但 CLI、网页服务和项目构建仍然要占资源。这是我个人的配置，不是最低硬件要求。
+`!`／`/` 命令草稿跳过转换；不会把开头的全角符号误变成命令，也不改上传文件、附件路径和已有历史。没有对应转换规则的字符保留原样。
 
-## 怎样用得顺手
+<img width="3458" height="2158" alt="omp-web：项目会话、聊天和文件工作区" src="https://github.com/user-attachments/assets/1795000f-0d74-4fb4-95e5-a7ea8c681b2d" />
 
-### 搭一次
+## 相比原版，我改了什么
 
-1. **在 Agent 主机上安装。** 用已经登录好这些 Agent 的那个系统用户运行[安装脚本](#安装)，并选择安装 systemd 服务（开机自启）。
-2. **通过私有网络访问。**
-   - **Tailscale：** 保持只监听 `127.0.0.1`，用 Serve 套一层 HTTPS：`tailscale serve --bg 30141`。之后访问 `https://<机器名>.<tailnet>.ts.net`，并把这个域名加入 `PI_WEB_ALLOWED_HOSTS`（例如 `sudo systemctl edit omp-web.service`，添加 `Environment=PI_WEB_ALLOWED_HOSTS=<机器名>.<tailnet>.ts.net`）。
-   - **EasyTier：** 让服务监听本机的虚拟 IP（安装时加 `--host <虚拟IP>`），其他设备直接用 IP 访问，不需要配置主机名。
-3. **手机上「添加到主屏幕」。** 之后像独立 App 一样全屏打开。
+对比的是原版 **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** 与本分支 **[`d5b77fa`](https://github.com/leafiy/omp-web/commit/d5b77fa)** 的源码，而不是最早的 pi-web。原版远端核对时也停在这个提交。[查看完整差异](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...d5b77fa)。下面按功能合并相关提交，不把反复修复算成多个新功能。
 
-### 日常使用
+**先说清楚哪些不是我新增的：** 中文界面、Markdown／代码高亮、Mermaid／公式、文件预览、Git diff、worktree、Fork／分支、图片粘贴、完成提示音和 PWA，原版就有；原版也已有标题生成代码和可选 Basic Auth。我的改动是扩展、重做或修正这些能力，不是从零实现整个项目。
 
-- **项目 → 会话**：侧边栏按项目列出会话，行首的 OMP / Pi / CC / CX 标签表示引擎。新建会话时选择目录和 Agent；已有会话会固定在原来的引擎上继续。
-- **不用等它跑完**：Agent 运行时也能粘贴截图、拖入或附加文件；追加的消息进入队列，发出前可以取回修改。
-- **看结果**：回复按 Markdown 渲染，带复制按钮；工具调用和子 Agent 对话可以展开；长历史按用户轮次折叠，点开即加载整轮。
-- **查改动、管文件**：在文件树里预览文件、查看 Git diff；右键（手机上点「更多」）复制、移动、重命名、下载、删除，或上传到当前目录。
-- **终端**：页面里的多标签终端，与对话互不干扰，不用另开 SSH。只有原生 TUI 才有的功能，直接在终端里运行 `claude`、`codex` 等即可。
-- **分支与 worktree**：从任意一条用户消息处 Fork 出新会话；Git 项目可在新建会话时选择或新建 worktree。
-- **原生控制**：模型、思考强度、斜杠命令、技能、权限确认、上下文和订阅用量（日/周/月 Token）都直接来自所选 Agent，支持范围因 Agent 而异。
-- **完成提示音**：开启后任务完成时播放提示音，切到别的页面也能知道。
+### 1. 从 OMP 网页，变成四个 Agent 的共同入口
 
-## 与 Herdr、Orca、Paseo 的区别
-
-> 我试过不少 Agent 整合工具。它们功能更多，但对我已有的工作流来说，额外的配置、终端管理和工作区约定经常反而是干扰。我只想在浏览器里继续用原来的 Agent。
-
-| 项目 | 定位 |
+| 改动 | 有什么用 |
 | --- | --- |
-| [Herdr](https://github.com/herdrdev/herdr) | Agent 终端 runtime：后台会话、pane、Agent 状态、本地与 SSH 机器；另有[桌面应用](https://github.com/herdrdev/herdr-app)。 |
-| [Orca](https://github.com/stablyai/orca) | Agent 编排工作区：并行 worktree、Chat/Terminal、代码审查、远程运行环境和手机伴侣应用。 |
-| [Paseo](https://github.com/getpaseo/paseo) | 本机守护进程加桌面、手机、网页和 CLI 客户端；并行 Agent 各自使用 worktree，可跨 Agent 编排；设备可通过端到端加密中继或 Tailscale 等 VPN 连接。 |
-| **omp-web** | 主机上的一个网页：本机的 OMP、Pi、Claude Code、Codex CLI，加上终端和文件管理。 |
+| **重做执行后端**：OMP／Pi 改用本机 CLI 的原生 RPC，不再靠网页内的旧 Pi SDK 执行聊天 | 网页与终端使用同一套 Agent，减少「终端能用、网页不能用」的版本和登录差异。 |
+| **新增 Claude Code、Codex CLI**：分别接入 Claude Agent SDK + 本机 Claude、Codex app-server | 不用为每个 Agent 再开一套网页；未安装的引擎直接标明。 |
+| **分开各引擎的登录、配置、历史和模型列表**；已有会话固定原引擎 | 不串账号、不把旧会话误交给另一个 Agent；切换引擎会新建聊天。 |
+| **原生模型与思考强度**：读取实际目录和选择，补上 Claude Effort；按目录记住引擎与各引擎的模型选择 | 少重复选模型，也不把一个引擎的设置套到另一个身上。 |
+| **原生命令菜单和参数补全**：接入 Claude 命令，补全原生提供的枚举参数 | `/` 后能找命令、看参数，不用背语法；终端专用命令不会假装能用。 |
+| **技能改成按引擎／项目查看的只读面板**；停用未隔离的旧登录、模型、插件和技能编辑接口 | 看清当前 Agent 真正能用什么；安装、登录和配置仍交给原 CLI，避免改错地方。 |
 
-这几个工具同样运行原生 CLI，也都有各自的远程、终端或文件功能，这些都不是 omp-web 独有的。omp-web 的范围更窄：一个页面里只有对话、终端和文件，不做多 Agent 编排，不需要另装客户端或配对设备，普通对话也不用先接受新的工作区约定。
+### 2. 会话多了，也能找得到、看得明白
 
-对比依据为官方文档（Herdr、Orca 查阅于 2026-11-07，Paseo 查阅于 2026-11-08）：[来源与范围](./docs/agent-workspace-comparison-research.zh-CN.md)。
+| 改动 | 有什么用 |
+| --- | --- |
+| **重做「项目 → 会话」侧栏**：多个项目同时列出，支持折叠、搜索、展开更多；行首显示 OMP／Pi／CC／CX | 不再来回切项目下拉框，也不会看错会话属于哪个 Agent。 |
+| **新聊天里选目录**：最近项目、浏览路径、创建项目／文件夹、选择或创建 worktree 放在一起 | 先开聊天，再决定在哪干活；更换目录时保留未发送草稿。 |
+| **标题接回原生来源**：优先显示原生标题；新网页会话缺标题时用对应 Agent 命名；新会话立即出现在侧栏 | 不必等首轮全部写完才找到聊天，也不再拿第一句长提示词充当标题。补充命名可能多一次模型请求。 |
+| **新增独立置顶区，并保存到服务端** | 电脑置顶的会话，手机也能看到；不会在项目组里重复列出。 |
+| **已读／未读改为跨设备同步，支持整项目标记已读** | 手机上看过的结果，电脑不再反复提醒；迟到的已读操作不会清掉下一轮的新结果。 |
+| **增加「等你回答」标记与提示音**，折叠项目也汇总显示 | Agent 等审批或提问时，不必逐个点开会话找；完成音效也会等已知后台工作结束。 |
+
+### 3. 输入不再只是一个文本框
+
+| 改动 | 有什么用 |
+| --- | --- |
+| **全角符号自动转半角，默认开启**：发送／插话／追加前处理中文标点、全角字母、数字和空格 | 中文输入法照常用，不必反复切换或手动改符号；包含消息里的代码和长粘贴，可在设置中关闭。 |
+| **草稿持久保存，按会话／新聊天目录与引擎隔离**；确认发送成功后才清除 | 刷新、切会话或发送失败不轻易丢字。普通附件信息和长粘贴随草稿保存，图片仅留在内存。 |
+| **四引擎共用网页 Follow-up 队列**，待发送项可单条取回编辑 | Agent 没跑完也能继续写需求；关浏览器不暂停服务端队列，但服务重启不会保留队列。 |
+| **接入 Claude 原生 Steer**，保留 OMP／Pi 各自的引导行为 | 支持的引擎可以在当前运行中补充要求，不必一律等下一轮；Codex 暂无网页 Steer。 |
+| **已发消息增加「编辑」快捷操作**，有草稿时先确认 | 把文字拿回来改好再发，不篡改已经被 Agent 消费的历史。 |
+| **普通文件变成附件卡片**：粘贴、拖放、选择文件都可；Agent 运行中也能准备附件 | 文件名、大小、预览、下载一眼可见，不再往输入框塞长路径；同名附件另存副本，不覆盖项目文件。图片不能进入 Follow-up 队列。 |
+| **图片预览补齐**：草稿、历史、助手与工具返回的图片都能点开；隐藏 Pi 的图片坐标说明 | 截图能先看清再发，读结果时也不用猜缩略图；查看图片不会顺手写文件。 |
+| **长粘贴折成 `[paste #n …]`，发送后显示为可展开附件** | 日志、代码、长需求不再撑满输入框和历史；发给 Agent 的仍是完整内容，不会因此省 Token。 |
+| **新增发送前中英互译**：每个会话单独开关，支持发送／Steer／Follow-up | 可以中文写需求、英文发给 Agent，也可以反过来；翻译失败、取消或期间改了草稿，都不会发出旧内容。 |
+| **新增消息译文**：中译英／英译中，保留原文 | 看英文回复更方便；译文只供阅读，不写回历史。代码围栏保留原样，附件内容不参与翻译。 |
+
+翻译需单独配置 OpenAI 兼容服务，支持 Index-Translate 和 Hunyuan-MT 的相应模板。待译文本会交给该服务，可能增加耗时或费用；不配置就不显示消息翻译按钮。输入翻译不强制 Agent 用某种语言回复，`!`／`/` 命令草稿不翻译。
+
+### 4. 少一点装饰，多一点可读性
+
+| 改动 | 有什么用 |
+| --- | --- |
+| **重调聊天排版**：正文、气泡、间距、列表和工具栏更统一；修正中文标点旁的 Markdown 加粗、大序号列表 | 长回复更容易读，不用对着原样显示的 `**` 或挤在一起的文字找重点。 |
+| **重做 Dark／Starfield 配色**：减少扫描线、切角和小字；修正 Starfield 的代码／Mermaid 深色判断，终端跟随主题 | 保留风格，但让内容和按钮更清楚；不再用装饰 CSS 覆盖用户选的代码颜色。 |
+| **重做窄屏顶栏与输入操作栏**：紧凑菜单、独立发送／停止、较大触摸按钮、键盘高度与安全区修正 | 手机键盘弹出时仍能输入和停止，不用到处找藏起来的按钮。 |
+| **换成页面内确认，修正快捷键冲突** | 删除、更新等确认不阻塞流式输出；关闭菜单或在终端按键，不该误停聊天。 |
+| **工具摘要显示真实问题／回答，结构化参数不再变成 `[object Object]`** | 不展开长工具记录，也能知道刚才问了什么、答了什么。 |
+
+### 5. 长对话、后台任务和用量，不再靠猜
+
+| 改动 | 有什么用 |
+| --- | --- |
+| **历史改为按完整用户轮次折叠、按需读取，并加两层缓存** | 最近内容先看，旧内容点开就是整轮；不再每次把长历史全传一遍，也不把一次任务拆成多页。 |
+| **单独显示子 Agent／后台任务，点开右侧查看关联对话** | 主回复结束后，还能知道谁在干活；子对话不混进主聊天。只展示引擎能报告的任务，不是新的任务调度器。 |
+| **重连、完成状态和发送回执按引擎处理**：补齐断线对账、审批重放、旧响应过滤和重复消息处理 | 少遇到「明明还在跑却显示完成」、刷新后重复消息，或丢了待回答的审批。 |
+| **上下文改读各引擎的原生数值，并保存最近一次报告** | 不再把固定 128K 或累计计费量冒充上下文；重启后可看上次记录，未知就显示未知。 |
+| **新增订阅用量与日／周／月 Token 面板** | 看额度、重置时间和消耗趋势；明确区分 Codex 账号数据与 Claude／OMP／Pi 本机统计，不混成一个假总数。 |
+
+### 6. 文件和终端，直接在手边
+
+| 改动 | 有什么用 |
+| --- | --- |
+| **新增独立 PTY 终端**：多标签、调高度、选 Shell／登录 Shell、刷新重连 | 看日志、跑命令或打开原生 TUI，不用另开 SSH；终端输出不会自动塞进 AI 对话。 |
+| **文件树升级为文件管理器**：新建、复制、剪切、粘贴、移动、重命名、删除、下载；手机有「更多」菜单 | 简单文件操作自己点几下，不必让 Agent 代劳。会检查权限范围、同名冲突和文件是否已变化；无回收站。 |
+| **上传跟随选中的文件夹，支持拖到目录，补齐进度与冲突处理** | 不再只能传到聊天根目录；上传中切换目录不会悄悄改目标，也不会先删旧文件再写新文件。 |
+| **回复里的本地文件链接可预览、可直接下载**，兼容 `file:`／`sandbox:` 链接 | Agent 生成报告后直接拿走，不必复制路径找文件；链接仍受文件访问规则限制。 |
+
+### 7. 能长期自用，而不只是本地演示
+
+| 改动 | 有什么用 |
+| --- | --- |
+| **可选 Basic Auth 改为必需的登录页 + 会话 Cookie**；支持改用户名／密码、退出、登录限流 | 不再弹浏览器密码框；密码以加盐哈希保存，改密码会让其他浏览器退出。 |
+| **补齐聊天／终端事件流的认证与来源校验** | 长连接也要验证身份，不能因为绕开代理缓冲就漏掉保护。 |
+| **设置里查看四个 CLI 的版本，并更新单个工具** | 更新的是本机 CLI，不是网页里的 SDK。更新按钮仅支持核验通过的 Linux／root／systemd 部署与安装方式；成功后会重启网页、中断任务。 |
+| **新增安装脚本、Linux systemd／macOS launchd 服务和一步更新**；记录依赖与构建状态，没变就跳过 | 少写启动配置，也少做无意义的重复安装／构建。依赖服务重启时不会把正在重建的网页提前拉起。 |
+| **源码、构建、运行统一到 `~/code/omp-web`，补上路径和停服构建保护** | 避免「改的是这一份，跑的是另一份」；构建失败不会把半成品当成正常服务启动。 |
+
+<details>
+<summary>还有哪些底层修正和发布配套？</summary>
+
+- **OMP 模型兼容修正**：处理数据库中的真实 provider ID、空 endpoint 和 OAuth 被 API key 覆盖的问题。后续聊天已改为原生 CLI，旧兼容代码不等于网页重新管理凭据。
+- **原生历史保护**：只读查看 OMP 标题槽、角色模型和分支叶子；Fork／恢复／导出改走所属引擎，保留原始 ID 和文件。减少「看一次历史就改了记录」的风险。
+- **会话删除补齐**：Claude Code 可删除对应原生记录、子记录和网页显示记录；忙碌、并发或失败时明确报错。Codex 仍不提供网页删除。
+- **增加回归用例与模拟浏览器脚本**：覆盖 RPC、队列、附件、文件操作、登录、移动端等；手动触发的代码检查与生产部署分开。这里不声称全仓测试全部通过。
+- **发布材料**：重写中英文说明，补充功能文档、双语展示站、截图和宣传图；保留上游历史与 MIT 声明，本分支从 GitHub 源码安装，不发布同名公共 npm 包。
+
+</details>
+
+## 支持范围，先看这一眼
+
+| 网页操作 | OMP | Pi | Claude Code | Codex CLI |
+| --- | --- | --- | --- | --- |
+| 聊天、图片、停止、恢复网页会话、选模型 | ✓ | ✓ | ✓ | ✓ |
+| 网页 Follow-up 待发送队列／取回编辑 | ✓ | ✓ | ✓ | ✓ |
+| 当前运行中 Steer | ✓ | ✓ | 原生版本支持时 | — |
+| 思考强度／Effort | 按模型能力 | 按模型能力 | 按原生能力 | — |
+| Fork／HTML 导出 | ✓ | ✓ | — | — |
+| 会话内分支导航 | ✓ | — | — | — |
+| 删除会话 | ✓ | ✓ | ✓ | — |
+
+Claude／Codex 目前主要展示网页创建的会话，不会把终端历史全部导入，也不会接管正在运行的终端会话。子任务状态取决于原生接口或 Pi 扩展是否上报。完整 TUI 功能请在内嵌终端使用。
 
 ## 安装
 
-**主机需要：** Linux 或 macOS、Node.js 22.19.0+、npm、Git，以及至少一个已经登录好的 Agent CLI：`omp`（Oh My Pi）、`pi`、`claude`、`codex`。访问设备上什么都不用装。
+**主机需要：** Linux 或 macOS、Node.js 22.19.0+、npm、Git，以及至少一个已经安装并登录的 CLI：`omp`、`pi`、`claude`、`codex`。请使用平时运行这些 Agent 的系统用户安装。文件管理器的修改操作后端目前限 Linux；macOS 安装支持不代表所有文件操作可用。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 
-# 同时安装自启动的后台服务（Linux：systemd，开机启动；macOS：launchd，登录后启动）
+# 同时安装后台服务：Linux 开机启动，macOS 当前用户登录后启动
 curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
 ```
 
-脚本只检查运行时，不会替你安装。它会克隆或更新 `~/code/omp-web`、完成构建，并让你设置网页登录用户名和密码。无人值守安装时，设置 `OMP_WEB_USERNAME` 和 `OMP_WEB_PASSWORD`。
+脚本检查运行时，但不替你安装 Node 或 Agent。它在 `~/code/omp-web` 安装、构建，并让你设置网页用户名和密码。无人值守安装可设置 `OMP_WEB_USERNAME`、`OMP_WEB_PASSWORD`。
 
-一键更新并重启：
+更新：
 
 ```bash
 bash ~/code/omp-web/scripts/install.sh update
 ```
 
-`update` 不提问：拉取当前分支、停止服务、重新构建、再启动服务，登录信息和服务的地址端口保持不变。有未提交的改动时会拒绝。重启会中断正在进行的对话和终端，所以要在 omp-web 之外的终端（例如 SSH）里运行，从它自己的内嵌终端或 Agent 里运行会被拒绝。不带 `update` 再次运行安装脚本也能更新，只是停止服务前会先询问。
+它拉取当前分支，按需安装依赖和构建，保留登录、地址与端口。有未提交改动会拒绝；无需重建时不会停服。**需要重建时会停止服务，中断聊天和终端，请从网页之外的终端运行。** 强制重建可加 `--force-build`，强制重装并构建用 `--force-install`。
 
-macOS 上的服务是当前用户的 LaunchAgent（`~/Library/LaunchAgents/io.github.leafiy.omp-web.plist`），不需要 sudo，日志在 `~/code/omp-web/.local/logs/omp-web.log`。
-
-不装服务时手动启动，然后打开 [http://127.0.0.1:30141](http://127.0.0.1:30141)：
+不装后台服务时：
 
 ```bash
-cd ~/code/omp-web && node bin/omp-web.js --hostname 127.0.0.1 --port 30141
+cd ~/code/omp-web
+node bin/omp-web.js --hostname 127.0.0.1 --port 30141
 ```
+
+打开 [http://127.0.0.1:30141](http://127.0.0.1:30141)。重置网页登录用 `npm run passwd`。
 
 <details>
 <summary>手动安装</summary>
@@ -128,37 +172,59 @@ git clone https://github.com/leafiy/omp-web.git ~/code/omp-web
 cd ~/code/omp-web
 npm ci --include=dev
 npm run build
-npm run passwd   # 设置网页用户名和密码
+npm run passwd
 npm start
 ```
 
+更新已有部署时，必须先停服务再构建。只有一个活动源码／构建目录，操作流程见[唯一工作区](./docs/workspace.zh-CN.md)。npm 上名为 `omp-web` 的包可能是其他上游版本。
+
 </details>
 
-本分支从源码运行，npm 上名为 `omp-web` 的包可能是其他上游版本。开发、构建和运行都只使用 `~/code/omp-web` 这一个目录，构建前先停止服务，详见[唯一工作区流程](./docs/workspace.zh-CN.md)。
+## 远程使用与边界
 
-## 登录与安全
+- **建议只监听本机，再用 HTTPS 或私有网络访问。** Tailscale 可用 `tailscale serve --bg 30141`，并把访问域名加入 `PI_WEB_ALLOWED_HOSTS`；EasyTier 可在安装时通过 `--host <虚拟IP>` 监听虚拟地址。手机可添加到主屏幕。
+- **网页权限就是服务账户的权限，终端不是沙箱。** 必须登录；不要明文暴露到公网，尽量使用低权限账户。网页凭据默认保存在 `~/.config/omp-web/credentials.json`，与各 Agent 的登录分开。
+- **关浏览器不等于停止已开始的任务；服务重启则可能中断任务。** 队列、终端与后台状态不是跨重启的持久任务系统。
+- **这是访问层，不是多 Agent 自动编排器。** 主机、CLI 和网络仍需你维护；远程部署不绕过提供方的账号资格、地区限制或条款。
 
-- **必须登录**，没有免密模式。用 `npm run passwd`（或 `node bin/omp-web.js passwd`）设置或重置。凭据以加盐 scrypt 哈希保存在 `~/.config/omp-web/credentials.json`（权限 0600，可用 `OMP_WEB_AUTH_FILE` 改路径），与各 Agent 的登录无关。在**设置 → 网页账户**中可以修改密码或退出登录，修改后其他浏览器会全部下线。
-- **默认只监听本机回环地址。** 远程访问请使用 HTTPS 反向代理或 Tailscale、EasyTier 等私有网络，不要以明文 HTTP 暴露到公网。
-- **网页权限就是服务账户的权限。** Agent 和终端都以这个用户身份运行，终端不是沙箱，建议使用低权限账户。
+<details>
+<summary>我的使用环境：异地小电脑常开，手边只带浏览器</summary>
 
-## 边界
+```text
+异地家里的 Linux 小电脑
+├── 已登录的 Claude Code / Codex / OMP / Pi
+├── 项目代码
+└── omp-web 后台服务
+        │ HTTPS / Tailscale / EasyTier
+        ▼
+    笔记本、手机、平板
+```
 
-- 以各 Agent 的原生能力为准，网页支持范围因 Agent 而异；TUI 独有的功能请在终端里使用。
-- 不迁移凭据，也不在 Agent 之间共享配置；网页历史和缓存只用于显示，不等于模型上下文。
-- 重启网页服务会中断正在运行的 Agent 和终端。
-- 远程访问不改变模型提供方的账号资格、服务地区和使用条款。
+模型走云端，所以主机不必跑大模型，但 CLI、网页和项目构建仍然要资源。这不是最低硬件要求。我改它的原因很简单：手机 SSH 能干活，但复制回复、传截图、翻文件和看 diff 太费劲。
 
-## 文档
+</details>
 
-- [自托管与终端](./docs/self-hosting.zh-CN.md) · [原生 Agent、认证与部署](./docs/native-host-deployment.zh-CN.md)
-- [文件浏览器与上传](./docs/file-browser.zh-CN.md) · [Worktree](./docs/worktrees.zh-CN.md) · [长历史折叠与缓存](./docs/history-cache.zh-CN.md)
-- [原生技能](./docs/native-skills.zh-CN.md) · [订阅用量](./docs/subscription-usage.zh-CN.md)
-- [Claude Code 命令](./docs/claude-code-commands.zh-CN.md) · [引导与后续消息](./docs/claude-code-steering.zh-CN.md) · [Follow-up 队列与取回编辑](./docs/queued-message-editing.zh-CN.md) · [Codex CLI](./docs/codex-cli.zh-CN.md)
+<details>
+<summary>四张功能介绍图（示意图，不是 UI 截图）</summary>
 
-## 来源与致谢
+| 浏览器工作台 | 远程架构 |
+| --- | --- |
+| [![浏览器工作台](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![原生 CLI 连接模型服务](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| [![中文输入优化](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![日常开发](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
 
-本项目源自 [17380936778/omp-web](https://github.com/17380936778/omp-web)，上游基础是 [agegr/pi-web](https://github.com/agegr/pi-web)。感谢上游作者，也感谢 OMP、Pi、Claude Code、Codex 的维护者，网页里的 Agent 能力都来自这些工具。
+</details>
+
+## 文档与来源
+
+- 接入：[原生 Agent](./docs/native-omp.zh-CN.md) · [Claude 命令](./docs/claude-code-commands.zh-CN.md) · [Claude 模型与 Effort](./docs/claude-models-effort.zh-CN.md) · [Codex](./docs/codex-cli.zh-CN.md) · [技能](./docs/native-skills.zh-CN.md)
+- 日常使用：[终端](./docs/self-hosting.zh-CN.md) · [文件与附件](./docs/file-browser.zh-CN.md) · [队列编辑](./docs/queued-message-editing.zh-CN.md) · [Worktree](./docs/worktrees.zh-CN.md)
+- UI：[会话与草稿](./docs/ui-refinements.zh-CN.md) · [手机布局](./docs/mobile-layout.zh-CN.md) · [主题](./docs/theme-comparison.zh-CN.md) · [置顶](./docs/session-pins.zh-CN.md) · [已读同步](./docs/session-read-state.zh-CN.md)
+- 状态：[历史缓存](./docs/history-cache.zh-CN.md) · [子任务](./docs/subagent-status.zh-CN.md) · [上下文](./docs/claude-code-context.zh-CN.md) · [用量](./docs/subscription-usage.zh-CN.md)
+- 维护：[唯一工作区](./docs/workspace.zh-CN.md) · [CLI 更新](./docs/software-updates.zh-CN.md) · [与 Herdr／Orca／Paseo 的定位对比](./docs/agent-workspace-comparison-research.zh-CN.md)
+
+部分详细文档包含早期方案和部署记录；当前目录与更新方式以[唯一工作区](./docs/workspace.zh-CN.md)为准。本页总结源码能力，不代表每个引擎版本、平台和真实账号组合均已验收。
+
+本项目源自 [17380936778/omp-web](https://github.com/17380936778/omp-web)，上游基础是 [agegr/pi-web](https://github.com/agegr/pi-web)。感谢上游作者，以及 OMP、Pi、Claude Code、Codex 的维护者。Agent 能力来自这些工具，本分支做的是网页接入和使用体验。
 
 ## 许可证
 
