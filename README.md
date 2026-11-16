@@ -24,6 +24,18 @@ On by default, with an off switch remembered in this browser. The same input han
 
 <img width="3460" height="2148" alt="omp-web: project sessions, chat, and files in one workspace" src="https://github.com/user-attachments/assets/bd2c98e2-be32-44fe-b4f9-91cdb922e1d2" />
 
+## A four-card introduction
+
+**Bring Claude, Pi, and Codex from your remote machine into the browser.**
+
+Open your existing agents from a phone, tablet, or laptop. These Chinese-language promotional cards illustrate features, not actual UI screenshots. Click an image for the full-size version.
+
+| Browser workspace | Remote architecture |
+| --- | --- |
+| [![Remote Claude, Pi, and Codex in the browser (Chinese)](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![omp-web invokes native Claude Code on a US host; the CLI connects to the model service (Chinese)](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| **Input helpers** | **Everyday development** |
+| [![Automatic fullwidth-to-halfwidth conversion, optional translation, and screenshot paste previews (Chinese)](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![Multiple engines, files and diffs, embedded terminals, and work continuing after browser disconnects (Chinese)](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
+
 ## What I changed from upstream
 
 This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** with this fork at **[`d5b77fa`](https://github.com/leafiy/omp-web/commit/d5b77fa)**, not with the original pi-web. The upstream remote still pointed to that commit when checked. [Full source diff](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...d5b77fa). Related commits are grouped by feature; repeated fixes are not counted as separate features.
@@ -201,16 +213,6 @@ A small Linux box at a remote home
 ```
 
 Models run in the cloud, so the host need not run a large model. The CLIs, web service, and project builds still need resources; this is not a minimum hardware specification. My reason for changing it was simple: mobile SSH works, but copying replies, moving screenshots, browsing files, and reading diffs takes too much effort.
-
-</details>
-
-<details>
-<summary>Four feature cards (Chinese illustrations, not UI screenshots)</summary>
-
-| Browser workspace | Remote architecture |
-| --- | --- |
-| [![Browser workspace](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![Native CLIs connect to model services](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
-| [![Chinese input helpers](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![Everyday development](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
 
 </details>
 

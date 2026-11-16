@@ -24,6 +24,18 @@ Agent 还是你机器上原来的那几个，继续用自己的登录、模型�
 
 <img width="3458" height="2158" alt="omp-web：项目会话、聊天和文件工作区" src="https://github.com/user-attachments/assets/1795000f-0d74-4fb4-95e5-a7ea8c681b2d" />
 
+## 四张图了解 omp-web
+
+**把远程机器的 Claude、Pi、Codex 搬到浏览器，随时随地当牛马。**
+
+手机、平板、电脑打开网页，继续使用远程机器上的原生 Agent。以下为功能宣传示意，不是实际界面截图；点击图片可查看原图。
+
+| 浏览器工作台 | 远程架构 |
+| --- | --- |
+| [![把远程机器的 Claude、Pi、Codex 搬到浏览器](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![美国远程主机上的 omp-web 调用原生 Claude Code，由 CLI 连接模型服务](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
+| **中文输入优化** | **日常开发工作流** |
+| [![全角符号自动转半角、可选中译英和截图粘贴预览](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![多引擎会话、文件与 diff、内嵌终端和浏览器断线后继续运行](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
+
 ## 相比原版，我改了什么
 
 对比的是原版 **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** 与本分支 **[`d5b77fa`](https://github.com/leafiy/omp-web/commit/d5b77fa)** 的源码，而不是最早的 pi-web。原版远端核对时也停在这个提交。[查看完整差异](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...d5b77fa)。下面按功能合并相关提交，不把反复修复算成多个新功能。
@@ -201,16 +213,6 @@ npm start
 ```
 
 模型走云端，所以主机不必跑大模型，但 CLI、网页和项目构建仍然要资源。这不是最低硬件要求。我改它的原因很简单：手机 SSH 能干活，但复制回复、传截图、翻文件和看 diff 太费劲。
-
-</details>
-
-<details>
-<summary>四张功能介绍图（示意图，不是 UI 截图）</summary>
-
-| 浏览器工作台 | 远程架构 |
-| --- | --- |
-| [![浏览器工作台](./public/promo/xiaohongshu/01-cover.png)](./public/promo/xiaohongshu/01-cover.png) | [![原生 CLI 连接模型服务](./public/promo/xiaohongshu/02-architecture.png)](./public/promo/xiaohongshu/02-architecture.png) |
-| [![中文输入优化](./public/promo/xiaohongshu/03-input.png)](./public/promo/xiaohongshu/03-input.png) | [![日常开发](./public/promo/xiaohongshu/04-workflow.png)](./public/promo/xiaohongshu/04-workflow.png) |
 
 </details>
 
