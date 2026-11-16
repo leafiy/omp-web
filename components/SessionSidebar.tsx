@@ -20,6 +20,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAudio } from "@/hooks/useAudio";
 import { useSessionReadState } from "@/hooks/useSessionReadState";
 import type { SessionReadSnapshot } from "@/lib/session-read-state";
+import { useSessionPins } from "@/hooks/useSessionPins";
+import type { SessionPinSnapshot } from "@/lib/session-pin-state";
 
 function ToolbarIconButton({
   onClick,
@@ -102,18 +104,6 @@ interface Props {
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
-}
-
-const PINNED_SESSIONS_STORAGE_KEY = "omp-web:pinned-sessions";
-
-function loadPinnedSessions(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]");
-    return Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === "string"))] : [];
-  } catch {
-    return [];
-  }
 }
 
 const PROJECT_EXPANSION_STORAGE_KEY = "omp-web:sidebar-project-expansion";
@@ -385,6 +375,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const { unreadSessionIds, applyReadState, markSessionsRead, readError } = useSessionReadState(selectedSessionId);
+  const { pinnedSessionIds, applyPinState, togglePin, setPinned, isPinDisabled, pinError } = useSessionPins();
   // Sessions with a question/approval dialog waiting for the user.
   const [waitingSessionIds, setWaitingSessionIds] = useState<Set<string>>(() => new Set());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -422,11 +413,12 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     const request = ++sessionListRequestRef.current;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch("/api/sessions");
+      const res = await fetch("/api/sessions", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; waitingSessionIds?: string[] };
+      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; waitingSessionIds?: string[]; pinState?: SessionPinSnapshot };
       if (request !== sessionListRequestRef.current) return;
       setAllSessions(data.sessions);
+      applyPinState(data.pinState);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
       if (!runningPollAuthoritativeRef.current) {
@@ -447,7 +439,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
         setSessionsLoaded(true);
       }
     }
-  }, [applyWaitingSessionIds]);
+  }, [applyWaitingSessionIds, applyPinState]);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -487,9 +479,10 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
           signal: current.signal,
         });
         if (!res.ok) return;
-        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[]; readState?: SessionReadSnapshot };
+        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[]; readState?: SessionReadSnapshot; pinState?: SessionPinSnapshot };
         if (stopped || controller !== current) return;
         applyReadState(data.readState);
+        applyPinState(data.pinState);
         runningPollAuthoritativeRef.current = true;
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
         applyWaitingSessionIds(data.waitingSessionIds);
@@ -513,13 +506,15 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
 
     void poll();
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onVisibilityChange);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onVisibilityChange);
     };
-  }, [applyWaitingSessionIds, applyReadState]);
+  }, [applyWaitingSessionIds, applyReadState, applyPinState]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
@@ -565,17 +560,6 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
       || pendingSession.cwd;
     return [{ ...pendingSession, projectRoot }, ...allSessions];
   }, [allSessions, pendingSession]);
-  const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>(loadPinnedSessions);
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify(pinnedSessionIds));
-    } catch {
-      // Storage may be unavailable in privacy mode.
-    }
-  }, [pinnedSessionIds]);
-  const togglePin = (id: string) => {
-    setPinnedSessionIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [id, ...ids]);
-  };
   const pinnedIds = new Set(pinnedSessionIds);
   const sessionsById = new Map(displaySessions.map((session) => [session.id, session]));
   const pinnedSessions = pinnedSessionIds.flatMap((id) => {
@@ -782,6 +766,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
           </div>
         )}
         {readError && <div role="alert" style={{ padding: "4px 12px", color: "var(--text-muted)", fontSize: 12 }}>{t("sidebar.markReadFailed")}</div>}
+        {pinError && <div role="alert" style={{ padding: "4px 12px", color: "var(--text-muted)", fontSize: 12 }}>{t("sidebar.pinSaveFailed")}</div>}
         {error && (
           <div style={{ padding: "12px 16px", color: "#f87171", fontSize: 12 }}>
             {error}
@@ -809,11 +794,12 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                 isWaiting={waitingSessionIds.has(session.id)}
                 isUnread={unreadSessionIds.has(session.id)}
                 isPinned
+                pinDisabled={isPinDisabled(session.id)}
                 onTogglePin={() => togglePin(session.id)}
                 onClick={() => onSelectSession(session)}
                 onRenamed={loadSessions}
                 onDeleted={(id) => {
-                  setPinnedSessionIds((ids) => ids.filter((item) => item !== id));
+                  void setPinned(id, false);
                   onSessionDeleted?.(id);
                   loadSessions();
                 }}
@@ -862,6 +848,7 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
                       key={node.session.id}
                       node={node}
                       onTogglePin={togglePin}
+                      isPinDisabled={isPinDisabled}
                       selectedSessionId={selectedSessionId}
                       runningSessionIds={runningSessionIds}
                       waitingSessionIds={waitingSessionIds}
@@ -1172,6 +1159,7 @@ function ProjectGroupHeader({
 function SessionTreeItem({
   node,
   onTogglePin,
+  isPinDisabled,
   selectedSessionId,
   runningSessionIds,
   waitingSessionIds,
@@ -1183,6 +1171,7 @@ function SessionTreeItem({
 }: {
   node: SessionTreeNode;
   onTogglePin: (id: string) => void;
+  isPinDisabled: (id: string) => boolean;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   waitingSessionIds: Set<string>;
@@ -1212,6 +1201,7 @@ function SessionTreeItem({
         <SessionItem
           session={node.session}
           onTogglePin={() => onTogglePin(node.session.id)}
+          pinDisabled={isPinDisabled(node.session.id)}
           isSelected={node.session.id === selectedSessionId}
           isRunning={runningSessionIds.has(node.session.id)}
           isWaiting={waitingSessionIds.has(node.session.id)}
@@ -1232,6 +1222,7 @@ function SessionTreeItem({
               key={child.session.id}
               node={child}
               onTogglePin={onTogglePin}
+              isPinDisabled={isPinDisabled}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
               waitingSessionIds={waitingSessionIds}
@@ -1355,6 +1346,7 @@ function SessionItem({
   onDeleted,
   isPinned = false,
   onTogglePin,
+  pinDisabled,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -1370,6 +1362,7 @@ function SessionItem({
   onDeleted?: (id: string) => void;
   isPinned?: boolean;
   onTogglePin: () => void;
+  pinDisabled: boolean;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -1611,7 +1604,8 @@ function SessionItem({
             title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
             aria-label={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
             aria-pressed={isPinned}
-            style={{ ...actionButtonStyle, color: isPinned ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}
+            disabled={pinDisabled}
+            style={{ ...actionButtonStyle, color: isPinned ? "var(--accent)" : "var(--text-dim)", flexShrink: 0, opacity: pinDisabled ? 0.5 : 1, cursor: pinDisabled ? "default" : "pointer" }}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M16 3l5 5-4 1-4 4-1 5-6-6 5-1 4-4zM2 22l7-7" />

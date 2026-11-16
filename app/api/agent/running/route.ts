@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getRunningRpcSessionIds, getWaitingRpcSessionIds } from "@/lib/rpc-manager";
 
 import { sessionReadState } from "@/lib/session-read-state";
+import { sessionPinState } from "@/lib/session-pin-state";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export async function GET() {
   const reads = sessionReadState();
   reads.observeRunning(runningSessionIds);
   return NextResponse.json(
-    { runningSessionIds, waitingSessionIds: getWaitingRpcSessionIds(), readState: reads.snapshot() },
+    { runningSessionIds, waitingSessionIds: getWaitingRpcSessionIds(), readState: reads.snapshot(), pinState: sessionPinState().snapshot() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

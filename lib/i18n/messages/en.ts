@@ -172,6 +172,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.pinned": "Pinned sessions",
     "sidebar.pin": "Pin session",
     "sidebar.unpin": "Unpin session",
+    "sidebar.pinSaveFailed": "Could not save pinned sessions. Check your connection and retry.",
     "sidebar.toggleFilter": "Filter projects and sessions",
     "sidebar.filterSessions": "Filter projects and sessions…",
     "sidebar.noMatches": "No matching projects or sessions",

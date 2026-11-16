@@ -172,6 +172,7 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.pinned": "置顶会话",
     "sidebar.pin": "置顶会话",
     "sidebar.unpin": "取消置顶",
+    "sidebar.pinSaveFailed": "置顶状态保存失败，请检查网络后重试。",
     "sidebar.toggleFilter": "筛选项目和会话",
     "sidebar.filterSessions": "筛选项目和会话…",
     "sidebar.noMatches": "没有匹配的项目或会话",
