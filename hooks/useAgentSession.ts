@@ -505,8 +505,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const autoScrollEnabled = useSyncExternalStore(subscribeChatAutoScroll, readChatAutoScroll, () => true);
-  const autoScrollEnabledRef = useRef(autoScrollEnabled);
-  autoScrollEnabledRef.current = autoScrollEnabled;
+  const lastAutoScrollContentRef = useRef<{ messages: string; streaming: string | null } | null>(null);
   const autoScrollPausedUntilRef = useRef(0);
   const autoScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentEventRevisionRef = useRef(0);
@@ -2231,10 +2230,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!mountedRef.current || autoScrollPausedUntilRef.current !== deadline) return;
       autoScrollResumeTimerRef.current = null;
       autoScrollPausedUntilRef.current = 0;
+      // Expiry only permits future message updates to follow. Reading an idle
+      // transcript must never jump just because one minute passed.
       completionScrollAllowedRef.current = true;
-      if (autoScrollEnabledRef.current) scrollToBottom("instant");
     }, AUTO_SCROLL_PAUSE_MS);
-  }, [scrollToBottom]);
+  }, []);
 
   const markUserScrollIntent = useCallback((event: Event) => {
     if (event instanceof KeyboardEvent) {
@@ -2350,8 +2350,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     completionScrollAllowedRef.current = Date.now() >= autoScrollPausedUntilRef.current;
   }, [autoScrollEnabled]);
 
+  // Compare the message tail, not array/object identities: background history
+  // revalidation can return a fresh copy of exactly the same conversation.
+  // Do not serialize the entire history on each streamed token.
+  const messageScrollKey = useMemo(() => JSON.stringify([messages.length, messages.at(-1)]), [messages]);
+  const streamingScrollKey = useMemo(() => streamState.streamingMessage
+    ? JSON.stringify(streamState.streamingMessage) : null, [streamState.streamingMessage]);
+
   useEffect(() => {
-    if (!messages.length && !streamState.streamingMessage) return;
+    const previous = lastAutoScrollContentRef.current;
+    const hasNewContent = previous?.messages !== messageScrollKey
+      || (streamingScrollKey !== null && previous?.streaming !== streamingScrollKey);
+    // Consume changes even while paused/disabled. Expiry or enabling the switch
+    // must not replay old updates and pull a reader away from history.
+    lastAutoScrollContentRef.current = { messages: messageScrollKey, streaming: streamingScrollKey };
+    if (!messages.length && !streamingScrollKey) return;
     if (pendingScrollToUserRef.current) {
       pendingScrollToUserRef.current = false;
       initialScrollDoneRef.current = true;
@@ -2360,12 +2373,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       scrollToBottom("instant"); // Opening history still starts at the latest turn.
       return;
     }
-    if (!autoScrollEnabled || !completionScrollAllowedRef.current) return;
+    if (!hasNewContent || !autoScrollEnabled || !completionScrollAllowedRef.current) return;
     const frame = requestAnimationFrame(() => {
       if (completionScrollAllowedRef.current) scrollToBottom("instant");
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages, streamState.streamingMessage, agentRunning, autoScrollEnabled, scrollToBottom]);
+  }, [messages.length, messageScrollKey, streamingScrollKey, autoScrollEnabled, scrollToBottom]);
 
   // Restore only this project's choice for this engine; never alter a resumed session.
   useEffect(() => {

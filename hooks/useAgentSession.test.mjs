@@ -107,12 +107,13 @@ test("background observer connections cannot launch an idle native process", asy
 test("automatic following is configurable and pauses for one minute after manual scrolling", () => {
   const scroll = source.slice(source.indexOf("  const scrollToBottom"), source.indexOf("  // Restore only this project's choice"));
   assert.match(source, /useSyncExternalStore\(subscribeChatAutoScroll, readChatAutoScroll, \(\) => true\)/);
-  assert.match(scroll, /if \(!autoScrollEnabled \|\| !completionScrollAllowedRef\.current\) return/);
-  assert.match(scroll, /\[messages, streamState\.streamingMessage, agentRunning, autoScrollEnabled, scrollToBottom\]/);
+  assert.match(scroll, /if \(!hasNewContent \|\| !autoScrollEnabled \|\| !completionScrollAllowedRef\.current\) return/);
+  assert.match(scroll, /\[messages\.length, messageScrollKey, streamingScrollKey, autoScrollEnabled, scrollToBottom\]/);
   assert.match(source, /const AUTO_SCROLL_PAUSE_MS = 60_000/);
   assert.match(scroll, /autoScrollPausedUntilRef\.current = deadline/);
   assert.match(scroll, /clearTimeout\(autoScrollResumeTimerRef\.current\)/);
-  assert.match(scroll, /if \(autoScrollEnabledRef\.current\) scrollToBottom\("instant"\)/);
+  const pause = scroll.slice(scroll.indexOf("const pauseAutoScroll"), scroll.indexOf("const markUserScrollIntent"));
+  assert.doesNotMatch(pause, /scrollToBottom|\.scrollTo\(/);
   assert.match(scroll, /cancelAnimationFrame\(frame\)/);
   assert.doesNotMatch(chatWindowSource, /height: scrollContainerRef\.current \? scrollContainerRef\.current\.clientHeight/);
 });
