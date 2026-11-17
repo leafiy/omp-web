@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo, useReducer } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useReducer, useSyncExternalStore } from "react";
+import { readChatAutoScroll, subscribeChatAutoScroll } from "@/lib/chat-auto-scroll";
+import { startVisiblePolling } from "@/lib/visible-polling";
 import { useI18n } from "./useI18n";
 import type {
   AgentMessage,
@@ -40,6 +42,7 @@ const NO_HISTORY_TURNS: HistoryTurnSummary[] = [];
 
 export interface SessionData {
   page?: HistoryPage;
+  info?: SessionInfo | null;
   sessionId: string;
   filePath: string;
   tree: SessionTreeNode[];
@@ -209,11 +212,12 @@ export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" 
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
 const USER_SCROLL_INTENT_MS = 1200;
+const AUTO_SCROLL_PAUSE_MS = 60_000;
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
-const AGENT_STATE_RECONCILE_MS = 15_000;
+const AGENT_STATE_RECONCILE_MS = 5_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const MAX_NOTICES = 5;
@@ -495,10 +499,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const agentRunningRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
+  const localPromptRequestInFlightRef = useRef(false);
   const notifiedPromptRunIdRef = useRef(-1);
   const bashRunningRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
+  const autoScrollEnabled = useSyncExternalStore(subscribeChatAutoScroll, readChatAutoScroll, () => true);
+  const autoScrollEnabledRef = useRef(autoScrollEnabled);
+  autoScrollEnabledRef.current = autoScrollEnabled;
+  const autoScrollPausedUntilRef = useRef(0);
+  const autoScrollResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentEventRevisionRef = useRef(0);
+  const historySyncNeededRef = useRef(false);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
@@ -597,16 +609,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   }, []);
 
-  const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
+  const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false, backgroundSignal?: AbortSignal) => {
     let messagesLoaded = false;
     const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current, modelRevision = contextRevisionRef.current;
-    const current = () => mountedRef.current && sessionIdRef.current === sid && historyLoadRevision.current === revision && messageRevision.current === streamRevision && contextRevisionRef.current === modelRevision;
+    const runId = promptRunIdRef.current, thinkingRevision = thinkingChangeRevisionRef.current, eventRevision = agentEventRevisionRef.current;
+    const current = () => mountedRef.current && !backgroundSignal?.aborted && sessionIdRef.current === sid && promptRunIdRef.current === runId && historyLoadRevision.current === revision && messageRevision.current === streamRevision && contextRevisionRef.current === modelRevision && thinkingChangeRevisionRef.current === thinkingRevision && agentEventRevisionRef.current === eventRevision;
     const url = historyUrl(sid);
     const apply = (d: SessionData) => {
       if (!current() || d.sessionId !== sid) return;
-      setData(d); setActiveLeafId(d.leafId); applyHistoryWindow(d);
+      historySyncNeededRef.current = false;
+      setData(d); setActiveLeafId(d.leafId);
+      // A conditional 304 returns the same snapshot. Do not churn the message
+      // list (or scroll position) on every idle synchronization tick.
+      if (loadedWindowRef.current.messages !== d.context.messages) applyHistoryWindow(d);
       setCurrentModelOverride(null); setError(null);
-      if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
+      if (d.info && (d.info.name ?? "") !== knownSessionNameRef.current) {
+        knownSessionNameRef.current = d.info.name ?? "";
+        onSessionNameChange?.(sid, knownSessionNameRef.current);
+      }
+      if (d.context.thinkingLevel) setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
       messagesLoaded = true; if (showLoading) setLoading(false);
     };
     try {
@@ -658,13 +679,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setData(null); setMessages([]); setEntryIds([]); setHistoryPage(null); setHistoryTurnStates({});
           loadedWindowRef.current = { messages: [], entryIds: [] };
         }
-        setError(String(e));
+        if (!backgroundSignal || (e instanceof HistoryRequestError && [401, 403, 404].includes(e.status))) setError(String(e));
       }
       return null;
     } finally {
       if (mountedRef.current && showLoading && !messagesLoaded && historyLoadRevision.current === revision) setLoading(false);
     }
-  }, [applyHistoryWindow]);
+  }, [applyHistoryWindow, onSessionNameChange]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
@@ -813,9 +834,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     eventConnectionAttemptRef.current = null;
   }, []);
 
-  const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
+  const connectEvents = useCallback((sid: string, observeOnly = false): Promise<EventStreamConnectionResult> => {
     closeEvents();
-    const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`);
+    const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events${observeOnly ? "?observe=1" : ""}`);
     eventSourceRef.current = es;
     eventSourceSessionIdRef.current = sid;
 
@@ -836,7 +857,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (eventSourceRef.current !== es || sessionIdRef.current !== sid) return;
         try {
           const event = JSON.parse(e.data) as AgentEvent;
-          if (event.type === "connected") settle("connected");
+          if (event.type === "connected") {
+            historySyncNeededRef.current = true;
+            settle("connected");
+          }
           handleAgentEventRef.current?.(event);
         } catch {
           // ignore
@@ -862,7 +886,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                 && !eventSourceRef.current
                 && (agentRunningRef.current || eventStreamGraceActiveRef.current)
               ) {
-                void connectEvents(sid);
+                void connectEvents(sid, observeOnly);
               }
             }, 1000);
           }
@@ -876,7 +900,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return promise;
   }, [closeEvents]);
 
-  const ensureEventsConnected = useCallback(async (sid: string) => {
+  const ensureEventsConnected = useCallback(async (sid: string, observeOnly = false) => {
     const current = eventSourceRef.current;
     if (current && eventSourceSessionIdRef.current === sid) {
       if (current.readyState === EventSource.OPEN) return;
@@ -887,7 +911,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
 
-    const result = await connectEvents(sid);
+    const result = await connectEvents(sid, observeOnly);
     if (result.status === "connected" || result.source.readyState === EventSource.OPEN) return;
     if (eventSourceRef.current === result.source) eventSourceRef.current = null;
     if (eventSourceSessionIdRef.current === sid) eventSourceSessionIdRef.current = null;
@@ -1119,11 +1143,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId = promptRunIdRef.current) => {
     // Bail out before loadSession too: a stale finish for a previous run
     // must not overwrite the messages of the run currently streaming.
-    if (promptRunIdRef.current !== runId) return;
+    if (!mountedRef.current || sessionIdRef.current !== sid || promptRunIdRef.current !== runId) return;
+    const eventRevision = agentEventRevisionRef.current;
     try {
       if (sid) await loadSession(sid);
     } finally {
-      if (promptRunIdRef.current !== runId) return;
+      if (!mountedRef.current || sessionIdRef.current !== sid || promptRunIdRef.current !== runId || agentEventRevisionRef.current !== eventRevision) return;
       const promptWasPending = rpcPromptPendingRef.current;
       const agentWasActive = sdkAgentActiveRef.current;
       rpcPromptPendingRef.current = false;
@@ -1190,81 +1215,100 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [loadSession]);
 
-  // Reconcile client streaming state with the server. When SSE events are
-  // missed (network drop, mobile tab backgrounded, half-open connection),
-  // agent_end never arrives and the UI stays in streaming state forever.
-  // If the server reports idle while we still think it's running, finish
-  // through the same settlement path used by non-streaming prompts.
-  const reconcileAgentState = useCallback(async (sid: string) => {
-    if (!agentRunningRef.current && !queuedCountRef.current && !hasActiveTasks(taskSnapshotRef.current)) return;
-    const runId = promptRunIdRef.current;
+  // Synchronize even when THIS browser is idle: another device can start and
+  // finish a whole turn while this tab is open. GET never starts an agent, and
+  // observer SSE must not revive an agent that exited between GET and attach.
+  const reconcileAgentState = useCallback(async (sid: string, signal: AbortSignal, recovered: boolean) => {
+    const runId = promptRunIdRef.current, eventRevision = agentEventRevisionRef.current;
+    const modelRevision = contextRevisionRef.current, thinkingRevision = thinkingChangeRevisionRef.current;
+    const current = () => mountedRef.current && !signal.aborted && sessionIdRef.current === sid
+      && promptRunIdRef.current === runId && agentEventRevisionRef.current === eventRevision
+      && contextRevisionRef.current === modelRevision && thinkingChangeRevisionRef.current === thinkingRevision;
     try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`, { cache: "no-store", signal });
       if (!res.ok) return;
-      const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
-      // A slow response can straddle a run boundary (previous run finished
-      // and the user already started the next one while this request was in
-      // flight) — everything in it is stale, drop it.
-      if (promptRunIdRef.current !== runId || sessionIdRef.current !== sid) return;
-      const state = data.state;
+      const snapshot = await res.json() as { running?: boolean; state?: AgentStateResponse };
+      if (!current()) return;
+      const state = snapshot.state;
       applyTaskSnapshot(state?.tasks);
-      if (!data.running && hasActiveTasks(taskSnapshotRef.current)) {
+      if (!snapshot.running && hasActiveTasks(taskSnapshotRef.current)) {
         taskStatusStaleRef.current = true;
         setTaskStatusStale(true);
       }
-      // Mirror compaction state unconditionally: a missed compaction_end
-      // would otherwise leave the "Stop compaction" UI stuck. No state
-      // (wrapper destroyed) means nothing is compacting.
       setIsCompacting(state?.isCompacting ?? false);
       setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages, state?.queuedItems));
-      const busy = data.running && state
-        && (state.isStreaming || state.isPromptRunning || state.isCompacting);
-      if (busy || !agentRunningRef.current) return;
+      const busy = Boolean(snapshot.running && state && (state.isStreaming || state.isPromptRunning || state.isCompacting));
+      // A local send may still be starting the process/attaching SSE or waiting
+      // for its POST to reach the server. Idle does not yet mean it completed.
+      if (!busy && localPromptRequestInFlightRef.current && optimisticUserMessageRef.current) return;
+      const discoveredRun = busy && !agentRunningRef.current;
+      if (discoveredRun) {
+        promptRunIdRef.current++;
+        completionRevisionRef.current++;
+        sdkAgentActiveRef.current = Boolean(state?.isStreaming || state?.isCompacting);
+        rpcPromptPendingRef.current = Boolean(state?.isPromptRunning);
+        agentRunningRef.current = true;
+        setAgentRunning(true);
+        setAgentPhase(state?.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+        dispatch({ type: "start" });
+      }
+      if (state?.isBashRunning && !bashRunningRef.current) {
+        bashRunningRef.current = true;
+        setBashRunning(true);
+        void waitForBashSettlement(sid);
+      }
+      if (busy || hasActiveTasks(state?.tasks) || (state?.webFollowUpPending ?? 0) > 0) {
+        cancelEventStreamGrace();
+        // A foreground recovery also repairs an OPEN but half-dead connection.
+        // Never replace a connection attempt a local send is awaiting.
+        if (recovered && !eventConnectionAttemptRef.current?.pending) closeEvents();
+        const attaching = !eventSourceRef.current || eventSourceRef.current.readyState !== EventSource.OPEN;
+        await ensureEventsConnected(sid, true);
+        if (signal.aborted || !mountedRef.current || sessionIdRef.current !== sid) return;
+        if (!optimisticUserMessageRef.current && (discoveredRun || attaching || recovered || historySyncNeededRef.current)) await loadSession(sid, false, false, signal);
+        if (!busy) scheduleEventStreamClose(sid);
+      } else if (agentRunningRef.current) {
+        await finishPromptWithoutStream(sid, runId);
+      } else if (!bashRunningRef.current) {
+        // ETag validation preserves the existing snapshot when nothing changed.
+        await loadSession(sid, false, false, signal);
+      }
+      // History reloads can reset model overrides; apply the native state last,
+      // but only if no event, local command or newer run superseded this poll.
+      if (!current()) return;
       if (state) {
+        if (state.model) setCurrentModelOverride({ provider: state.model.provider, modelId: state.model.id });
+        if (state.thinkingLevel !== undefined) setThinkingLevel(state.thinkingLevel as ThinkingLevelOption);
+        if (state.supportsSteering !== undefined) setNativeSteeringAvailable(state.supportsSteering);
         if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
         if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
         if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
         if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
       }
-      await finishPromptWithoutStream(sid, runId);
     } catch {
-      if (sessionIdRef.current === sid) {
+      if (current() && agentRunningRef.current) {
         taskStatusStaleRef.current = true;
         setTaskStatusStale(true);
       }
-      // Network still down — the next poll / visibility / online tick retries.
+      // Network still down — retry without discarding history or the draft.
     }
-  }, [finishPromptWithoutStream, applyTaskSnapshot]);
+  }, [applyTaskSnapshot, cancelEventStreamGrace, closeEvents, ensureEventsConnected, finishPromptWithoutStream, loadSession, scheduleEventStreamClose, waitForBashSettlement]);
 
-  // Recovery net for missed SSE events: while the agent is running, verify
-  // against the server periodically and whenever the tab returns to the
-  // foreground or the network comes back.
   useEffect(() => {
-    if (!agentRunning && !queuedCountRef.current && !hasActiveTasks(taskSnapshot)) return;
-    const reconcile = () => {
-      // Read the ref on every tick: for brand-new sessions the id is
-      // assigned only after ensure_session returns.
+    if (loading) return;
+    return startVisiblePolling(async (signal, recovered) => {
       const sid = sessionIdRef.current;
-      if (sid) void reconcileAgentState(sid);
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") reconcile();
-    };
-    const interval = setInterval(reconcile, AGENT_STATE_RECONCILE_MS);
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", reconcile);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", reconcile);
-    };
-  }, [agentRunning, taskSnapshot, queuedMessages, reconcileAgentState]);
+      if (sid) await reconcileAgentState(sid, signal, recovered);
+    }, AGENT_STATE_RECONCILE_MS, false);
+  }, [loading, reconcileAgentState]);
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    // Reject state reads straddling an SSE lifecycle transition.
+    if (["agent_start", "agent_end", "agent_settled", "prompt_done", "agent_closed", "auto_compaction_start", "auto_compaction_end", "compaction_start", "compaction_end"].includes(event.type)) agentEventRevisionRef.current++;
     switch (event.type) {
       case "session_info_update": {
         const sid = sessionIdRef.current;
@@ -1288,6 +1332,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         applyTaskSnapshot(event.snapshot as AgentTaskSnapshot);
         break;
       case "agent_start":
+        if (!agentRunningRef.current) promptRunIdRef.current++;
         completionRevisionRef.current++;
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
@@ -1507,6 +1552,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
 
     const promptRunId = promptRunIdRef.current + 1;
+    localPromptRequestInFlightRef.current = true;
     completionRevisionRef.current++;
     messageRevision.current++;
     if (sessionIdRef.current) historyClientCache.invalidate(sessionIdRef.current);
@@ -1529,7 +1575,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
-    completionScrollAllowedRef.current = true;
+    completionScrollAllowedRef.current = Date.now() >= autoScrollPausedUntilRef.current;
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     let sentSessionId: string | null = null;
@@ -1604,6 +1650,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       dispatch({ type: "end" });
       return false;
     } finally {
+      if (promptRunIdRef.current === promptRunId) localPromptRequestInFlightRef.current = false;
       // Switching chats detaches the browser, never aborts accepted native work.
       // Startup may have attached SSE after the unmount cleanup already ran.
       if (!mountedRef.current) {
@@ -2171,17 +2218,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const container = scrollContainerRef.current;
+    container?.scrollTo({ top: container.scrollHeight, behavior });
   }, []);
 
-  const scrollUserMsgToTop = useCallback(() => {
-    const container = scrollContainerRef.current;
-    const el = lastUserMsgRef.current;
-    if (!container || !el) return;
-    const elAbsTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    container.scrollTo({ top: elAbsTop - 16, behavior: "smooth" });
-  }, []);
+  const pauseAutoScroll = useCallback(() => {
+    completionScrollAllowedRef.current = false;
+    const deadline = Date.now() + AUTO_SCROLL_PAUSE_MS;
+    autoScrollPausedUntilRef.current = deadline;
+    if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
+    autoScrollResumeTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current || autoScrollPausedUntilRef.current !== deadline) return;
+      autoScrollResumeTimerRef.current = null;
+      autoScrollPausedUntilRef.current = 0;
+      completionScrollAllowedRef.current = true;
+      if (autoScrollEnabledRef.current) scrollToBottom("instant");
+    }, AUTO_SCROLL_PAUSE_MS);
+  }, [scrollToBottom]);
 
   const markUserScrollIntent = useCallback((event: Event) => {
     if (event instanceof KeyboardEvent) {
@@ -2189,13 +2242,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
     }
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-  }, []);
+    ignoreProgrammaticScrollUntilRef.current = 0;
+    // Pause before the next token's layout effect can undo a scroll gesture.
+    if ((event instanceof WheelEvent && event.deltaY !== 0) || event.type === "touchmove"
+      || event instanceof KeyboardEvent) pauseAutoScroll();
+  }, [pauseAutoScroll]);
 
   const handleScrollPositionChange = useCallback(() => {
-    if (!agentRunningRef.current) return;
     if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
     if (Date.now() > userScrollIntentUntilRef.current) return;
-    completionScrollAllowedRef.current = false;
+    userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
+    pauseAutoScroll();
+  }, [pauseAutoScroll]);
+
+  useEffect(() => () => {
+    if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
   }, []);
 
   // Load session on mount
@@ -2207,7 +2268,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!mountedRef.current || sessionIdRef.current !== session.id) return;
         applyTaskSnapshot(agentState?.state?.tasks);
         if (hasActiveTasks(agentState?.state?.tasks) || (agentState?.state?.webFollowUpPending ?? 0) > 0) {
-          void connectEvents(session.id);
+          void connectEvents(session.id, true);
           scheduleEventStreamClose(session.id);
         }
         if (agentState?.running) {
@@ -2219,7 +2280,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            void connectEvents(session.id);
+            void connectEvents(session.id, true);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
@@ -2275,28 +2336,36 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!container) return;
     container.addEventListener("wheel", markUserScrollIntent, { passive: true });
     container.addEventListener("touchstart", markUserScrollIntent, { passive: true });
+    container.addEventListener("touchmove", markUserScrollIntent, { passive: true });
     container.addEventListener("scroll", handleScrollPositionChange, { passive: true });
     return () => {
       container.removeEventListener("wheel", markUserScrollIntent);
       container.removeEventListener("touchstart", markUserScrollIntent);
+      container.removeEventListener("touchmove", markUserScrollIntent);
       container.removeEventListener("scroll", handleScrollPositionChange);
     };
   }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
 
   useEffect(() => {
-    if (messages.length > 0) {
-      if (pendingScrollToUserRef.current) {
-        pendingScrollToUserRef.current = false;
-        initialScrollDoneRef.current = true;
-        scrollUserMsgToTop();
-      } else if (!initialScrollDoneRef.current) {
-        initialScrollDoneRef.current = true;
-        scrollToBottom("instant");
-      } else if (!agentRunningRef.current && completionScrollAllowedRef.current) {
-        scrollToBottom("smooth");
-      }
+    completionScrollAllowedRef.current = Date.now() >= autoScrollPausedUntilRef.current;
+  }, [autoScrollEnabled]);
+
+  useEffect(() => {
+    if (!messages.length && !streamState.streamingMessage) return;
+    if (pendingScrollToUserRef.current) {
+      pendingScrollToUserRef.current = false;
+      initialScrollDoneRef.current = true;
+    } else if (!initialScrollDoneRef.current) {
+      initialScrollDoneRef.current = true;
+      scrollToBottom("instant"); // Opening history still starts at the latest turn.
+      return;
     }
-  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+    if (!autoScrollEnabled || !completionScrollAllowedRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (completionScrollAllowedRef.current) scrollToBottom("instant");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, streamState.streamingMessage, agentRunning, autoScrollEnabled, scrollToBottom]);
 
   // Restore only this project's choice for this engine; never alter a resumed session.
   useEffect(() => {

@@ -27,16 +27,22 @@ test("pins use server snapshots and do not read or write device-local preference
   assert.match(pinsSource, /JSON\.stringify\(\{ sessionId, pinned \}\)/);
   assert.match(pinsSource, /next\.revision <= latest\.current\.revision/);
   assert.equal(source.match(/applyPinState\(data\.pinState\)/g)?.length, 2);
-  assert.match(source, /window\.addEventListener\("online", onVisibilityChange\)/);
+  assert.match(source, /startVisiblePolling/);
 });
 
 test("pin button remains hover-only and is disabled while its request is pending", () => {
   assert.match(sessionItemSource, /\{hovered && <button[\s\S]*?onTogglePin\(\)[\s\S]*?disabled=\{pinDisabled\}/);
 });
 
-test("polls running sessions only while the tab is visible", () => {
+test("polls running sessions through the visible-tab scheduler", () => {
   assert.doesNotMatch(source, /new EventSource\("\/api\/agent\/running\/events"\)/);
   assert.match(source, /fetch\("\/api\/agent\/running"/);
-  assert.match(source, /document\.visibilityState !== "visible"/);
-  assert.match(source, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
+  assert.match(source, /useEffect\(\(\) => startVisiblePolling\(async \(signal\)/);
+  assert.match(source, /if \(signal\.aborted\) return/);
+});
+
+test("quietly refreshes the full session list, not just running IDs", () => {
+  assert.match(source, /\(signal\) => loadSessions\(false, \{ signal, quiet: true \}\), 15_000, false/);
+  assert.match(source, /options\.signal\?\.aborted \|\| request !== sessionListRequestRef\.current/);
+  assert.match(source, /if \(!showLoading && !options\.quiet\)/);
 });

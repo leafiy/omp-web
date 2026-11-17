@@ -32,6 +32,11 @@ export async function GET(
   // Fast path: already-running session
   let session = getRpcSession(id);
   if (!session || !session.isAlive()) {
+    // Passive cross-device synchronization must never start a native process.
+    // The agent may have exited since the browser's preceding state snapshot.
+    if (new URL(req.url).searchParams.get("observe") === "1") {
+      return new Response("Agent is not running", { status: 409 });
+    }
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return new Response("Session not found", { status: 404 });

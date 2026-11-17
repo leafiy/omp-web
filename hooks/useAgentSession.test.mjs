@@ -78,3 +78,41 @@ test("plays the enabled sound once for each extension dialog", () => {
   assert.match(chatWindowSource, /soundedExtensionDialogIdRef\.current = extensionDialog\.id/);
   assert.match(chatWindowSource, /playDoneSoundRef\.current\(\)/);
 });
+
+test("idle conversations keep synchronizing and attach to work started on another device", () => {
+  const sync = source.slice(source.indexOf("  const reconcileAgentState"), source.indexOf("  const handleAgentEvent ="));
+  assert.match(sync, /startVisiblePolling/);
+  assert.match(sync, /if \(loading\) return/);
+  assert.doesNotMatch(sync, /if \(!agentRunning(?:Ref)?[\s\S]*?return;/);
+  assert.match(sync, /const discoveredRun = busy && !agentRunningRef\.current/);
+  assert.match(sync, /ensureEventsConnected\(sid, true\)/);
+  assert.match(sync, /loadSession\(sid, false, false, signal\)/);
+  assert.match(sync, /promptRunIdRef\.current === runId/);
+  assert.match(sync, /agentEventRevisionRef\.current === eventRevision/);
+  assert.match(sync, /!signal\.aborted/);
+  assert.match(sync, /historySyncNeededRef\.current/);
+  assert.doesNotMatch(sync, /setDraft|insertText|createAgentSession/);
+});
+
+test("background observer connections cannot launch an idle native process", async () => {
+  const route = await readFile(new URL("../app/api/agent/[id]/events/route.ts", import.meta.url), "utf8");
+  const guard = route.indexOf('searchParams.get("observe") === "1"');
+  assert.ok(guard > route.indexOf("if (!isRequestAuthenticated(req))"));
+  assert.ok(guard < route.indexOf("await startRpcSession"));
+  assert.match(route.slice(guard, route.indexOf("const filePath")), /status: 409/);
+  assert.match(source, /observeOnly \? "\?observe=1" : ""/);
+  assert.match(source, /void connectEvents\(sid, observeOnly\)/);
+});
+
+test("automatic following is configurable and pauses for one minute after manual scrolling", () => {
+  const scroll = source.slice(source.indexOf("  const scrollToBottom"), source.indexOf("  // Restore only this project's choice"));
+  assert.match(source, /useSyncExternalStore\(subscribeChatAutoScroll, readChatAutoScroll, \(\) => true\)/);
+  assert.match(scroll, /if \(!autoScrollEnabled \|\| !completionScrollAllowedRef\.current\) return/);
+  assert.match(scroll, /\[messages, streamState\.streamingMessage, agentRunning, autoScrollEnabled, scrollToBottom\]/);
+  assert.match(source, /const AUTO_SCROLL_PAUSE_MS = 60_000/);
+  assert.match(scroll, /autoScrollPausedUntilRef\.current = deadline/);
+  assert.match(scroll, /clearTimeout\(autoScrollResumeTimerRef\.current\)/);
+  assert.match(scroll, /if \(autoScrollEnabledRef\.current\) scrollToBottom\("instant"\)/);
+  assert.match(scroll, /cancelAnimationFrame\(frame\)/);
+  assert.doesNotMatch(chatWindowSource, /height: scrollContainerRef\.current \? scrollContainerRef\.current\.clientHeight/);
+});

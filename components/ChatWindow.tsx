@@ -757,10 +757,6 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               />
             )}
 
-            {agentRunning && (
-              <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }} />
-            )}
-
             <div ref={messagesEndRef} />
             </div>
           </div>

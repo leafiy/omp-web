@@ -1,6 +1,7 @@
 "use client";
 
 import { historyClientCache } from "@/lib/history-client-cache";
+import { startVisiblePolling } from "@/lib/visible-polling";
 
 import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
@@ -409,14 +410,14 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     ));
   }, []);
 
-  const loadSessions = useCallback(async (showLoading = false) => {
+  const loadSessions = useCallback(async (showLoading = false, options: { signal?: AbortSignal; quiet?: boolean } = {}) => {
     const request = ++sessionListRequestRef.current;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch("/api/sessions", { cache: "no-store" });
+      const res = await fetch("/api/sessions", { cache: "no-store", signal: options.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; waitingSessionIds?: string[]; pinState?: SessionPinSnapshot };
-      if (request !== sessionListRequestRef.current) return;
+      if (options.signal?.aborted || request !== sessionListRequestRef.current) return;
       setAllSessions(data.sessions);
       applyPinState(data.pinState);
       // Treat the fetched running set as an initial fallback only. Once the
@@ -426,15 +427,15 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
         applyWaitingSessionIds(data.waitingSessionIds);
       }
       setError(null);
-      if (!showLoading) {
+      if (!showLoading && !options.quiet) {
         setSessionRefreshDone(true);
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
         sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
       }
     } catch (e) {
-      if (request === sessionListRequestRef.current) setError(String(e));
+      if (!options.quiet && request === sessionListRequestRef.current) setError(String(e));
     } finally {
-      if (request === sessionListRequestRef.current) {
+      if (!options.signal?.aborted && request === sessionListRequestRef.current) {
         setLoading(false);
         setSessionsLoaded(true);
       }
@@ -448,80 +449,32 @@ export function SessionSidebar({ selectedSessionId, pendingSession, onSelectSess
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
 
+  // Running IDs alone miss short turns, renames, deletions and new sessions
+  // created on another device. Refresh the full projection quietly as well.
+  useEffect(() => startVisiblePolling(
+    (signal) => loadSessions(false, { signal, quiet: true }), 15_000, false,
+  ), [loadSessions]);
+
   useEffect(() => {
     saveProjectExpansion(projectExpansion);
   }, [projectExpansion]);
 
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let controller: AbortController | null = null;
-
-    const clearTimer = () => {
-      if (timer) clearTimeout(timer);
-      timer = null;
-    };
-
-    const schedule = () => {
-      clearTimer();
-      if (stopped || document.visibilityState !== "visible") return;
-      timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
-    };
-
-    const poll = async () => {
-      if (stopped || document.visibilityState !== "visible") return;
-      const current = new AbortController();
-      controller?.abort();
-      controller = current;
-      try {
-        const res = await fetch("/api/agent/running", {
-          cache: "no-store",
-          signal: current.signal,
-        });
-        if (!res.ok) return;
-        const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[]; readState?: SessionReadSnapshot; pinState?: SessionPinSnapshot };
-        if (stopped || controller !== current) return;
-        applyReadState(data.readState);
-        applyPinState(data.pinState);
-        runningPollAuthoritativeRef.current = true;
-        setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-        applyWaitingSessionIds(data.waitingSessionIds);
-      } catch {
-        // Keep the last known state; the next visible-tab poll retries.
-      } finally {
-        if (controller === current) controller = null;
-        schedule();
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void poll();
-        return;
-      }
-      clearTimer();
-      controller?.abort();
-      controller = null;
-    };
-
-    void poll();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("online", onVisibilityChange);
-    return () => {
-      stopped = true;
-      clearTimer();
-      controller?.abort();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("online", onVisibilityChange);
-    };
-  }, [applyWaitingSessionIds, applyReadState, applyPinState]);
+  useEffect(() => startVisiblePolling(async (signal) => {
+    const res = await fetch("/api/agent/running", { cache: "no-store", signal });
+    if (!res.ok) return;
+    const data = await res.json() as { runningSessionIds?: string[]; waitingSessionIds?: string[]; readState?: SessionReadSnapshot; pinState?: SessionPinSnapshot };
+    if (signal.aborted) return;
+    applyReadState(data.readState);
+    applyPinState(data.pinState);
+    runningPollAuthoritativeRef.current = true;
+    setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+    applyWaitingSessionIds(data.waitingSessionIds);
+  }, RUNNING_SESSIONS_POLL_MS), [applyWaitingSessionIds, applyReadState, applyPinState]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
-    const completedInBackground = [...previous].filter((id) => !runningSessionIds.has(id) && id !== selectedSessionId);
-    if (completedInBackground.length > 0) {
-      loadSessions(false);
-    }
+    const changed = previous.size !== runningSessionIds.size || [...previous].some((id) => !runningSessionIds.has(id));
+    if (changed) void loadSessions(false, { quiet: true });
 
     previousRunningSessionIdsRef.current = runningSessionIds;
   }, [runningSessionIds, selectedSessionId, loadSessions]);
