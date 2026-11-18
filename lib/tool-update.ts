@@ -15,7 +15,8 @@ const SERVICE = "omp-web.service";
 const SYSTEMCTL = "/usr/bin/systemctl";
 const MAX_OUTPUT = 16_384;
 const UPDATE_TIMEOUT = 20 * 60_000;
-type Job = Omit<ToolUpdateStatus, "available" | "unavailableReason"> & { invocation: string; pid: number };
+const RESTART_CONFIRM_TIMEOUT = 120_000;
+type Job = Omit<ToolUpdateStatus, "available" | "unavailableReason"> & { invocation: string; pid: number; restartRequestedAt?: number };
 
 declare global {
   var __ompWebToolUpdateStarting: boolean | undefined;
@@ -71,11 +72,17 @@ function ownerAlive(pid: number): boolean {
 
 function observedJob(job: Job | undefined, reason: string | undefined): Omit<ToolUpdateStatus, "available"> | undefined {
   if (!job) return undefined;
-  const { invocation, pid, ...status } = job;
+  const { invocation, pid, restartRequestedAt, ...status } = job;
   const newInvocation = Boolean(process.env.INVOCATION_ID && process.env.INVOCATION_ID !== invocation);
   // A disconnected browser or queued restart is not a successful update.
-  if (!reason && status.phase === "restarting" && newInvocation) status.phase = "succeeded";
-  else if (status.phase === "updating" && (newInvocation || !ownerAlive(pid))) {
+  if (status.phase === "restarting") {
+    if (!reason && newInvocation) status.phase = "succeeded";
+    else if (process.env.INVOCATION_ID === invocation && typeof restartRequestedAt === "number"
+      && Date.now() - restartRequestedAt >= RESTART_CONFIRM_TIMEOUT) {
+      status.phase = "failed";
+      status.error = "Software updated, but the web service restart was not confirmed within two minutes. Check omp-web.service before retrying.";
+    }
+  } else if (status.phase === "updating" && (newInvocation || !ownerAlive(pid))) {
     status.phase = "failed";
     status.error = "The web process stopped during the update. Inspect the installation before retrying; no automatic retry was performed.";
   }
@@ -171,8 +178,15 @@ async function performUpdate(plan: ToolUpdatePlan, job: Job, release: () => Prom
     // Recheck the selected launcher after install; never validate another CLI.
     job.currentVersion = await version(plan, env);
     job.phase = "restarting";
+    job.restartRequestedAt = Date.now();
     assertLock(); saveJob(job);
-    await exec(SYSTEMCTL, ["--system", "--no-ask-password", "--no-block", "restart", SERVICE], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
+    try {
+      await exec(SYSTEMCTL, ["--system", "--no-ask-password", "--no-block", "restart", SERVICE], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
+    } catch (error) {
+      // systemctl belongs to the unit it is restarting. systemd can SIGTERM it
+      // before it acknowledges the queued job. Leave confirmation to observedJob.
+      if ((error as { signal?: string } | null)?.signal !== "SIGTERM") throw error;
+    }
   } catch (error) {
     job.phase = "failed";
     job.error = error instanceof Error ? error.message : String(error);

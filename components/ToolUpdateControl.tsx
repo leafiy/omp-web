@@ -190,6 +190,7 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
           : job?.phase === "updating" ? (zh ? `正在更新 ${TOOL_LABELS[job.tool]}…` : `Updating ${TOOL_LABELS[job.tool]}…`)
           : job?.phase === "restarting" ? (zh ? "软件已更新，等待网页重启…" : "Software updated. Waiting for the web service to restart…")
           : job?.phase === "succeeded" ? (zh ? `${TOOL_LABELS[job.tool]} 上次更新已完成。` : `${TOOL_LABELS[job.tool]} was updated successfully.`)
+          : job?.phase === "failed" && job.currentVersion ? (zh ? `${TOOL_LABELS[job.tool]} 已更新，但当时未能确认网页重启。` : `${TOOL_LABELS[job.tool]} was updated, but the web service restart was not confirmed.`)
           : job?.phase === "failed" ? (zh ? "更新失败" : "Update failed")
           : null}
       </div>
