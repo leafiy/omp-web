@@ -218,8 +218,12 @@ const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
 const AGENT_STATE_RECONCILE_MS = 5_000;
+const EVENT_STREAM_STALE_MS = 75_000; // Allow two missed 30s heartbeats plus jitter.
 const BASH_STATE_RECONCILE_MS = 1_000;
-const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
+// An active /events request can resume a cold native session before sending
+// `connected`. Allow for a 60s native startup step plus transport overhead.
+// Passive observers only attach to an existing process and can fail fast.
+const EVENT_STREAM_CONNECT_TIMEOUT_MS = { resume: 75_000, observe: 5_000 } as const;
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
@@ -489,6 +493,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventSourceSessionIdRef = useRef<string | null>(null);
+  const lastStreamEventAtRef = useRef(0);
   const eventConnectionAttemptRef = useRef<EventStreamConnectionAttempt | null>(null);
   const eventStreamGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventStreamGraceGenerationRef = useRef(0);
@@ -850,12 +855,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         resolve({ status, source: es });
       };
-      const timeout = setTimeout(() => settle("timeout"), EVENT_STREAM_CONNECT_TIMEOUT_MS);
+      const timeoutMs = observeOnly ? EVENT_STREAM_CONNECT_TIMEOUT_MS.observe : EVENT_STREAM_CONNECT_TIMEOUT_MS.resume;
+      const timeout = setTimeout(() => settle("timeout"), timeoutMs);
 
       es.onmessage = (e) => {
         if (eventSourceRef.current !== es || sessionIdRef.current !== sid) return;
         try {
           const event = JSON.parse(e.data) as AgentEvent;
+          lastStreamEventAtRef.current = Date.now();
+          if (event.type === "heartbeat") return; // Transport only, not an agent event.
           if (event.type === "connected") {
             historySyncNeededRef.current = true;
             settle("connected");
@@ -1218,7 +1226,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // finish a whole turn while this tab is open. GET never starts an agent, and
   // observer SSE must not revive an agent that exited between GET and attach.
   const reconcileAgentState = useCallback(async (sid: string, signal: AbortSignal, recovered: boolean) => {
-    const runId = promptRunIdRef.current, eventRevision = agentEventRevisionRef.current;
+    let runId = promptRunIdRef.current;
+    const eventRevision = agentEventRevisionRef.current;
     const modelRevision = contextRevisionRef.current, thinkingRevision = thinkingChangeRevisionRef.current;
     const current = () => mountedRef.current && !signal.aborted && sessionIdRef.current === sid
       && promptRunIdRef.current === runId && agentEventRevisionRef.current === eventRevision
@@ -1242,7 +1251,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!busy && localPromptRequestInFlightRef.current && optimisticUserMessageRef.current) return;
       const discoveredRun = busy && !agentRunningRef.current;
       if (discoveredRun) {
-        promptRunIdRef.current++;
+        runId = ++promptRunIdRef.current;
         completionRevisionRef.current++;
         sdkAgentActiveRef.current = Boolean(state?.isStreaming || state?.isCompacting);
         rpcPromptPendingRef.current = Boolean(state?.isPromptRunning);
@@ -1258,12 +1267,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       if (busy || hasActiveTasks(state?.tasks) || (state?.webFollowUpPending ?? 0) > 0) {
         cancelEventStreamGrace();
-        // A foreground recovery also repairs an OPEN but half-dead connection.
-        // Never replace a connection attempt a local send is awaiting.
-        if (recovered && !eventConnectionAttemptRef.current?.pending) closeEvents();
+        // A stalled mobile connection can stay OPEN without firing error/online.
+        // Check liveness on the existing poll; never interrupt a pending handshake.
+        const silent = eventSourceRef.current?.readyState === EventSource.OPEN
+          && Date.now() - lastStreamEventAtRef.current >= EVENT_STREAM_STALE_MS;
+        if ((recovered || silent) && !eventConnectionAttemptRef.current?.pending) closeEvents();
         const attaching = !eventSourceRef.current || eventSourceRef.current.readyState !== EventSource.OPEN;
-        await ensureEventsConnected(sid, true);
-        if (signal.aborted || !mountedRef.current || sessionIdRef.current !== sid) return;
+        try {
+          await ensureEventsConnected(sid, true);
+        } catch {
+          if (!current()) return;
+          taskStatusStaleRef.current = true;
+          setTaskStatusStale(true);
+          // Short HTTP reads may still succeed when the streaming endpoint fails.
+          historySyncNeededRef.current = true;
+        }
+        if (!current()) return;
         if (!optimisticUserMessageRef.current && (discoveredRun || attaching || recovered || historySyncNeededRef.current)) await loadSession(sid, false, false, signal);
         if (!busy) scheduleEventStreamClose(sid);
       } else if (agentRunningRef.current) {

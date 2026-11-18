@@ -64,10 +64,11 @@ export async function GET(
         if (clientEvent) encode(clientEvent);
       });
 
-      // Heartbeat every 30s to prevent server/proxy timeout (Next.js default ~120-150s)
+      // A data frame keeps intermediaries alive AND lets a visible tab detect a
+      // half-open stream. EventSource doesn't expose SSE comments to JavaScript.
       const heartbeat = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(":\n\n"));
+          encode({ type: "heartbeat" });
         } catch {
           // controller already closed
         }
