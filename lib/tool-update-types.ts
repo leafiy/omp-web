@@ -1,5 +1,6 @@
 export const TOOL_IDS = ["pi", "omp", "claude", "codex"] as const;
 export type UpdatableTool = typeof TOOL_IDS[number];
+export type UpdateTarget = UpdatableTool | "all";
 export const TOOL_LABELS: Record<UpdatableTool, string> = {
   pi: "Pi", omp: "OMP", claude: "Claude Code (CC)", codex: "Codex",
 };
@@ -7,6 +8,7 @@ export type ToolUpdatePhase = "idle" | "updating" | "restarting" | "succeeded" |
 
 export interface ToolUpdateStatus {
   tool: UpdatableTool;
+  batch?: boolean;
   available: boolean;
   unavailableReason?: string;
   executable?: string;
@@ -32,10 +34,10 @@ export function isUpdatableTool(value: unknown): value is UpdatableTool {
 }
 
 /** Fixed target + explicit confirmation only. Never accept commands or paths. */
-export function parseToolUpdateRequest(body: unknown): UpdatableTool {
+export function parseToolUpdateRequest(body: unknown): UpdateTarget {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Expected {tool, confirm:true}");
   const value = body as Record<string, unknown>;
-  if (value.confirm !== true || !isUpdatableTool(value.tool)
+  if (value.confirm !== true || (value.tool !== "all" && !isUpdatableTool(value.tool))
     || Object.keys(value).length !== 2) throw new Error("Expected {tool, confirm:true}; commands and paths are not accepted");
   return value.tool;
 }

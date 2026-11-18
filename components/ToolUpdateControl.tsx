@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdatableTool } from "@/lib/tool-update-types";
+import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdateTarget } from "@/lib/tool-update-types";
 import { InlineConfirmation } from "./InlineConfirmation";
 
 const WATCHED_JOB_KEY = "omp-web:tool-update-job";
 const active = (job: ToolUpdateStatus | null | undefined) => job?.phase === "updating" || job?.phase === "restarting";
+
+function available(target: UpdateTarget, snapshot: ToolUpdatesSnapshot | null) {
+  return snapshot?.tools.some(t => t.available && (target === "all" || t.tool === target)) ?? false;
+}
 
 function validStatus(value: unknown): value is ToolUpdateStatus {
   if (!value || typeof value !== "object") return false;
@@ -30,14 +34,14 @@ async function readSnapshot(response: Response): Promise<ToolUpdatesSnapshot> {
 export function ToolUpdateControl({ zh }: { zh: boolean }) {
   const [snapshot, setSnapshot] = useState<ToolUpdatesSnapshot | null>(null);
   const [checking, setChecking] = useState(true);
-  const [submitting, setSubmitting] = useState<UpdatableTool | null>(null);
-  const [confirmationTool, setConfirmationTool] = useState<UpdatableTool | null>(null);
+  const [submitting, setSubmitting] = useState<UpdateTarget | null>(null);
+  const [confirmationTool, setConfirmationTool] = useState<UpdateTarget | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [waitingLong, setWaitingLong] = useState(false);
   const [reloading, setReloading] = useState(false);
-  const actions = useRef<{ check: () => void; start: (tool: UpdatableTool) => void } | null>(null);
+  const actions = useRef<{ check: () => void; start: (tool: UpdateTarget) => void } | null>(null);
 
   useEffect(() => {
     let disposed = false, inFlight = false, connected = false, reloadStarted = false;
@@ -64,7 +68,7 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
       window.clearTimeout(pollTimer);
       if (!disposed && !reloadStarted) pollTimer = window.setTimeout(() => { void check(); }, 2000);
     }
-    async function request(tool?: UpdatableTool) {
+    async function request(tool?: UpdateTarget) {
       const current = new AbortController();
       controller = current;
       requestTimer = window.setTimeout(() => current.abort(), 12_000);
@@ -107,9 +111,9 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
         if (!disposed) { setChecking(false); if (again) schedule(); }
       }
     }
-    async function start(tool: UpdatableTool) {
+    async function start(tool: UpdateTarget) {
       if (disposed || inFlight || !connected || reloadStarted || active(last?.job)
-        || !last?.tools.find((t) => t.tool === tool)?.available) return;
+        || !available(tool, last)) return;
       window.clearTimeout(pollTimer); inFlight = true;
       setSubmitting(tool); setSubmissionError(null); waitingSince = Date.now(); setWaitingLong(false);
       let again = false;
@@ -140,28 +144,35 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
   const blocked = checking || submitting !== null || busy || reconnecting || reloading;
   const buttonStyle = { padding: "7px 14px", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-panel)", color: "var(--text)", fontSize: 13 };
 
-  function confirmationMessage(tool: UpdatableTool) {
+  function confirmationMessage(tool: UpdateTarget) {
+    if (tool === "all") {
+      const names = snapshot?.tools.filter(t => t.available).map(t => TOOL_LABELS[t.tool]).join(", ");
+      return zh ? `将依次更新 ${names}，跳过不可用的工具。失败时停止；全部完成后重启一次网页服务，中断运行中的聊天和终端。` : `Update ${names} in order, skipping unavailable tools. Stop on failure; on success, restart the web service once, interrupting running chats and terminals.`;
+    }
     const label = TOOL_LABELS[tool];
     return zh
       ? `更新 ${label} 后将重启网页，中断所有运行中的聊天和终端。`
       : `Updating ${label} restarts the web service and interrupts all running chats and terminals.`;
   }
 
-  function confirmUpdate(tool: UpdatableTool) {
-    if (!blocked && snapshot?.tools.find((item) => item.tool === tool)?.available) setConfirmationTool(tool);
+  function confirmUpdate(tool: UpdateTarget) {
+    if (!blocked && available(tool, snapshot)) setConfirmationTool(tool);
   }
 
   return (
     <section aria-labelledby="software-updates-title" aria-busy={checking || submitting !== null || busy}>
       <h3 id="software-updates-title" style={{ margin: "18px 0 6px", fontSize: 15, fontWeight: 600 }}>{zh ? "软件更新" : "Software updates"}</h3>
+      <button type="button" disabled={blocked || !available("all", snapshot)} onClick={() => confirmUpdate("all")} style={{ ...buttonStyle, marginBottom: 8 }}>
+        {zh ? "一键升级所有可用工具" : "Update all available tools"}
+      </button>
       {confirmationTool && <InlineConfirmation key={confirmationTool}
-        title={zh ? `确认更新 ${TOOL_LABELS[confirmationTool]}` : `Confirm ${TOOL_LABELS[confirmationTool]} update`}
+        title={confirmationTool === "all" ? (zh ? "确认升级所有可用工具" : "Confirm update of all available tools") : zh ? `确认更新 ${TOOL_LABELS[confirmationTool]}` : `Confirm ${TOOL_LABELS[confirmationTool]} update`}
         message={confirmationMessage(confirmationTool)} confirmLabel={zh ? "确认更新并重启" : "Confirm update and restart"} cancelLabel={zh ? "取消" : "Cancel"}
-        confirmDisabled={blocked || !snapshot?.tools.find((item) => item.tool === confirmationTool)?.available}
+        confirmDisabled={blocked || !available(confirmationTool, snapshot)}
         onCancel={() => setConfirmationTool(null)} onConfirm={() => {
           const tool = confirmationTool;
           setConfirmationTool(null);
-          if (!blocked && snapshot?.tools.find((item) => item.tool === tool)?.available) actions.current?.start(tool);
+          if (!blocked && available(tool, snapshot)) actions.current?.start(tool);
         }} />}
       <div style={{ display: "grid", gap: 8 }}>
         {TOOL_IDS.map((tool) => {
@@ -189,6 +200,8 @@ export function ToolUpdateControl({ zh }: { zh: boolean }) {
           : !snapshot ? (zh ? "正在读取软件信息…" : "Reading software information…")
           : job?.phase === "updating" ? (zh ? `正在更新 ${TOOL_LABELS[job.tool]}…` : `Updating ${TOOL_LABELS[job.tool]}…`)
           : job?.phase === "restarting" ? (zh ? "软件已更新，等待网页重启…" : "Software updated. Waiting for the web service to restart…")
+          : job?.phase === "succeeded" && job.batch ? (zh ? "所有可用工具已更新。" : "All available tools were updated.")
+          : job?.phase === "failed" && job.batch && !job.currentVersion ? (zh ? `批量升级在 ${TOOL_LABELS[job.tool]} 处停止，请查看更新日志。` : `Batch update stopped at ${TOOL_LABELS[job.tool]}. See the update log.`)
           : job?.phase === "succeeded" ? (zh ? `${TOOL_LABELS[job.tool]} 上次更新已完成。` : `${TOOL_LABELS[job.tool]} was updated successfully.`)
           : job?.phase === "failed" && job.currentVersion ? (zh ? `${TOOL_LABELS[job.tool]} 已更新，但当时未能确认网页重启。` : `${TOOL_LABELS[job.tool]} was updated, but the web service restart was not confirmed.`)
           : job?.phase === "failed" ? (zh ? "更新失败" : "Update failed")

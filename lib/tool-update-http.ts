@@ -1,4 +1,4 @@
-import { parseToolUpdateRequest, type ToolUpdatesSnapshot, type UpdatableTool } from "./tool-update-types";
+import { parseToolUpdateRequest, type ToolUpdatesSnapshot, type UpdateTarget } from "./tool-update-types";
 import { ToolUpdateError } from "./tool-update";
 import { hasJsonContentType, isApiRequestAllowed } from "./request-security";
 import { isRequestAuthenticated, webAuthRequired } from "./web-auth";
@@ -6,7 +6,7 @@ import { isRequestAuthenticated, webAuthRequired } from "./web-auth";
 const headers = { "Cache-Control": "no-store" };
 type UpdateService = {
   getStatus: () => ToolUpdatesSnapshot | Promise<ToolUpdatesSnapshot>;
-  start: (tool: UpdatableTool) => Promise<ToolUpdatesSnapshot>;
+  start: (tool: UpdateTarget) => Promise<ToolUpdatesSnapshot>;
 };
 
 /** HTTP policy is testable without ever invoking a real software updater. */
@@ -31,9 +31,9 @@ export function createToolUpdateHandlers(service: UpdateService) {
       const denied = guard(req);
       if (denied) return denied;
       if (!hasJsonContentType(req)) return Response.json({ error: "Expected JSON" }, { status: 415, headers });
-      let tool: UpdatableTool;
+      let tool: UpdateTarget;
       try { tool = parseToolUpdateRequest(await req.json()); }
-      catch { return Response.json({ error: "Confirm one of pi, omp, claude or codex with {tool, confirm:true}." }, { status: 400, headers }); }
+      catch { return Response.json({ error: "Confirm one of pi, omp, claude, codex or all with {tool, confirm:true}." }, { status: 400, headers }); }
       try { return Response.json(await service.start(tool), { status: 202, headers }); }
       catch (error) { return failure(error); }
     },

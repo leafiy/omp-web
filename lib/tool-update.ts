@@ -8,7 +8,7 @@ import lockfile from "proper-lockfile";
 import { readToolInstalledVersion } from "./tool-version";
 import { discoverAgent } from "./agent-executable";
 import { resolveToolUpdatePlan, updateEnvironment, validToolVersion, type ToolUpdatePlan } from "./tool-update-plan";
-import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdatableTool } from "./tool-update-types";
+import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdateTarget } from "./tool-update-types";
 
 const exec = promisify(execFile);
 const SERVICE = "omp-web.service";
@@ -168,15 +168,23 @@ async function runUpdate(plan: ToolUpdatePlan, env: NodeJS.ProcessEnv, job: Job,
   return promise;
 }
 
-async function performUpdate(plan: ToolUpdatePlan, job: Job, release: () => Promise<void>, assertLock: () => void): Promise<void> {
+async function performUpdate(plans: ToolUpdatePlan[], job: Job, release: () => Promise<void>, assertLock: () => void): Promise<void> {
   try {
-    const env = updateEnvironment(plan);
-    job.previousVersion = await version(plan, env);
-    assertLock(); saveJob(job);
-    await runUpdate(plan, env, job, assertLock);
-    assertLock();
-    // Recheck the selected launcher after install; never validate another CLI.
-    job.currentVersion = await version(plan, env);
+    for (const plan of plans) {
+      assertLock();
+      job.tool = plan.tool;
+      delete job.previousVersion;
+      delete job.currentVersion;
+      if (job.batch) job.output = `${job.output}\n[${TOOL_LABELS[plan.tool]}]\n`.slice(-MAX_OUTPUT);
+      saveJob(job);
+      const env = updateEnvironment(plan);
+      job.previousVersion = await version(plan, env);
+      assertLock(); saveJob(job);
+      await runUpdate(plan, env, job, assertLock);
+      assertLock();
+      job.currentVersion = await version(plan, env);
+      if (job.batch) job.output = `${job.output}\n${job.previousVersion} → ${job.currentVersion}\n`.slice(-MAX_OUTPUT);
+    }
     job.phase = "restarting";
     job.restartRequestedAt = Date.now();
     assertLock(); saveJob(job);
@@ -198,8 +206,8 @@ async function performUpdate(plan: ToolUpdatePlan, job: Job, release: () => Prom
   }
 }
 
-export async function startToolUpdate(tool: UpdatableTool): Promise<ToolUpdatesSnapshot> {
-  if (!isUpdatableTool(tool)) throw new ToolUpdateError("Unknown software update target.", 400);
+export async function startToolUpdate(tool: UpdateTarget): Promise<ToolUpdatesSnapshot> {
+  if (tool !== "all" && !isUpdatableTool(tool)) throw new ToolUpdateError("Unknown software update target.", 400);
   if (globalThis.__ompWebToolUpdateStarting) throw new ToolUpdateError("Another software update is already running.", 409);
   globalThis.__ompWebToolUpdateStarting = true;
   let release: (() => Promise<void>) | undefined;
@@ -217,17 +225,19 @@ export async function startToolUpdate(tool: UpdatableTool): Promise<ToolUpdatesS
     }
     const current = observedJob(readJob(), reason);
     if (current?.phase === "updating" || current?.phase === "restarting") throw new ToolUpdateError("An update or service restart is already running.", 409);
-    let plan: ToolUpdatePlan;
-    try { plan = resolveToolUpdatePlan(tool); }
+    const targets = tool === "all" ? getToolUpdates().tools.filter(t => t.available).map(t => t.tool) : [tool];
+    if (!targets.length) throw new ToolUpdateError("No tools are available to update.", 503);
+    let plans: ToolUpdatePlan[];
+    try { plans = targets.map(id => resolveToolUpdatePlan(id)); }
     catch (error) { throw new ToolUpdateError(error instanceof Error ? error.message : String(error), 503); }
     const { stdout } = await exec(SYSTEMCTL, ["--system", "--no-ask-password", "show", SERVICE, "--property=InvocationID", "--value"], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
     if (stdout.trim() !== process.env.INVOCATION_ID) throw new ToolUpdateError("Refusing to restart a different systemd service instance.", 503);
     if (lockError) throw lockError;
-    const job: Job = { tool, id: randomUUID(), phase: "updating", startedAt: new Date().toISOString(), output: "", invocation: process.env.INVOCATION_ID!, pid: process.pid };
+    const job: Job = { tool: plans[0].tool, batch: tool === "all", id: randomUUID(), phase: "updating", startedAt: new Date().toISOString(), output: "", invocation: process.env.INVOCATION_ID!, pid: process.pid };
     saveJob(job);
     globalThis.__ompWebToolUpdateJob = job;
     handedOff = true;
-    void performUpdate(plan, job, release, () => { if (lockError) throw lockError; });
+    void performUpdate(plans, job, release, () => { if (lockError) throw lockError; });
     return getToolUpdates();
   } finally {
     if (!handedOff) {
