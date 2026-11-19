@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   getFileExt,
+  getVideoMime,
   isAudioPath,
   isDocumentPreviewPath,
   isImagePath,
@@ -18,6 +19,7 @@ import {
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
+import { TextFileEditor } from "./TextFileEditor";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
@@ -34,6 +36,7 @@ interface Props {
 }
 
 interface FileData {
+  editVersion?: string;
   page: number;
   pages: number;
   content: string;
@@ -405,11 +408,20 @@ function DiffView({ patch }: { patch: string }) {
   );
 }
 
+function MediaLoadStatus({ cancelled, toggle }: { cancelled: boolean; toggle: () => void }) {
+  const { t } = useI18n();
+  return <div role="status" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 6 }}>
+    {!cancelled && <><span className="file-preview-spinner" aria-hidden="true" />{t("i18n.loading")}</>}
+    <button type="button" onClick={toggle}>{t(cancelled ? "files.reloadPreview" : "i18n.cancel")}</button>
+  </div>;
+}
+
 function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -437,6 +449,8 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         const d = JSON.parse((e as MessageEvent).data) as { size?: number };
         if (typeof d.size === "number") setSize(d.size);
       } catch { /* ignore */ }
+      setError(null);
+      setNaturalSize(null);
       setBust((b) => b + 1);
     });
     es.addEventListener("error", () => setWatching(false));
@@ -506,19 +520,22 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
           backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px",
         }}
       >
+        {!error && !naturalSize && <MediaLoadStatus cancelled={cancelled} toggle={() => setCancelled(v => !v)} />}
         {error ? (
-          <div style={{ color: "#f87171", fontSize: 13 }}>{error}</div>
-        ) : (
+          <div role="alert" style={{ color: "var(--text-muted)", fontSize: 13 }}>{error}</div>
+        ) : !cancelled && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
+            key={src}
             src={src}
             alt={filePath}
             onLoad={(e) => {
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
             }}
-            onError={() => setError("Failed to load image")}
+            onError={() => setError(t("files.mediaUnavailable"))}
             style={{
+              display: naturalSize ? "block" : "none",
               maxWidth: "100%",
               maxHeight: "100%",
               objectFit: "contain",
@@ -539,7 +556,9 @@ function formatDuration(seconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
+function PlaybackViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const Player = getVideoMime(filePath) ? "video" : "audio";
+  const [cancelled, setCancelled] = useState(false);
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
@@ -631,25 +650,29 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: 24,
+          padding: 16,
+          minHeight: 0,
           background: "var(--bg-panel)",
         }}
       >
-        <div style={{ width: "min(680px, 100%)" }}>
+        <div style={{ width: Player === "video" ? "100%" : "min(680px, 100%)", maxHeight: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {!error && duration === null && <MediaLoadStatus cancelled={cancelled} toggle={() => setCancelled(v => !v)} />}
           {error && (
             <div style={{ color: "#f87171", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
               {error}
             </div>
           )}
-          <audio
+          {!cancelled && <Player
             key={src}
+            playsInline
+            aria-label={getFileName(filePath)}
             controls
             preload="metadata"
             src={src}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError("Failed to load audio")}
-            style={{ width: "100%" }}
-          />
+            onError={() => setError(t("files.mediaUnavailable"))}
+            style={{ width: "100%", minHeight: 0, objectFit: "contain" }}
+          />}
         </div>
       </div>
     </div>
@@ -780,10 +803,10 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
 
 export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode }: Props) {
   if (isImagePath(filePath)) {
-    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
+    return <ImageViewer key={JSON.stringify([filePath, sourceSessionId])} filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  if (isAudioPath(filePath)) {
-    return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
+  if (isAudioPath(filePath) || getVideoMime(filePath)) {
+    return <PlaybackViewer key={JSON.stringify([filePath, sourceSessionId])} filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
@@ -795,6 +818,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const { t } = useI18n();
   const { codeStyle, codeBg } = useCodeTheme();
   const [data, setData] = useState<FileData | null>(null);
+  const [editing, setEditing] = useState<(FileData & { editVersion: string }) | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -989,6 +1013,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [displayMode, mentionLineRange, onMentionLines]);
 
+  // Pin the editable snapshot. Watch notifications must not replace a draft or its base version.
+  if (editing) return <TextFileEditor path={filePath} url={`/api/files/${encodeFilePathForApi(filePath)}`}
+    content={editing.content} version={editing.editVersion} language={editing.language}
+    onClose={saved => { setEditing(null); if (saved) { setLoading(true); setRevision(v => v + 1); void fetchGitDiff(filePath); } }} />;
+
   if (cancelled || loading || (initialDisplayMode === "diff" && gitDiffLoading && !data)) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
@@ -1069,7 +1098,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
             <span>{data.page + 1}/{data.pages}</span>
             <button aria-label={t("files.nextPage")} disabled={data.page + 1 >= data.pages} onClick={() => setPage(data.page + 1)}>›</button>
           </>}
-          {displayModes.length > 1 && (
+          {(displayModes.length > 1 || data?.editVersion) && (
             <div className="file-viewer-mode-switch" aria-label={t("i18n.fileViewMode")}>
               {displayModes.map((mode) => {
                 const active = effectiveDisplayMode === mode;
@@ -1090,6 +1119,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                   </button>
                 );
               })}
+              {!isDeletedDiff && data?.editVersion && <button type="button" className="file-viewer-mode-button"
+                onClick={() => setEditing({ ...data, editVersion: data.editVersion! })}>{t("files.editText")}</button>}
             </div>
           )}
 

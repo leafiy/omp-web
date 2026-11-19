@@ -995,6 +995,14 @@ span.linenumber {
   50% { opacity: 0.3; }
 }
 
+.text-file-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--text); background: var(--bg); }
+.text-file-editor-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.text-file-editor-tools > span:first-child { flex: 1 1 120px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px var(--font-mono); }
+.text-file-editor-tools button { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; }
+.text-file-editor-tools button:disabled { opacity: .5; }
+.text-file-editor textarea { flex: 1; min-height: 0; width: 100%; padding: 12px; resize: none; color: var(--text); background: var(--bg); font: 13px/1.6 var(--font-mono); tab-size: 2; }
+.text-file-editor [role=alert] { padding: 6px 10px; color: var(--text); background: var(--bg-selected); }
+
 .file-preview-spinner {
   width: 1em;
   height: 1em;

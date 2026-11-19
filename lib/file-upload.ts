@@ -52,10 +52,11 @@ export function pinUploadDirectory(directory: string) {
 }
 
 /** Publish a complete file exclusively, or atomically replace an explicitly confirmed regular file. */
-export function writeUploadFile(directory: string, name: string, bytes: Buffer, strategy: UploadConflictStrategy): "uploaded" | "skipped" {
+export function writeUploadFile(directory: string, name: string, bytes: Buffer, strategy: UploadConflictStrategy, checkExisting?: (entry?: fs.Stats) => void): "uploaded" | "skipped" {
   const destination = path.join(directory, name), temporary = path.join(directory, `.omp-web-upload-${randomUUID()}`);
   let existing: fs.Stats | undefined;
   try { existing = fs.lstatSync(destination); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  checkExisting?.(existing);
   if (existing && strategy === "skip") return "skipped";
   if (existing && strategy !== "overwrite") throw new Error("File already exists");
   if (existing && !existing.isFile()) throw new Error("Cannot replace a directory or symbolic link");
@@ -63,6 +64,7 @@ export function writeUploadFile(directory: string, name: string, bytes: Buffer, 
   const identity = fs.fstatSync(fd);
   try {
     fs.writeFileSync(fd, bytes);
+    if (checkExisting && existing) fs.fchmodSync(fd, existing.mode & 0o777);
     if (existing) {
       const current = fs.lstatSync(destination);
       if (!current.isFile() || current.dev !== existing.dev || current.ino !== existing.ino || current.mtimeMs !== existing.mtimeMs || current.ctimeMs !== existing.ctimeMs) throw new Error("Upload target changed; refresh and confirm again");

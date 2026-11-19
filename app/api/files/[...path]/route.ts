@@ -10,13 +10,11 @@ import {
 } from "@/lib/file-access";
 import {
   DOCX_PREVIEW_MAX_BYTES,
-  IMAGE_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_MAX_BYTES,
   documentPreviewKind,
-  getAudioMime,
   getDocumentMime,
   getFileExt,
-  getImageMime,
+  getMediaMime,
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
@@ -53,13 +51,15 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
   html: "html", htm: "html", css: "css", scss: "css", less: "css",
   json: "json", jsonl: "json", yaml: "yaml", yml: "yaml",
-  toml: "toml", xml: "xml", md: "markdown", mdx: "markdown",
+  toml: "toml", xml: "xml", md: "markdown", mdx: "markdown", markdown: "markdown",
   sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
   sql: "sql", graphql: "graphql", gql: "graphql",
   dockerfile: "dockerfile", tf: "hcl", hcl: "hcl",
   env: "bash", gitignore: "bash", txt: "text",
   pdf: "pdf", docx: "word",
 };
+
+const editableName = (name: string) => /\.(?:md|mdx|markdown|txt|js|jsx|mjs|cjs|ts|tsx|json|jsonl|css|scss|html?|ya?ml|toml|xml|py|sh|sql|csv|ini|conf)$/i.test(name);
 
 function getLanguage(filePath: string): string {
   const base = path.basename(filePath).toLowerCase();
@@ -134,11 +134,37 @@ export async function POST(
 
   try {
     const { path: segments } = await params;
-    const uploadDirectory = await getUploadDirectory(segments);
+    const type = request.nextUrl.searchParams.get("type") ?? "upload";
+    const editing = type === "edit" || type === "format";
+    const uploadDirectory = await getUploadDirectory(editing ? segments.slice(0, -1) : segments);
     if ("response" in uploadDirectory) return uploadDirectory.response;
     pinned = pinUploadDirectory(uploadDirectory.directory);
     const { directory } = pinned;
-    const type = request.nextUrl.searchParams.get("type") ?? "upload";
+    if (editing) {
+      const name = segments.at(-1) ?? "";
+      if (validateUploadFileNames([name]) || !editableName(name) || segments.includes(".git") || uploadDirectory.directory.split(path.sep).includes(".git")) {
+        return NextResponse.json({ error: "Not editable" }, { status: 403 });
+      }
+      const form = await parseFormDataWithinLimit(request, TEXT_PREVIEW_MAX_BYTES + 4096);
+      const draft = form.get("draft");
+      if (!(draft instanceof Blob) || draft.size > TEXT_PREVIEW_MAX_BYTES) return NextResponse.json({ error: "Invalid draft size" }, { status: 413 });
+      const bytes = Buffer.from(await draft.arrayBuffer());
+      if (bytes.includes(0) || !Buffer.from(bytes.toString("utf8")).equals(bytes)) return NextResponse.json({ error: "Not UTF-8 text" }, { status: 422 });
+      if (type === "format") {
+        const { formatFileText } = await import("@/lib/format-file-text");
+        try {
+          const content = await formatFileText(name, bytes.toString("utf8"));
+          if (Buffer.byteLength(content) > TEXT_PREVIEW_MAX_BYTES) throw new Error("Formatted draft too large");
+          return NextResponse.json({ content });
+        } catch { return NextResponse.json({ error: "Cannot format draft" }, { status: 422 }); }
+      }
+      pinned.assertCurrent();
+      const version = form.get("version");
+      writeUploadFile(directory, name, bytes, "overwrite", entry => {
+        if (!entry?.isFile() || entry.nlink !== 1 || entry.size > TEXT_PREVIEW_MAX_BYTES || fileEntryVersion(entry) !== version) throw new Error("Edit conflict");
+      });
+      return NextResponse.json({ saved: true });
+    }
 
     if (type === "upload-check") {
       const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
@@ -252,7 +278,9 @@ export async function POST(
       { status: errors.length > 0 ? 207 : 200 },
     );
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof RequestBodyTooLargeError ? 413 : message === "Edit conflict" || message.startsWith("Upload target changed") ? 409 : 500;
+    return NextResponse.json({ error: message }, { status });
   } finally {
     pinned?.close();
   }
@@ -268,6 +296,7 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
         if (closed) return;
         try {
           controller.enqueue(new Uint8Array(chunk));
+          if ((controller.desiredSize ?? 0) <= 0) fileStream.pause();
         } catch {
           closed = true;
           fileStream.destroy();
@@ -292,6 +321,9 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
         }
       });
     },
+    pull() {
+      if (!closed) fileStream.resume();
+    },
     cancel() {
       closed = true;
       fileStream.destroy();
@@ -315,6 +347,8 @@ function getContentDisposition(filePath: string, asDownload = false): string {
 function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
   const headers = {
     "Content-Type": contentType,
+    "X-Content-Type-Options": "nosniff",
+    ...(contentType === "image/svg+xml" ? { "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:" } : {}),
     "Cache-Control": "no-cache",
     "Accept-Ranges": "bytes",
     "Content-Disposition": getContentDisposition(filePath, asDownload),
@@ -476,21 +510,8 @@ export async function GET(
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const imageMime = getImageMime(filePath);
-      if (imageMime) {
-        if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
-          return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
-        }
-        return streamFile(filePath, stat, imageMime, request.headers.get("range"));
-      }
-      const audioMime = getAudioMime(filePath);
-      if (audioMime) {
-        return streamFile(filePath, stat, audioMime, request.headers.get("range"));
-      }
-      const documentMime = getDocumentMime(filePath);
-      if (documentMime) {
-        return streamFile(filePath, stat, documentMime, request.headers.get("range"));
-      }
+      const mime = getMediaMime(filePath) ?? getDocumentMime(filePath);
+      if (mime) return streamFile(filePath, stat, mime, request.headers.get("range"));
       const requestedPage = Number(request.nextUrl.searchParams.get("page") ?? 0);
       if (!Number.isSafeInteger(requestedPage) || requestedPage < 0) {
         return NextResponse.json({ error: "Invalid page" }, { status: 400 });
@@ -502,12 +523,17 @@ export async function GET(
       const buffer = Buffer.alloc(Math.min(stat.size - offset, TEXT_PREVIEW_MAX_BYTES + 3));
       const file = await fs.promises.open(filePath, "r");
       let length = 0;
+      let editVersion: string | undefined;
       try {
         while (length < buffer.length) {
           request.signal.throwIfAborted();
           const { bytesRead } = await file.read(buffer, length, buffer.length - length, offset + length);
           if (!bytesRead) break;
           length += bytesRead;
+        }
+        if (pages === 1 && allowedByRoot && editableName(filePath) && !filePath.split(path.sep).includes(".git") && stat.nlink === 1 && length === stat.size && !buffer.includes(0) && Buffer.from(buffer.toString("utf8")).equals(buffer)) {
+          const version = fileEntryVersion(stat);
+          if (fileEntryVersion(await file.stat()) === version && fileEntryVersion(fs.lstatSync(filePath)) === version && !fs.realpathSync(filePath).split(path.sep).includes(".git")) editVersion = version;
         }
       } finally {
         await file.close();
@@ -518,14 +544,16 @@ export async function GET(
         return next;
       };
       const content = buffer.toString("utf8", page ? boundary(0) : 0, boundary(TEXT_PREVIEW_MAX_BYTES));
-      return NextResponse.json({ content, language: getLanguage(filePath), size: stat.size, page, pages });
+      // A textarea normalizes line breaks. Don't offer a lossy save of mixed or classic Mac endings.
+      if (editVersion && content.includes("\r") && /\r(?!\n)|(?<!\r)\n/.test(content)) editVersion = undefined;
+      return NextResponse.json({ content, language: getLanguage(filePath), size: stat.size, page, pages, editVersion });
     }
 
     if (type === "download") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const mime = getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream";
+      const mime = getMediaMime(filePath) ?? getDocumentMime(filePath) ?? "application/octet-stream";
       return streamFile(filePath, stat, mime, request.headers.get("range"), true);
     }
 
@@ -533,13 +561,11 @@ export async function GET(
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
-      const documentMime = getDocumentMime(filePath);
+      const mime = getMediaMime(filePath) ?? getDocumentMime(filePath);
       return NextResponse.json({
         size: stat.size,
         language: getLanguage(filePath),
-        mime: imageMime || audioMime || documentMime || "text/plain",
+        mime: mime ?? "text/plain",
         previewKind: documentPreviewKind(filePath),
       });
     }
