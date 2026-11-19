@@ -23,9 +23,12 @@ function runningIconFrames(icon: HTMLImageElement): string[] {
     const breath = (1 - Math.cos(i * Math.PI / 6)) / 2;
     ctx.clearRect(0, 0, 32, 32);
     ctx.drawImage(icon, 0, 0, 32, 32);
-    circle(4 + 2 * breath, `rgba(98, 170, 137, ${0.16 + 0.14 * breath})`);
-    circle(3.4, "#244347");
-    circle(2.7 + 0.4 * breath, "#83c7a4");
+    // At 16px tab size, these radii become the visible badge diameters.
+    // Vary both area and luminance; a subpixel halo alone reads as a static dot.
+    const core = 2.5 + 2.5 * breath;
+    circle(core + 1.8, `rgba(98, 192, 137, ${0.18 + 0.2 * breath})`);
+    circle(core + 0.6, "#244347");
+    circle(core, `rgba(145, 238, 177, ${0.54 + 0.46 * breath})`);
     return canvas.toDataURL("image/png");
   });
 }
@@ -43,7 +46,7 @@ export function showRunningFavicon(): () => void {
   const animate = () => {
     clearInterval(timer);
     if (!frames.length) return;
-    let i = 0;
+    let i = frames.length / 2; // A still badge should be as legible as the peak of the pulse.
     link.href = frames[i];
     if (!motion.matches) timer = setInterval(() => {
       i = (i + 1) % frames.length;
