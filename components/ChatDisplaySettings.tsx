@@ -16,8 +16,8 @@ export function ChatDisplaySettings() {
       </label>
       <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
         {zh
-          ? "默认开启，记住此浏览器的选择。新消息和流式回复自动跟随到底部；手动滚动后暂停 1 分钟，再次滚动重新计时。到期只解除暂停，后续有新内容才跟随，不会打断静态历史阅读。关闭后，新消息不会改变阅读位置。"
-          : "On by default, remembered in this browser. Follow new messages and streaming replies. Manual scrolling pauses following for one minute; scrolling again restarts the timer. Expiry only allows subsequent new content to follow—it never moves you away from static history. When off, new messages do not move your reading position."}
+          ? "默认开启，记住此浏览器的选择。上翻查看历史时暂停跟随，继续翻阅会重新计时。手动滚到底部立即恢复；否则在最后一次滚动 1 分钟后恢复。只有新消息或流式更新才会带动滚动。关闭后，新消息不会改变阅读位置。"
+          : "On by default, remembered in this browser. Scrolling through history pauses following. Scroll back to the bottom to resume immediately, or wait one minute after your last scroll. Only new messages or streaming updates move the view. When off, new messages do not move your reading position."}
       </div>
     </section>
   );

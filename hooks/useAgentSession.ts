@@ -521,6 +521,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const completionScrollAllowedRef = useRef(true);
   const executeBashRef = useRef<((command: string, excludeFromContext: boolean) => Promise<boolean>) | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
+  const lastTouchYRef = useRef<number | undefined>(undefined);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2240,6 +2241,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     container?.scrollTo({ top: container.scrollHeight, behavior });
   }, []);
 
+  const resumeAutoScroll = useCallback(() => {
+    if (autoScrollResumeTimerRef.current !== null) clearTimeout(autoScrollResumeTimerRef.current);
+    autoScrollResumeTimerRef.current = null;
+    autoScrollPausedUntilRef.current = 0;
+    // Permit future updates to follow; resuming alone must not move the viewport.
+    completionScrollAllowedRef.current = true;
+  }, []);
+
   const pauseAutoScroll = useCallback(() => {
     completionScrollAllowedRef.current = false;
     const deadline = Date.now() + AUTO_SCROLL_PAUSE_MS;
@@ -2247,13 +2256,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);
     autoScrollResumeTimerRef.current = setTimeout(() => {
       if (!mountedRef.current || autoScrollPausedUntilRef.current !== deadline) return;
-      autoScrollResumeTimerRef.current = null;
-      autoScrollPausedUntilRef.current = 0;
-      // Expiry only permits future message updates to follow. Reading an idle
-      // transcript must never jump just because one minute passed.
-      completionScrollAllowedRef.current = true;
+      resumeAutoScroll();
     }, AUTO_SCROLL_PAUSE_MS);
-  }, []);
+  }, [resumeAutoScroll]);
+
+  const updateManualScrollPause = useCallback((movingUp = false) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // scrollTop can be fractional while the other two DOM metrics are rounded.
+    const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 1;
+    if (atBottom && (!movingUp || el.scrollHeight <= el.clientHeight)) resumeAutoScroll();
+    else pauseAutoScroll();
+  }, [pauseAutoScroll, resumeAutoScroll]);
 
   const markUserScrollIntent = useCallback((event: Event) => {
     if (event instanceof KeyboardEvent) {
@@ -2262,17 +2276,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
     ignoreProgrammaticScrollUntilRef.current = 0;
-    // Pause before the next token's layout effect can undo a scroll gesture.
-    if ((event instanceof WheelEvent && event.deltaY !== 0) || event.type === "touchmove"
-      || event instanceof KeyboardEvent) pauseAutoScroll();
-  }, [pauseAutoScroll]);
+    // Upward intent must pause before a queued token can pull the reader back.
+    // Downward overscroll at the bottom may not emit a scroll event at all.
+    if (event instanceof WheelEvent && event.deltaY !== 0) updateManualScrollPause(event.deltaY < 0);
+    else if (event instanceof KeyboardEvent) {
+      const movingUp = ["ArrowUp", "PageUp", "Home"].includes(event.key)
+        || (event.shiftKey && [" ", "Space", "Spacebar"].includes(event.key));
+      updateManualScrollPause(movingUp);
+    } else if (event.type === "touchstart" || event.type === "touchmove") {
+      const y = (event as TouchEvent).touches[0]?.clientY, previous = lastTouchYRef.current;
+      lastTouchYRef.current = y;
+      if (event.type === "touchmove" && y !== previous) {
+        updateManualScrollPause(y !== undefined && previous !== undefined && y > previous);
+      }
+    }
+  }, [updateManualScrollPause]);
 
   const handleScrollPositionChange = useCallback(() => {
     if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
     if (Date.now() > userScrollIntentUntilRef.current) return;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-    pauseAutoScroll();
-  }, [pauseAutoScroll]);
+    updateManualScrollPause();
+  }, [updateManualScrollPause]);
 
   useEffect(() => () => {
     if (autoScrollResumeTimerRef.current) clearTimeout(autoScrollResumeTimerRef.current);

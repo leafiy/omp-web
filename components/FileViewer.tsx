@@ -34,6 +34,8 @@ interface Props {
 }
 
 interface FileData {
+  page: number;
+  pages: number;
   content: string;
   language: string;
   size: number;
@@ -786,7 +788,7 @@ export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMenti
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} />;
+  return <TextFileViewer key={JSON.stringify([filePath, sourceSessionId])} filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} onMentionLines={onMentionLines} gitRefreshKey={gitRefreshKey} initialDisplayMode={initialDisplayMode} />;
 }
 
 function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionLines, gitRefreshKey, initialDisplayMode }: Props) {
@@ -805,23 +807,32 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
 
-  const fetchContent = useCallback((filePath: string) => {
-    return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
-      .then((r) => r.json())
-      .then((d: FileData & { error?: string }) => {
-        if (d.error) {
-          setError(d.error);
-          return null;
+  const [page, setPage] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const [cancelled, setCancelled] = useState(false);
+  const requestRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (cancelled) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch(getFileApiUrl(filePath, "read", sourceSessionId, { page }), { signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || response.statusText);
+        if (!controller.signal.aborted) {
+          setError(null);
+          setData(result);
         }
-        setError(null);
-        setData(d);
-        return d;
-      })
-      .catch((e) => {
-        setError(String(e));
-        return null;
-      });
-  }, [sourceSessionId]);
+      } catch (err) {
+        if (!controller.signal.aborted) setError(String(err));
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [filePath, sourceSessionId, page, revision, cancelled]);
 
   const fetchGitDiff = useCallback(async (targetPath: string) => {
     const requestId = ++gitDiffRequestRef.current;
@@ -847,9 +858,6 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
 
   // Initial load + SSE watch setup
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setData(null);
     setGitDiff(null);
     setDisplayMode("source");
     setWrapLines(false);
@@ -860,8 +868,6 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       esRef.current = null;
     }
 
-    fetchContent(filePath).finally(() => setLoading(false));
-
     // Set up SSE watch
     const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
@@ -871,7 +877,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     });
 
     es.addEventListener("change", () => {
-      void fetchContent(filePath);
+      setRevision(value => value + 1);
       void fetchGitDiff(filePath);
     });
 
@@ -887,17 +893,17 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId]);
+  }, [filePath, fetchGitDiff, sourceSessionId]);
 
   useEffect(() => {
     void fetchGitDiff(filePath);
   }, [fetchGitDiff, filePath, gitRefreshKey]);
 
   useEffect(() => {
-    if (data?.language === "markdown" && initialDisplayMode !== "diff") {
+    if (data?.pages === 1 && data.language === "markdown" && initialDisplayMode !== "diff") {
       setDisplayMode("preview");
     }
-  }, [data?.language, initialDisplayMode]);
+  }, [data?.language, data?.pages, initialDisplayMode]);
 
   const hasGitDiff = gitDiff?.supported === true && typeof gitDiff.patch === "string";
   const isDeletedDiff = hasGitDiff && gitDiff.status === "deleted";
@@ -928,7 +934,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   }, [initialDisplayMode, hasGitDiff]);
 
   const markdownPreview = useMemo(
-    () => (data?.language === "markdown" ? normalizeDisplayMath(data.content) : ""),
+    () => (data?.pages === 1 && data.language === "markdown" ? normalizeDisplayMath(data.content) : ""),
     [data],
   );
 
@@ -983,10 +989,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [displayMode, mentionLineRange, onMentionLines]);
 
-  if (loading || (initialDisplayMode === "diff" && gitDiffLoading && !data)) {
+  if (cancelled || loading || (initialDisplayMode === "diff" && gitDiffLoading && !data)) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
-        {t("i18n.loading")}
+        {cancelled ? <button onClick={() => setCancelled(false)}>{t("files.reloadPreview")}</button> : <>
+          <span className="file-preview-spinner" aria-hidden="true" />
+          <span role="status">{t("i18n.loading")}</span>
+          {loading && <button onClick={() => { requestRef.current?.abort(); setCancelled(true); }}>{t("i18n.cancel")}</button>}
+        </>}
       </div>
     );
   }
@@ -1005,10 +1015,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const content = data?.content ?? "";
   const isHtml = language === "html";
   const isMarkdown = language === "markdown";
-  const hasPreview = isHtml || isMarkdown;
+  const paged = (data?.pages ?? 1) > 1;
+  const hasPreview = !paged && (isHtml || isMarkdown);
   const markdownDirectory = getFileDirectory(filePath);
-  const lines = content.split("\n");
-  const effectiveDisplayMode = isDeletedDiff ? "diff" : displayMode;
+  const effectiveDisplayMode = isDeletedDiff ? "diff" : paged && displayMode === "preview" ? "source" : displayMode;
   const displayModes: DisplayMode[] = isDeletedDiff
     ? ["diff"]
     : [
@@ -1018,7 +1028,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       ];
   const metadata = isDeletedDiff
     ? t("files.deleted")
-    : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
+    : `${language} · ${paged ? "" : `${content.split("\n").length} lines · `}${formatSize(data!.size)}`;
 
   return (
     <div className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1054,6 +1064,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
         )}
 
         <div className="file-viewer-controls">
+          {paged && data && effectiveDisplayMode === "source" && <>
+            <button aria-label={t("files.previousPage")} disabled={!data.page} onClick={() => setPage(data.page - 1)}>‹</button>
+            <span>{data.page + 1}/{data.pages}</span>
+            <button aria-label={t("files.nextPage")} disabled={data.page + 1 >= data.pages} onClick={() => setPage(data.page + 1)}>›</button>
+          </>}
           {displayModes.length > 1 && (
             <div className="file-viewer-mode-switch" aria-label={t("i18n.fileViewMode")}>
               {displayModes.map((mode) => {
@@ -1123,6 +1138,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       <div ref={contentRef} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
           <DiffView patch={gitDiff.patch!} />
+        ) : paged ? (
+          <pre style={{ ...FILE_CODE_STYLE, margin: 0, whiteSpace: wrapLines ? "pre-wrap" : "pre", overflowWrap: "anywhere" }}>{content}</pre>
         ) : isHtml && effectiveDisplayMode === "preview" ? (
           <iframe
             srcDoc={content}

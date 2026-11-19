@@ -491,12 +491,34 @@ export async function GET(
       if (documentMime) {
         return streamFile(filePath, stat, documentMime, request.headers.get("range"));
       }
-      if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
-        return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
+      const requestedPage = Number(request.nextUrl.searchParams.get("page") ?? 0);
+      if (!Number.isSafeInteger(requestedPage) || requestedPage < 0) {
+        return NextResponse.json({ error: "Invalid page" }, { status: 400 });
       }
-      const content = fs.readFileSync(filePath, "utf-8");
-      const language = getLanguage(filePath);
-      return NextResponse.json({ content, language, size: stat.size });
+      const pages = Math.max(1, Math.ceil(stat.size / TEXT_PREVIEW_MAX_BYTES));
+      const page = Math.min(requestedPage, pages - 1);
+      const offset = page * TEXT_PREVIEW_MAX_BYTES;
+      // Read up to three extra bytes so a page break never splits a UTF-8 character.
+      const buffer = Buffer.alloc(Math.min(stat.size - offset, TEXT_PREVIEW_MAX_BYTES + 3));
+      const file = await fs.promises.open(filePath, "r");
+      let length = 0;
+      try {
+        while (length < buffer.length) {
+          request.signal.throwIfAborted();
+          const { bytesRead } = await file.read(buffer, length, buffer.length - length, offset + length);
+          if (!bytesRead) break;
+          length += bytesRead;
+        }
+      } finally {
+        await file.close();
+      }
+      const boundary = (index: number) => {
+        let next = Math.min(index, length);
+        while (next < length && next < index + 3 && (buffer[next] & 0xc0) === 0x80) next++;
+        return next;
+      };
+      const content = buffer.toString("utf8", page ? boundary(0) : 0, boundary(TEXT_PREVIEW_MAX_BYTES));
+      return NextResponse.json({ content, language: getLanguage(filePath), size: stat.size, page, pages });
     }
 
     if (type === "download") {
