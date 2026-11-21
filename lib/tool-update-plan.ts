@@ -57,19 +57,25 @@ export function planToolUpdate(tool: UpdatableTool, configured: string, home = h
   // Do not update whichever npm prefix happens to be the default. Trace the
   // actual selected CLI (including symlink chains) to its global package/bin.
   const packageName = tool === "pi" ? "@earendil-works/pi-coding-agent" : "@openai/codex";
-  for (let directory = dirname(actual); dirname(directory) !== directory; directory = dirname(directory)) {
-    const marker = `${join("lib", "node_modules", packageName)}`;
-    if (!directory.endsWith(`/${marker}`)) continue;
+  const marker = join("lib", "node_modules", packageName);
+  let directory = dirname(actual);
+  while (!directory.endsWith(`/${marker}`)) {
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (directory.endsWith(`/${marker}`)) {
     const prefix = directory.slice(0, -(marker.length + 1));
     const pkg = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { name?: string; version?: string; bin?: Record<string, string> };
-    if (pkg.name !== packageName || typeof pkg.bin?.[tool] !== "string"
-      || realpathSync(join(directory, pkg.bin[tool])) !== actual
-      || realpathSync(join(prefix, "bin", tool)) !== actual) break;
-    return {
-      tool, executable, command: findExecutable("npm", searchPath),
-      args: ["install", "--global", "--prefix", prefix, "--ignore-scripts", "--include=optional", "--no-audit", "--no-fund", `${packageName}@latest`],
-      installedVersion: pkg.version,
-    };
+    if (pkg.name === packageName && typeof pkg.bin?.[tool] === "string"
+      && realpathSync(join(directory, pkg.bin[tool])) === actual
+      && realpathSync(join(prefix, "bin", tool)) === actual) {
+      return {
+        tool, executable, command: findExecutable("npm", searchPath),
+        args: ["install", "--global", "--prefix", prefix, "--ignore-scripts", "--include=optional", "--no-audit", "--no-fund", `${packageName}@latest`],
+        installedVersion: pkg.version,
+      };
+    }
   }
   throw new Error("Web updates support this tool's official global npm installation. Update other installations in a terminal.");
 }
