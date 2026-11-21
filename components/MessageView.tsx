@@ -14,6 +14,7 @@ import { countLines, pastedTextPreview } from "@/lib/pasted-text";
 import { copyUserMessage, splitUserMessage, summarizeUserMessage } from "@/lib/user-message-content";
 import { FileAttachment } from "./FileAttachment";
 import { TodoMessageButton } from "./TodoMessageButton";
+import { TodoListAttachment } from "./TodoAttachment";
 import { TranslateButtons, TranslationPanel, useMessageTranslation } from "./MessageTranslation";
 import type {
   AgentMessage,
@@ -253,6 +254,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           {displayContent && segments.map((segment, i) => {
             if (segment.type === "file") return <div key={i} style={{ margin: "4px 0" }}><FileAttachment file={segment.file} onOpenFile={onOpenFile} /></div>;
             if (segment.type === "paste") return <PastedTextAttachment key={i} text={segment.text} />;
+            if (segment.type === "todo") return <TodoListAttachment key={i} text={segment.text} />;
             return segments.length === 1 || segment.text.trim()
               ? <MarkdownBody key={i} className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{segment.text}</MarkdownBody>
               : null;

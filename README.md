@@ -60,7 +60,7 @@ On my PC, omp-web has replaced the standalone terminal window. **Set up the host
 
 ### 3. Sessions and todos: get back to the work, not just the chat
 
-- **Turn a chat or a message into a todo:** Save the whole discussion or just the reply you want to verify. Click the item to jump back to its source. The list is shared across signed-in devices.
+- **Turn a chat or a message into a todo:** Save the whole discussion or just the reply you want to verify. Click the item to jump back to its source. The list is shared across signed-in devices. Agents can read it too: mention it ("do todo item 2") and the numbered list is attached to your message; a copy is also kept in `~/.config/omp-web/todos.md`.
 - **Follow several projects:** Search and pin chats, sync read status, see pending approvals and background tasks, and expand older history one turn at a time.
 - **Pick up elsewhere:** Closing the browser doesn't itself stop a run. Open the same URL on a phone or tablet to review results, answer approvals, or check off a todo. Context, subscription limits, and token usage are available in the workspace.
 

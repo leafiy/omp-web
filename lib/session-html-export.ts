@@ -54,6 +54,7 @@ function userHtml(content: string | (TextContent | ImageContent)[]): string {
     return splitUserMessage(block.text).map((segment) => {
       if (segment.type === "paste") return `<details class="paste"><summary>Pasted text · ${countLines(segment.text)} lines</summary><pre>${escape(clip(segment.text))}</pre></details>`;
       if (segment.type === "file") return `<span class="file">📎 ${escape(segment.file.name)}</span>`;
+      if (segment.type === "todo") return `<details class="paste"><summary>Todo list</summary><pre>${escape(clip(segment.text))}</pre></details>`;
       return segment.text.trim() ? `<div class="md">${escape(clip(segment.text))}</div>` : "";
     }).join("");
   }).join("");

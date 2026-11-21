@@ -196,9 +196,13 @@ export function applyTodoMutation(items: TodoItem[], mutation: TodoMutation, now
   }
 }
 
-/** Open items newest first, then completed items most recently finished first. */
+/**
+ * Open items in the order they were added (the stored order), so "item 2"
+ * means the same thing in the card, the agent copy and `todos.md`; completed
+ * items most recently finished first. Open item N is `open[N - 1]`.
+ */
 export function sortTodosForDisplay(items: TodoItem[]): { open: TodoItem[]; done: TodoItem[] } {
-  const open = items.filter((item) => !item.done).sort((a, b) => b.createdAt - a.createdAt);
+  const open = items.filter((item) => !item.done);
   const done = items.filter((item) => item.done).sort((a, b) => (b.doneAt ?? b.updatedAt) - (a.doneAt ?? a.updatedAt));
   return { open, done };
 }

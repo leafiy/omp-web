@@ -12,6 +12,7 @@ import {
   dismissTodoError,
   dismissTodoJumpNotice,
   finishTodoJump,
+  newTodoId,
   requestTodoJump,
   setTodoDone,
   setTodoText,
@@ -70,8 +71,10 @@ function CheckBox({ done, label, onToggle }: { done: boolean; label: string; onT
   );
 }
 
-function TodoRow({ item, editing, onStartEdit, onEditChange, onCommitEdit, onCancelEdit, onJump }: {
+function TodoRow({ item, number, editing, onStartEdit, onEditChange, onCommitEdit, onCancelEdit, onJump }: {
   item: TodoItem;
+  /** Open items are numbered like the agent-readable copies ("todo item 2"). */
+  number?: number;
   editing: string | null;
   onStartEdit: () => void;
   onEditChange: (text: string) => void;
@@ -126,6 +129,7 @@ function TodoRow({ item, editing, onStartEdit, onEditChange, onCommitEdit, onCan
               display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
             }}
           >
+            {number !== undefined && <span style={{ marginRight: 5, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{number}.</span>}
             {item.text}
           </div>
         )}
@@ -275,7 +279,12 @@ export function TodoWidget({ compact = false, currentSessionId, onOpenSession, o
     const text = draft.trim();
     if (!text || !snapshot) return;
     setDraft("");
-    void addTodo(text);
+    // New items join the end of the numbered list; bring the row into view.
+    const id = newTodoId();
+    void addTodo(text, undefined, id);
+    requestAnimationFrame(() => {
+      cardRef.current?.querySelector(`[data-todo-item="${id}"]`)?.scrollIntoView({ block: "nearest" });
+    });
   };
 
   const commitEdit = () => {
@@ -298,10 +307,11 @@ export function TodoWidget({ compact = false, currentSessionId, onOpenSession, o
 
   const errorText = error === "load" ? t("todo.errorLoad") : error === "save" ? t("todo.errorSave") : error === "limit" ? t("todo.errorLimit") : null;
   const badgeTitle = t("todo.badgeTitle", { done: doneCount, total });
-  const renderRow = (item: TodoItem) => (
+  const renderRow = (item: TodoItem, index: number | null) => (
     <TodoRow
       key={item.id}
       item={item}
+      number={index === null ? undefined : index + 1}
       editing={editing?.id === item.id ? editing.text : null}
       onStartEdit={() => setEditing({ id: item.id, text: item.text })}
       onEditChange={(text) => setEditing({ id: item.id, text })}
@@ -459,7 +469,7 @@ export function TodoWidget({ compact = false, currentSessionId, onOpenSession, o
               <div style={{ padding: "16px 12px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>{t("todo.empty")}</div>
             ) : (
               <>
-                {sorted.open.length > 0 && <ul style={{ margin: 0, padding: "4px 0 0" }}>{sorted.open.map(renderRow)}</ul>}
+                {sorted.open.length > 0 && <ul style={{ margin: 0, padding: "4px 0 0" }}>{sorted.open.map((item, index) => renderRow(item, index))}</ul>}
                 {doneCount > 0 && (
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 8px 2px" }}>
@@ -490,7 +500,7 @@ export function TodoWidget({ compact = false, currentSessionId, onOpenSession, o
                         {confirmClear ? t("todo.clearDoneConfirm", { count: doneCount }) : t("todo.clearDone")}
                       </button>
                     </div>
-                    {showDone && <ul style={{ margin: 0, padding: 0 }}>{sorted.done.map(renderRow)}</ul>}
+                    {showDone && <ul style={{ margin: 0, padding: 0 }}>{sorted.done.map((item) => renderRow(item, null))}</ul>}
                   </>
                 )}
               </>

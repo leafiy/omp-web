@@ -2,10 +2,16 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomicSync } from "./atomic-file";
+import { todoMarkdown } from "./todo-attachment";
 import { applyTodoMutation, parseTodoItem, TODO_ITEMS_MAX, type TodoItem, type TodoMutation, type TodoSnapshot } from "./todo-types";
 
 function copyItem(item: TodoItem): TodoItem {
   return item.source ? { ...item, source: { ...item.source } } : { ...item };
+}
+
+/** `todos.json` → `todos.md` in the same private directory. */
+export function todoMarkdownPath(jsonPath: string): string {
+  return jsonPath.endsWith(".json") ? `${jsonPath.slice(0, -".json".length)}.md` : `${jsonPath}.md`;
 }
 
 /** Web-owned todo list shared by all devices; never stored in an agent directory. */
@@ -28,6 +34,21 @@ export class TodoState {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       this.state = { revision: 0, items: [] };
+      return;
+    }
+    // Refresh the agent copy after an upgrade or a hand-edited Markdown file.
+    this.writeMarkdown(Date.now());
+  }
+
+  /**
+   * Agent-readable copy; `todos.json` stays the only source of truth, so a
+   * failed copy never fails or rolls back the change itself.
+   */
+  private writeMarkdown(now: number) {
+    try {
+      writePrivateFileAtomicSync(todoMarkdownPath(this.path), todoMarkdown(this.state.items, now));
+    } catch (error) {
+      console.warn("[todos] Could not write todos.md:", error instanceof Error ? error.message : error);
     }
   }
 
@@ -44,6 +65,7 @@ export class TodoState {
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
     writePrivateFileAtomicSync(this.path, JSON.stringify(next) + "\n");
     this.state = next;
+    this.writeMarkdown(now);
     return this.snapshot();
   }
 }

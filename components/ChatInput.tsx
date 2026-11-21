@@ -19,6 +19,7 @@ import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES } from "@/lib/file-upload
 import { appendFileAttachments, isAttachedFile, type AttachedFile } from "@/lib/file-attachments";
 import { extractMessageFiles, summarizeUserMessage } from "@/lib/user-message-content";
 import { FileAttachment } from "./FileAttachment";
+import { useTodoListAttachment } from "./TodoAttachment";
 import {
   collapsePastedBlocks, expandPastedTokens, isCommandDraft, livePastedTexts, nextPastedTextId, normalizePastedText,
   pastedTextToken, repairPastedTokenEdit, shouldCollapsePaste, snapCaretOutOfToken, splitPastedTokens,
@@ -404,6 +405,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const { t, locale } = useI18n();
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
+  const { chip: todoListChip, attach: attachTodoList } = useTodoListAttachment(value);
   const [draftNotice, setDraftNotice] = useState(() => draftKey ? getDraft(draftKey)?.notice : undefined);
   const [pendingEdit, setPendingEdit] = useState<{ text: string; expected: string; revision: number } | null>(null);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -829,8 +831,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const prepareOutgoing = useCallback(async (draft: string, pasted: PastedText[], files: AttachedFile[]): Promise<string | null> => {
     const raw = expandPastedTokens(draft, pasted).trim();
     if (isCommandDraft(draft)) return appendFileAttachments(raw, files);
-    // Add metadata last: translation and punctuation conversion must never rewrite a filename/path.
-    const convert = (text: string) => appendFileAttachments(convertPromptPunctuation(text, readPunctuationConversion()), files);
+    // Add metadata last: translation and punctuation conversion must never rewrite a filename/path
+    // or the attached todo list.
+    const convert = (text: string) => attachTodoList(appendFileAttachments(convertPromptPunctuation(text, readPunctuationConversion()), files));
     const direction = activeSendTranslation;
     if (!direction) return convert(raw);
     const parts = splitPastedTokens(draft);
@@ -863,7 +866,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         if (composerMountedRef.current) setTranslatingForSend(null);
       }
     }
-  }, [activeSendTranslation, t]);
+  }, [activeSendTranslation, attachTodoList, t]);
 
   const cancelSendTranslation = useCallback(() => {
     translateJobRef.current?.abort();
@@ -1665,6 +1668,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {compactError}
           </div>
         )}
+        {todoListChip}
         {attachedFiles.length > 0 && (
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {attachedFiles.map((file, index) => <FileAttachment key={`${file.path}:${index}`} file={file} onRemove={() => removeFile(index)} />)}
