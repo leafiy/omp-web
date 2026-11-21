@@ -1579,8 +1579,8 @@ function SessionItem({
             </button>
           )}
 
-          {/* Selected rows also expose actions for touch/keyboard users. */}
-          {(hovered || isSelected) ? (
+          {/* Pin / todo / rename / delete appear only while the pointer is over the row, selected or not. */}
+          {hovered ? (
             <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
               <button
                 type="button"
