@@ -38,7 +38,7 @@ Open your existing agents from a phone, tablet, or laptop. These Chinese-languag
 
 ## What I changed from upstream
 
-This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** with this fork at **[`d5b77fa`](https://github.com/leafiy/omp-web/commit/d5b77fa)**, not with the original pi-web. The upstream remote still pointed to that commit when checked. [Full source diff](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...d5b77fa). Related commits are grouped by feature; repeated fixes are not counted as separate features.
+This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/commit/f09920e04ed4851ad10d86c6fc92d95c2b3485c1)** with this fork at **[`66636ff`](https://github.com/leafiy/omp-web/commit/66636ff)**, not with the original pi-web. The upstream remote still pointed to that commit when checked. [Full source diff](https://github.com/leafiy/omp-web/compare/f09920e04ed4851ad10d86c6fc92d95c2b3485c1...66636ff). Related commits are grouped by feature; repeated fixes are not counted as separate features.
 
 **Credit where it's due:** Chinese localization, Markdown and syntax highlighting, Mermaid and math, file previews, Git diffs, worktrees, forks and branches, image paste, completion sounds, and PWA support already existed upstream. Upstream also included title-generation code and optional Basic Auth. This fork extends, redesigns, or fixes those features; it did not build the whole project from scratch.
 
@@ -53,7 +53,20 @@ This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/comm
 | **Native command menus and argument completion:** added Claude commands and suggestions from native enum hints | Find commands and their arguments after typing `/`; terminal-only actions are not presented as supported web features. |
 | **A read-only skills panel scoped to engine and project; disabled the old unscoped auth/model/plugin/skill editors** | See what the selected agent actually exposes. Installation, login, and configuration stay with its CLI, avoiding edits to the wrong store. |
 
-### 2. Sessions that are easier to find and follow
+### 2. Claude Code controls that used to need the terminal
+
+| Change | Why it matters |
+| --- | --- |
+| **Fork and Rewind for Claude Code:** start a new chat from before any message; Rewind restores code from Claude's own checkpoints and/or the conversation, after a dry-run preview of the files that will change | Back out of a wrong turn the way `/rewind` does. Only edits Claude itself made after checkpointing was enabled can be restored; shell commands and outside changes are not undone. |
+| **Permission modes — Ask, Accept edits, Plan, Auto — switchable mid-run; leaving Plan mode shows the plan for approval** | The Shift+Tab modes without a terminal. `bypassPermissions` stays terminal-only, and Claude Code decides whether Auto is available to your account and model. |
+| **"Always allow" in approval prompts, based on Claude Code's own rule suggestions** | Stop approving the same command again and again. You choose this session only or the settings file Claude names; suggested rule removals are never applied. |
+| **MCP status panel** (reconnect, enable/disable for the session) **and MCP elicitation forms/links as web dialogs** | Revive a disconnected server or answer an MCP request without SSH. Server commands, URLs, headers, and env never reach the browser; forms the web can't render are declined. |
+| **Native status events:** compaction progress, API retries, hooks, notifications, automatic denials, model fallbacks | A long pause is explained instead of looking like a hang. |
+| **Background work controls:** stop one task, or move a running Bash command/subagent to the background | Ctrl+B and per-task stop, without stopping the whole run. |
+| **HTML export and full history for Claude Code**, rendered from the web record | Archive or share a Claude chat like an OMP/Pi one. It is a simple, script-free page, not a native Claude export. |
+| **The same controls for OMP and Pi wherever their RPC offers them:** stop an OMP subagent, OMP model-fallback and rule notices, Pi summary-retry status | Parity without pretending: neither RPC exposes permission modes, file rewind, or MCP status, so those remain Claude-only. |
+
+### 3. Sessions that are easier to find and follow
 
 | Change | Why it matters |
 | --- | --- |
@@ -63,8 +76,9 @@ This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/comm
 | **Added a separate pinned section, stored on the server** | A chat pinned on your laptop is also pinned on your phone, without duplicate rows in project groups. |
 | **Synced read/unread state across devices, with project-wide “mark read”** | Reading a result on your phone clears the reminder on your laptop. A late acknowledgement cannot clear a newer result. |
 | **Added waiting-for-input badges and sounds, including on collapsed projects** | Find the chat waiting for approval or an answer. Completion sounds also wait for known background work to finish. |
+| **Added a shared todo list:** a done/total badge in the top bar opens a card to add, edit, complete, and clear items; one click adds a conversation (from the sidebar) or any message | Keep follow-ups next to the work. An item jumps back to its conversation or exact message, unfolding older history first. Stored on the server (`~/.config/omp-web/todos.json`) and shared by every signed-in device; it is never sent to an agent. |
 
-### 3. More useful input, less lost work
+### 4. More useful input, less lost work
 
 | Change | Why it matters |
 | --- | --- |
@@ -81,7 +95,7 @@ This compares upstream **[`f09920e`](https://github.com/17380936778/omp-web/comm
 
 Translation needs a separately configured OpenAI-compatible service, with templates for Index-Translate and Hunyuan-MT. It sends the text to that service and may add latency or cost. Message translation buttons stay hidden without configuration. Translating input does not force the agent's reply language; `!` and `/` command drafts skip translation.
 
-### 4. Less decoration, more readable content
+### 5. Less decoration, more readable content
 
 | Change | Why it matters |
 | --- | --- |
@@ -90,8 +104,9 @@ Translation needs a separately configured OpenAI-compatible service, with templa
 | **Rebuilt narrow-screen toolbars and composer actions:** compact menus, separate send/stop controls, larger touch targets, keyboard-height and safe-area fixes | Keep typing and stopping within reach when the phone keyboard is open. |
 | **Replaced blocking browser confirmations with inline prompts; fixed shortcut conflicts** | Confirmations do not freeze streaming. Closing a menu or typing in the terminal should not accidentally stop chat. |
 | **Tool summaries show actual questions/answers and readable structured arguments** | Understand a tool call without opening a long record or seeing `[object Object]`. |
+| **Edits and todo lists read like the terminal:** Claude Edit/Write show diffs with real line numbers; Claude's TodoWrite and OMP's todo tool render as checklists | See what changed and what is left without reading raw JSON. Older Claude history falls back to a diff without line numbers. |
 
-### 5. Clearer history, background work, and usage
+### 6. Clearer history, background work, and usage
 
 | Change | Why it matters |
 | --- | --- |
@@ -101,7 +116,7 @@ Translation needs a separately configured OpenAI-compatible service, with templa
 | **Native context usage, with the last reported value saved** | No fixed 128K fallback or cumulative billing totals pretending to be current context. Keep the last observation after restart; missing data stays unknown. |
 | **Added subscription usage and day/week/month token tables** | See limits, reset times, and consumption. Codex account data is clearly separated from local Claude/OMP/Pi totals, not added into a misleading grand total. |
 
-### 6. Files and a terminal within reach
+### 7. Files and a terminal within reach
 
 | Change | Why it matters |
 | --- | --- |
@@ -110,7 +125,7 @@ Translation needs a separately configured OpenAI-compatible service, with templa
 | **Uploads target the selected folder, including drag-to-folder, with progress and conflict handling** | Not just the chat root. Navigating during an upload cannot silently change its destination, and replacement does not delete the old file before writing. |
 | **Local file links in replies now offer preview and direct download, including `file:`/`sandbox:` links** | Take the generated report straight from the reply instead of hunting for its path. File-access restrictions still apply. |
 
-### 7. Built for regular self-hosted use
+### 8. Built for regular self-hosted use
 
 | Change | Why it matters |
 | --- | --- |
@@ -139,9 +154,13 @@ Translation needs a separately configured OpenAI-compatible service, with templa
 | Web Follow-up queue / take back to edit | ✓ | ✓ | ✓ | ✓ |
 | Steer during a run | ✓ | ✓ | When supported by the native version | — |
 | Reasoning level / Effort | Model-dependent | Model-dependent | Native-capability-dependent | — |
-| Fork / HTML export | ✓ | ✓ | — | — |
-| In-file branch navigation | ✓ | — | — | — |
+| Fork / HTML export and full history | ✓ | ✓ | ✓ | — |
+| Go back to an earlier message | In-file branch navigation | — | Rewind conversation and/or code | — |
+| Permission modes / always allow | — | — | ✓ | — |
+| MCP status panel / elicitation | — | — | ✓ | — |
+| Stop one background task | ✓ (subagents) | — | ✓ (plus move to background) | — |
 | Session deletion | ✓ | ✓ | ✓ | — |
+| Shared todo list | ✓ | ✓ | ✓ | ✓ |
 
 Claude/Codex currently focus on web-created sessions, not importing all terminal history or taking over running terminal sessions. Task visibility depends on native interfaces or Pi extensions reporting it. Use the embedded terminal for the full TUI.
 
@@ -220,7 +239,7 @@ Models run in the cloud, so the host need not run a large model. The CLIs, web s
 
 Most detailed notes are in Chinese:
 
-- Integration: [Native agents](./docs/native-omp.zh-CN.md) · [Claude commands](./docs/claude-code-commands.zh-CN.md) · [Claude models/Effort](./docs/claude-models-effort.zh-CN.md) · [Codex](./docs/codex-cli.zh-CN.md) · [Skills](./docs/native-skills.zh-CN.md)
+- Integration: [Native agents](./docs/native-omp.zh-CN.md) · [Claude advanced controls and OMP/Pi parity](./docs/claude-code-advanced.zh-CN.md) · [Claude commands](./docs/claude-code-commands.zh-CN.md) · [Claude models/Effort](./docs/claude-models-effort.zh-CN.md) · [Codex](./docs/codex-cli.zh-CN.md) · [Skills](./docs/native-skills.zh-CN.md)
 - Everyday use: [Terminal](./docs/self-hosting.zh-CN.md) · [Files/attachments](./docs/file-browser.zh-CN.md) · [Queue editing](./docs/queued-message-editing.zh-CN.md) · [Worktrees](./docs/worktrees.md)
 - UI: [Sessions/drafts](./docs/ui-refinements.zh-CN.md) · [Mobile layout](./docs/mobile-layout.zh-CN.md) · [Themes](./docs/theme-comparison.zh-CN.md) · [Pins](./docs/session-pins.zh-CN.md) · [Read-state sync](./docs/session-read-state.zh-CN.md)
 - Status: [History caching](./docs/history-cache.zh-CN.md) · [Subtasks](./docs/subagent-status.zh-CN.md) · [Context](./docs/claude-code-context.zh-CN.md) · [Usage](./docs/subscription-usage.zh-CN.md)
