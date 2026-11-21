@@ -45,6 +45,7 @@ fi
 - 成功记录分别存放在 `node_modules/.omp-web-install.json` 和 `.next/.omp-web-build.json`，只记录哈希，不保存配置或环境变量原文。安装/构建开始前删除旧记录，成功后原子保存新记录；失败、缺失、损坏的记录均不能用于跳过。
 - `bash scripts/install.sh update --force-build` 强制重建；`--force-install` 强制重装依赖并重建。直接依赖检查不是整个 `node_modules` 的完整性审计；怀疑嵌套依赖损坏时使用 `--force-install`。未来若构建读取其他自定义环境变量或外部资源，应补入指纹，在此之前使用 `--force-build`。
 - 日志显示安装、构建和整体更新的秒数，便于比较不同机器的实际瓶颈。不关闭类型检查，不更换打包器。
+- `next.config.ts` 把 `outputFileTracingRoot` 固定为本目录。不固定时，上级目录的锁文件（例如误生成的 `~/package-lock.json`）会让 Next 把家目录推断为工作区根，构建追踪随之遍历 `~/.claude`、`~/.codex`、`~/.omp` 等全部 Agent 数据：曾实测约 1.4 万个文件、3.5 GB，追踪耗时占整次构建的约四分之三，且随会话增多变慢。分阶段耗时见 `.next/trace-build`；`.next/required-server-files.json` 中的 `config.outputFileTracingRoot` 应为本目录。
 
 需要重建时仍先停服。重建期间脚本在 `/run/systemd/system/omp-web.service.d/` 放一个临时 drop-in，让 systemd 跳过所有启动请求（例如 `omp-web-tunnel.service` 的 `Wants=` 重启时顺带拉起），完成后删除；构建失败时保留它，服务保持停止，重启后 `/run` 清空也会解除。只跳过构建时，也仅在成功记录和产物验证通过后释放此前遗留的 hold。
 
