@@ -1,57 +1,92 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { useTranslateAvailable } from "@/hooks/useTranslate";
 import { cachedTranslation, rememberTranslation, requestTranslation } from "@/lib/translate-client";
+import { readMessageTranslation, subscribeMessageTranslations, translationSourceKey, writeMessageTranslation, type MessageTranslationState } from "@/lib/message-translations";
 import { TRANSLATE_DIRECTIONS, type TranslateDirection } from "@/lib/translate-text";
-
-type TranslationState =
-  | { direction: TranslateDirection; status: "loading" }
-  | { direction: TranslateDirection; status: "done"; text: string }
-  | { direction: TranslateDirection; status: "error"; error: string };
 
 export interface MessageTranslation {
   available: boolean;
-  state: TranslationState | null;
+  state: MessageTranslationState | null;
   toggle: (direction: TranslateDirection) => void;
   close: () => void;
 }
 
-/** Per-message ZH⇄EN translation; clicking the active direction again hides it. */
-export function useMessageTranslation(source: string): MessageTranslation {
+// Requests belong to the message, not to its view: one still running when the
+// conversation is switched away finishes and is there on return.
+const jobs = new Map<string, AbortController>();
+
+function stopJob(scope: string, key: string): void {
+  const id = `${scope}\0${key}`;
+  jobs.get(id)?.abort();
+  jobs.delete(id);
+}
+
+function startTranslation(scope: string, key: string, source: string, direction: TranslateDirection, persist: boolean): void {
+  stopJob(scope, key);
+  const cached = cachedTranslation(direction, source);
+  if (cached !== undefined) {
+    writeMessageTranslation(scope, key, { direction, status: "done", text: cached }, persist);
+    return;
+  }
+  const id = `${scope}\0${key}`;
+  const job = new AbortController();
+  jobs.set(id, job);
+  writeMessageTranslation(scope, key, { direction, status: "loading" }, persist);
+  requestTranslation([source], direction, job.signal).then(([text]) => {
+    rememberTranslation(direction, source, text);
+    if (!job.signal.aborted) writeMessageTranslation(scope, key, { direction, status: "done", text }, persist);
+  }, (error) => {
+    if (!job.signal.aborted) writeMessageTranslation(scope, key, { direction, status: "error", error: error instanceof Error ? error.message : String(error) }, persist);
+  }).finally(() => {
+    if (jobs.get(id) === job) jobs.delete(id);
+  });
+}
+
+function stopTranslation(scope: string, key: string, persist: boolean): void {
+  stopJob(scope, key);
+  writeMessageTranslation(scope, key, null, persist);
+}
+
+/**
+ * Per-message ZH⇄EN translation; clicking the active direction again hides it.
+ * In a conversation it stays shown, keyed by session and message text, across
+ * conversation switches, folded turns and reloads (`lib/message-translations.ts`);
+ * closing it forgets it. Without a session it ends with this view.
+ */
+export function useMessageTranslation(source: string, sessionId?: string): MessageTranslation {
   const configured = useTranslateAvailable();
-  // Tagged with its source text: a changed message never shows an old translation.
-  const [entry, setEntry] = useState<{ source: string; state: TranslationState } | null>(null);
-  const jobRef = useRef<AbortController | null>(null);
-  useEffect(() => () => jobRef.current?.abort(), []);
-  const state = entry?.source === source ? entry.state : null;
+  const viewId = useId();
+  const persist = !!sessionId;
+  const scope = sessionId ? `session:${sessionId}` : `view:${viewId}`;
+  // A changed message has another key, so it never shows an old translation.
+  const key = useMemo(() => source ? translationSourceKey(source) : "", [source]);
+  const state = useSyncExternalStore(
+    subscribeMessageTranslations,
+    () => key ? readMessageTranslation(scope, key) : null,
+    () => null,
+  );
+
+  useEffect(() => {
+    if (persist || !key) return;
+    return () => stopTranslation(scope, key, false);
+  }, [persist, scope, key]);
 
   const close = () => {
-    jobRef.current?.abort();
-    jobRef.current = null;
-    setEntry(null);
+    if (!key) return;
+    // A reopened result comes back without a new request.
+    if (state?.status === "done") rememberTranslation(state.direction, source, state.text);
+    stopTranslation(scope, key, persist);
   };
 
   const toggle = (direction: TranslateDirection) => {
+    if (!key) return;
     if (state?.direction === direction && state.status !== "error") { close(); return; }
-    jobRef.current?.abort();
-    jobRef.current = null;
-    const cached = cachedTranslation(direction, source);
-    if (cached !== undefined) { setEntry({ source, state: { direction, status: "done", text: cached } }); return; }
-    const job = new AbortController();
-    jobRef.current = job;
-    setEntry({ source, state: { direction, status: "loading" } });
-    requestTranslation([source], direction, job.signal).then(([text]) => {
-      rememberTranslation(direction, source, text);
-      if (!job.signal.aborted) setEntry({ source, state: { direction, status: "done", text } });
-    }, (error) => {
-      if (!job.signal.aborted) setEntry({ source, state: { direction, status: "error", error: error instanceof Error ? error.message : String(error) } });
-    }).finally(() => {
-      if (jobRef.current === job) jobRef.current = null;
-    });
+    startTranslation(scope, key, source, direction, persist);
   };
 
   return { available: configured && source.trim().length > 0, state, toggle, close };

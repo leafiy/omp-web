@@ -111,7 +111,7 @@ function haveSameRelevantToolResults(
 
 export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onRewind={onRewind} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onRewind={onRewind} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} sessionId={sessionId} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
@@ -149,7 +149,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, sessionId }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -160,6 +160,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onRewind?: (entryId: string) => void;
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
+  sessionId?: string;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -189,7 +190,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   const segments = useMemo(() => splitUserMessage(displayContent), [displayContent]);
   // Attachments are not translated; only the typed text is.
   const translationSource = useMemo(() => segments.filter((segment) => segment.type === "text").map((segment) => segment.text).join("\n\n").trim(), [segments]);
-  const translation = useMessageTranslation(translationSource);
+  const translation = useMessageTranslation(translationSource, sessionId);
 
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
@@ -508,7 +509,7 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
   // Streaming text is not translatable yet; the source settles when the run ends.
-  const translation = useMessageTranslation(isStreaming ? "" : textContent);
+  const translation = useMessageTranslation(isStreaming ? "" : textContent, sessionId);
 
   const copyContent = () => {
     copyText(textContent).then(() => {
