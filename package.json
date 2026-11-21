@@ -36,7 +36,7 @@
     "prestart:lan": "node bin/workspace-location.js --offline",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
-    "build": "next build --webpack",
+    "build": "next build --turbopack",
     "start": "next start -H 127.0.0.1 -p 30141",
     "start:lan": "next start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",

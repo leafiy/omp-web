@@ -5,7 +5,7 @@ import { join } from "path";
 const { version } = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8")) as { version: string };
 
 const nextConfig: NextConfig = {
-  // Pin the trace root to this checkout. Otherwise a lockfile in a parent
+  // Pin the trace root (also Turbopack's root) to this checkout. Otherwise a lockfile in a parent
   // directory (e.g. a stray ~/package-lock.json) makes Next infer the home
   // directory as the workspace root, and build tracing walks every agent
   // store under it (~/.claude, ~/.codex, ~/.omp, …): thousands of files,

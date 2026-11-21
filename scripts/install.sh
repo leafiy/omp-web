@@ -151,7 +151,9 @@ main() {
     say "Dependencies unchanged; skipping npm ci (use --force-install to repair)"
   fi
   if [ "$build_needed" = "yes" ]; then
-    say "Building (preserving .next/cache)"
+    # Turbopack does not read webpack's persistent cache; it only wastes ~1 GB.
+    rm -rf .next/cache/webpack
+    say "Building with Turbopack (preserving .next/cache)"
     phase_started=$SECONDS
     npm run build || fail "Build failed.$stopped_note"
     node scripts/install-state.mjs record build "$build_key" || fail "Could not record build.$stopped_note"
