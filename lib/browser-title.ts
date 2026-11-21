@@ -7,64 +7,56 @@ export function maintainBrowserTitle(title: string): () => void {
   return () => observer.disconnect();
 }
 
-/** Render a few small PNGs once. Browsers need not animate SVG/GIF favicons. */
-function runningIconFrames(icon: HTMLImageElement): string[] {
+/** Draw the activity badge onto the app icon as one small PNG. */
+function runningIcon(icon: HTMLImageElement): string | undefined {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 32;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
+  if (!ctx) return undefined;
   const circle = (radius: number, fill: string) => {
     ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.arc(25, 25, radius, 0, Math.PI * 2);
     ctx.fill();
   };
-  return Array.from({ length: 12 }, (_, i) => {
-    const breath = (1 - Math.cos(i * Math.PI / 6)) / 2;
-    ctx.clearRect(0, 0, 32, 32);
-    ctx.drawImage(icon, 0, 0, 32, 32);
-    // At 16px tab size, these radii become the visible badge diameters.
-    // Vary both area and luminance; a subpixel halo alone reads as a static dot.
-    const core = 2.5 + 2.5 * breath;
-    circle(core + 1.8, `rgba(98, 192, 137, ${0.18 + 0.2 * breath})`);
-    circle(core + 0.6, "#244347");
-    circle(core, `rgba(145, 238, 177, ${0.54 + 0.46 * breath})`);
-    return canvas.toDataURL("image/png");
-  });
+  ctx.drawImage(icon, 0, 0, 32, 32);
+  // At 16px tab size, these radii become the visible badge diameters.
+  circle(6.8, "rgba(98, 192, 137, 0.38)");
+  circle(5.6, "#244347");
+  circle(5, "#91eeb1");
+  return canvas.toDataURL("image/png");
 }
 
-/** Overlay the activity badge without editing Next's icons or the PWA icons. */
+/**
+ * Overlay a still activity badge without editing Next's icons or the PWA icons.
+ * Never animate it: Chrome stores every favicon a page shows under the page
+ * URL, and a bookmark of that URL repaints from the store, so each frame would
+ * flash in the bookmarks bar (and rewrite Chrome's favicon database). One run
+ * changes the icon exactly twice: badge on, idle icon back.
+ */
 export function showRunningFavicon(): () => void {
   const link = document.createElement("link");
   link.rel = "icon";
   link.type = "image/png";
   link.setAttribute("sizes", "32x32");
+  const icons = document.head.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]');
+  const idle = icons.length ? icons[icons.length - 1].href : "";
   const icon = document.createElement("img");
-  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  let frames: string[] = [];
-  let timer: ReturnType<typeof setInterval> | undefined;
-  const animate = () => {
-    clearInterval(timer);
-    if (!frames.length) return;
-    let i = frames.length / 2; // A still badge should be as legible as the peak of the pulse.
-    link.href = frames[i];
-    if (!motion.matches) timer = setInterval(() => {
-      i = (i + 1) % frames.length;
-      link.href = frames[i];
-    }, 220);
-  };
+  let shown = false;
   icon.onload = () => {
-    try { frames = runningIconFrames(icon); } catch { /* Canvas may be blocked. Keep the original icon. */ }
-    if (!frames.length) return;
-    animate();
+    let badge: string | undefined;
+    try { badge = runningIcon(icon); } catch { /* Canvas may be blocked. Keep the original icon. */ }
+    if (!badge) return;
+    link.href = badge;
     document.head.appendChild(link);
+    shown = true;
   };
-  motion.addEventListener("change", animate);
   icon.src = "/icons/icon-192.png";
   return () => {
     icon.onload = null;
-    motion.removeEventListener("change", animate);
-    clearInterval(timer);
+    // Some browsers keep the last painted bitmap when a link disappears, so
+    // repaint the idle icon before removing the badge link.
+    if (shown && idle) link.href = idle;
     link.remove();
   };
 }
