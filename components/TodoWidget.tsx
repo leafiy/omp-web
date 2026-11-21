@@ -82,7 +82,7 @@ function TodoRow({ item, editing, onStartEdit, onEditChange, onCommitEdit, onCan
   const { t } = useI18n();
   const source = item.source;
   const sourceLabel = source
-    ? source.entryId
+    ? source.entryId || source.role
       ? `${source.sessionTitle || t("todo.untitled")} · ${t(source.role === "assistant" ? "todo.assistantMessage" : "todo.userMessage")}`
       : t("todo.conversation")
     : null;

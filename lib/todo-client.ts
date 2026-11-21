@@ -1,5 +1,9 @@
 import { startVisiblePolling } from "./visible-polling";
-import { applyTodoMutation, normalizeTodoText, type TodoItem, type TodoMutation, type TodoSnapshot, type TodoSource } from "./todo-types";
+import { historyUrl } from "./history-client-cache";
+import { isTurnAnchor } from "./history-turns";
+import { summarizeUserMessage } from "./user-message-content";
+import type { AgentMessage, TextContent } from "./types";
+import { applyTodoMutation, normalizeTodoText, type TodoItem, type TodoMutation, type TodoSnapshot, type TodoSource, type TodoSourceRole } from "./todo-types";
 
 /**
  * One browser-wide copy of the server todo list shared by the top-bar card,
@@ -87,7 +91,7 @@ export function getServerTodoState(): TodoClientState {
   return SERVER_STATE;
 }
 
-function newTodoId(): string {
+export function newTodoId(): string {
   // randomUUID is missing outside secure contexts (plain-HTTP LAN access).
   const uuid = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : null;
   return uuid ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -118,10 +122,10 @@ async function mutate(mutation: TodoMutation): Promise<boolean> {
   }
 }
 
-export function addTodo(text: string, source?: TodoSource): Promise<boolean> {
+export function addTodo(text: string, source?: TodoSource, id = newTodoId()): Promise<boolean> {
   const value = normalizeTodoText(text);
   if (!value) return Promise.resolve(false);
-  return mutate(source ? { op: "add", id: newTodoId(), text: value, source } : { op: "add", id: newTodoId(), text: value });
+  return mutate(source ? { op: "add", id, text: value, source } : { op: "add", id, text: value });
 }
 
 export function setTodoDone(id: string, done: boolean): Promise<boolean> {
@@ -142,12 +146,59 @@ export function clearDoneTodos(): Promise<boolean> {
   return mutate({ op: "clearDone" });
 }
 
+/** A whole-conversation item; message items always carry a role. */
 export function findSessionTodo(items: TodoItem[], sessionId: string): TodoItem | undefined {
-  return items.find((item) => item.source?.sessionId === sessionId && !item.source.entryId);
+  return items.find((item) => item.source?.sessionId === sessionId && !item.source.entryId && !item.source.role);
 }
 
 export function findMessageTodo(items: TodoItem[], sessionId: string, entryId: string): TodoItem | undefined {
   return items.find((item) => item.source?.sessionId === sessionId && item.source.entryId === entryId);
+}
+
+function displayText(message: AgentMessage): string | null {
+  if (message.role === "user") {
+    const content = message.content;
+    return summarizeUserMessage(typeof content === "string"
+      ? content
+      : content.filter((block): block is TextContent => block.type === "text").map((block) => block.text).join("\n"));
+  }
+  if (message.role === "assistant") {
+    return (message.content ?? []).filter((block): block is TextContent => block.type === "text").map((block) => block.text).join("\n");
+  }
+  return null;
+}
+
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * Entry IDs reach the browser only with a history load, so a message sent or
+ * produced during the current run has none yet. Find it in the persisted
+ * latest window by role and display text (newest match first). Null when it
+ * has not been written yet or cannot be told apart.
+ */
+export async function resolveMessageLink(sessionId: string, role: TodoSourceRole, text: string): Promise<{ entryId: string; turnId: string } | null> {
+  const wanted = squash(text);
+  if (!wanted) return null;
+  const response = await fetch(historyUrl(sessionId), { cache: "no-store" });
+  if (!response.ok) return null;
+  const data = await response.json() as { sessionId?: string; context?: { messages?: AgentMessage[]; entryIds?: string[] } };
+  const messages = data.context?.messages, entryIds = data.context?.entryIds;
+  if (data.sessionId !== sessionId || !Array.isArray(messages) || !Array.isArray(entryIds) || messages.length !== entryIds.length) return null;
+  const candidates = messages.map((message) => message.role === role ? squash(displayText(message) ?? "") : "");
+  let index = candidates.lastIndexOf(wanted);
+  // The engine may store a lightly different copy (for example added notes).
+  if (index < 0) {
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      if (candidates[i] && (candidates[i].includes(wanted) || wanted.includes(candidates[i]))) { index = i; break; }
+    }
+  }
+  if (index < 0 || !entryIds[index]) return null;
+  // The window starts at a turn boundary, so its first entry anchors a preamble.
+  let anchor = 0;
+  for (let i = index; i >= 0; i--) {
+    if (isTurnAnchor(messages[i])) { anchor = i; break; }
+  }
+  return { entryId: entryIds[index], turnId: entryIds[anchor] };
 }
 
 /** A one-line excerpt used as the default text of a message todo. */

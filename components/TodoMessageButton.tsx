@@ -1,10 +1,10 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useTodos } from "@/hooks/useTodos";
-import { addTodo, deleteTodo, findMessageTodo, todoExcerpt } from "@/lib/todo-client";
-import type { TodoSourceRole } from "@/lib/todo-types";
+import { addTodo, deleteTodo, findMessageTodo, newTodoId, resolveMessageLink, todoExcerpt } from "@/lib/todo-client";
+import type { TodoSource, TodoSourceRole } from "@/lib/todo-types";
 
 /** Supplied by the chat window: which conversation the rendered messages belong to. */
 export interface TodoMessageContextValue {
@@ -28,7 +28,8 @@ function plainExcerpt(text: string): string {
 
 /**
  * Adds one message to the shared todo list, or removes it when it is already
- * there. Hidden until the message has a persisted entry ID.
+ * there. A message from the current run has no entry ID in the browser yet;
+ * its link is then looked up in the persisted history when clicked.
  */
 export function TodoMessageButton({ entryId, role, text, visible = true }: {
   entryId?: string;
@@ -40,25 +41,43 @@ export function TodoMessageButton({ entryId, role, text, visible = true }: {
   const context = useContext(TodoMessageContext);
   const { snapshot } = useTodos();
   const { t } = useI18n();
+  // What this button added while the message had no entry ID of its own.
+  const [added, setAdded] = useState<{ todoId: string; entryId?: string } | null>(null);
+  const [resolving, setResolving] = useState(false);
   const sessionId = context?.sessionId;
-  if (!context || !sessionId || !entryId || !snapshot) return null;
+  if (!context || !sessionId || !snapshot) return null;
 
-  const existing = findMessageTodo(snapshot.items, sessionId, entryId);
+  const linkedEntryId = entryId ?? added?.entryId;
+  const existing = (linkedEntryId ? findMessageTodo(snapshot.items, sessionId, linkedEntryId) : undefined)
+    ?? (added ? snapshot.items.find((item) => item.id === added.todoId) : undefined);
   const label = existing ? t(existing.done ? "todo.inListDone" : "todo.inList") : t("todo.addShort");
   const title = existing ? t("todo.removeMessageTitle") : t("todo.addMessageTitle");
-  const toggle = () => {
+  const toggle = async () => {
+    if (resolving) return;
     if (existing) {
+      setAdded(null);
       void deleteTodo(existing.id);
       return;
     }
-    const fallback = t(role === "user" ? "todo.userMessage" : "todo.assistantMessage");
-    void addTodo(plainExcerpt(text) || fallback, {
+    const todoText = plainExcerpt(text) || t(role === "user" ? "todo.userMessage" : "todo.assistantMessage");
+    const source: TodoSource = {
       sessionId,
       ...(context.sessionTitle?.trim() ? { sessionTitle: context.sessionTitle.trim() } : {}),
-      entryId,
-      ...(context.turnIdFor(entryId) ? { turnId: context.turnIdFor(entryId) } : {}),
       role,
-    });
+    };
+    if (entryId) {
+      const turnId = context.turnIdFor(entryId);
+      void addTodo(todoText, { ...source, entryId, ...(turnId ? { turnId } : {}) });
+      return;
+    }
+    setResolving(true);
+    let link: { entryId: string; turnId: string } | null = null;
+    try { link = await resolveMessageLink(sessionId, role, text); } catch { /* keep the conversation link */ }
+    const todoId = newTodoId();
+    setAdded({ todoId, ...(link ? { entryId: link.entryId } : {}) });
+    setResolving(false);
+    // Not written yet: the item still opens the conversation.
+    void addTodo(todoText, link ? { ...source, entryId: link.entryId, turnId: link.turnId } : source, todoId);
   };
   const color = existing ? "var(--accent)" : "var(--text-dim)";
 
@@ -66,15 +85,17 @@ export function TodoMessageButton({ entryId, role, text, visible = true }: {
     <button
       type="button"
       data-todo-message-button
-      onClick={toggle}
+      onClick={() => { void toggle(); }}
+      disabled={resolving}
       title={title}
       aria-label={title}
       aria-pressed={!!existing}
+      aria-busy={resolving}
       style={{
         display: "flex", alignItems: "center", gap: 4,
         padding: "3px 8px", height: 22,
         background: "none", border: "none", borderRadius: 5,
-        color, cursor: "pointer",
+        color, cursor: resolving ? "progress" : "pointer",
         fontSize: 11, fontWeight: 400, whiteSpace: "nowrap",
         opacity: visible || existing ? 1 : 0,
         pointerEvents: visible || existing ? "auto" : "none",

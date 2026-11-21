@@ -101,7 +101,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 ## Todo list
 
 - Web-only and shared by every signed-in device: `lib/todo-state.ts` keeps `~/.config/omp-web/todos.json` (or `OMP_WEB_TODO_FILE`), mode 0600, never in an agent directory or transcript. Like session pins, `POST /api/todos` applies one intent (`add`/`update`/`delete`/`clearDone`, client-generated IDs, idempotent) and never a device's whole list; the revision only grows.
-- `lib/todo-client.ts` is the one browser store (visible-tab polling, optimistic intents replayed over newer snapshots). Item text is a snapshot, editable; a `source` (`sessionId`, optional `entryId`/`turnId`/`role`) is only a navigation link and may outlive its conversation.
+- `lib/todo-client.ts` is the one browser store (visible-tab polling, optimistic intents replayed over newer snapshots). Item text is a snapshot, editable; a `source` (`sessionId`, optional `entryId`/`turnId`/`role`) is only a navigation link and may outlive its conversation. Messages from the current run have no browser entry ID until history reloads; `resolveMessageLink` looks them up in the persisted window when added.
 - Jumps resolve in `hooks/useTodoJump.ts` against `data-entry-id` on rendered messages and `data-process-entries` on folded process groups; `turnId` (the turn's first entry) opens a folded history turn whole. Keep those attributes when restructuring `ChatWindow` rendering.
 
 ## Source map and checks
