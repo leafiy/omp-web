@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentFrame } from "./agent-rpc-client";
-import type { AgentEngine } from "./engine";
+import { chatRuntimeCommand, type AgentEngine } from "./engine";
 import { buildSessionTitlePrompt, parseGeneratedSessionTitle } from "./session-title";
 import { rememberContextUsage } from "./context-usage-cache";
 
@@ -43,6 +43,7 @@ export class FollowUpSession implements FollowUpNativeSession {
   private timer?: ReturnType<typeof setTimeout>;
   private pumping = false;
   private manualRequests = 0;
+  private reloading = false;
   private paused = false;
   private closed = false;
   private destroyed?: () => void;
@@ -102,7 +103,7 @@ export class FollowUpSession implements FollowUpNativeSession {
   get cwd() { return this.native.cwd; }
   getActiveLeafId() { return this.native.getActiveLeafId(); }
   isAlive() { return !this.closed && this.native.isAlive(); }
-  isRunning() { return this.isAlive() && (this.native.isRunning() || this.pending.length > 0 || this.manualRequests > 0 || Boolean(this.titleController)); }
+  isRunning() { return this.isAlive() && (this.native.isRunning() || this.pending.length > 0 || this.manualRequests > 0 || this.reloading || Boolean(this.titleController)); }
   hasPendingDialog() { return this.isAlive() && (this.native.hasPendingDialog?.() ?? false); }
   waitUntilReady() { return this.native.waitUntilReady(); }
   generateSessionTitle(prompt: string, signal: AbortSignal) { return this.native.generateSessionTitle(prompt, signal); }
@@ -240,6 +241,17 @@ export class FollowUpSession implements FollowUpNativeSession {
     await this.waitUntilReady();
     if (!this.isAlive()) throw new Error("Session is closed");
     const type = String(command.type);
+    const runtimeCommand = chatRuntimeCommand(this.engine);
+    if (runtimeCommand && ["prompt", "steer", "follow_up"].includes(type) && typeof command.message === "string"
+      && command.message.trimStart().split(/\s/, 1)[0] === `/${runtimeCommand}`) throw new Error(`Use /${runtimeCommand} as an idle chat command, without arguments or attachments`);
+    if (this.reloading && !["get_state", "extension_ui_response"].includes(type)) throw new Error("Pi is reloading; retry after it finishes");
+    if (type === "reload" && this.engine === "pi") {
+      if (this.isRunning() || this.hasPendingDialog() || this.nativeQueue.steering.length || this.nativeQueue.followUp.length) throw new Error("Wait for the current session's work and dialogs to finish before reloading");
+      this.reloading = true;
+      this.changed();
+      try { return await this.native.send(command); }
+      finally { this.reloading = false; this.changed(); }
+    }
     if (type === "follow_up" || type === "prompt" && command.streamingBehavior === "followUp") {
       if (typeof command.message !== "string" || !command.message.trim()) throw new Error("Follow-up text is required");
       if (command.message.trimStart().startsWith("/") || command.images !== undefined && (!Array.isArray(command.images) || command.images.length)) throw new Error("Follow-up queue supports plain text only, not commands or attachments");
@@ -289,7 +301,7 @@ export class FollowUpSession implements FollowUpNativeSession {
       this.pending = this.pending.filter(item => item.state === "sending"); this.paused = true; this.queueChanged();
     }
     if (type === "prompt" && this.pending.some(item => item.state === "sending")) throw new Error("A follow-up is being handed to the agent; retry shortly");
-    const mutation = ["prompt", "steer", "abort", "bash", "compact", "set_model", "fork", "rewind", "navigate_tree"].includes(type);
+    const mutation = ["prompt", "steer", "abort", "bash", "compact", "set_model", "set_thinking_level", "set_permission_mode", "mcp_reconnect", "mcp_toggle", "fork", "rewind", "navigate_tree"].includes(type);
     if (mutation) this.manualRequests++;
     if (["set_session_name", "fork", "navigate_tree", "abort"].includes(type)
       || type === "prompt" && typeof command.message === "string" && /^\s*\/name(?:\s|$)/.test(command.message)) this.suppressTitle();

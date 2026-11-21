@@ -92,6 +92,10 @@ test("Claude native commands replace web aliases and bypass extended-chat filter
   const commands = slashCommandsForEngine("claude", native);
   for (const command of native) assert.deepEqual(commands.filter((row) => row.name === command.name), [command]);
   assert.equal(commands.some((row) => row.name === "reload"), false);
+  assert.ok(commands.some((row) => row.name === "restart" && row.source === "builtin"));
+  const pi = slashCommandsForEngine("pi", []);
+  assert.ok(pi.some((row) => row.name === "reload"));
+  assert.ok(!pi.some((row) => row.name === "restart"));
   assert.equal(commands.some((row) => row.name === "session"), false);
   assert.ok(commands.some((row) => row.source === "builtin" && row.name === "copy"));
   assert.deepEqual(slashCommandsForEngine("claude", native, true), native);

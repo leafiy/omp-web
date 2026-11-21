@@ -30,6 +30,11 @@ export function sessionKey(engine: AgentEngine, nativeId: string): string {
   return engine === "omp" ? nativeId : `${engine}:${nativeId}`;
 }
 
+/** These web commands control one conversation's runtime, never a model prompt. */
+export function chatRuntimeCommand(engine: AgentEngine): "reload" | "restart" | undefined {
+  return engine === "pi" ? "reload" : engine === "claude" ? "restart" : undefined;
+}
+
 /** Initial CC/Codex adapters expose basic chat, not OMP/Pi's extended controls. */
 export function supportsExtendedChat(engine: AgentEngine): boolean { return engine === "omp" || engine === "pi"; }
 

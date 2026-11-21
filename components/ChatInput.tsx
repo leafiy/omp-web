@@ -3,7 +3,7 @@
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, QueuedMessageItem, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { clearDraft, clearDraftIfUnchanged, getDraft, prependDraftMessage, setDraft, type ChatDraftImage } from "@/lib/draft-store";
-import { supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { chatRuntimeCommand, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { slashArgumentCompletions, type SlashArgumentCompletion } from "@/lib/slash-command-arguments";
 import {
   MAX_ATTACHED_IMAGE_BYTES,
@@ -171,6 +171,7 @@ const WEB_COMMAND_ALIASES: SlashCommandPaletteItem[] = [
   { name: "help", description: "Show available slash commands and usage", source: "builtin" },
   { name: "compact", description: "chat.commandCompact", source: "builtin" },
   { name: "reload", description: "chat.commandReload", source: "builtin" },
+  { name: "restart", description: "chat.commandRestart", source: "builtin" },
   { name: "name", description: "chat.commandName", source: "builtin" },
   { name: "session", description: "chat.commandSession", source: "builtin" },
   { name: "copy", description: "chat.commandCopy", source: "builtin" },
@@ -180,13 +181,16 @@ const WEB_COMMAND_ALIASES: SlashCommandPaletteItem[] = [
 export const BUILTIN_SLASH_COMMANDS: SlashCommandPaletteItem[] = WEB_COMMAND_ALIASES;
 
 export function slashCommandsForEngine(engine: AgentEngine, native: SlashCommandInfo[], isStreaming = false): SlashCommandPaletteItem[] {
-  const nativeNames = new Set(native.map((command) => command.name));
+  const runtimeCommand = chatRuntimeCommand(engine);
+  const visibleNative = native.filter(c => c.name !== runtimeCommand);
+  const nativeNames = new Set(visibleNative.map((command) => command.name));
   const web = isStreaming ? [] : BUILTIN_SLASH_COMMANDS.filter((command) => {
+    if (command.name === "restart") return command.name === runtimeCommand;
     if (engine === "claude" && nativeNames.has(command.name)) return false;
     if (!supportsExtendedChat(engine)) return !["compact", "reload", "session", "usage"].includes(command.name);
-    return engine !== "pi" || command.name !== "reload";
+    return true;
   });
-  return [...web, ...native];
+  return [...web, ...visibleNative];
 }
 
 const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "omp", "pi", "claude", "extension", "prompt", "skill"];
@@ -875,8 +879,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [draftKey]);
 
   const handleSend = useCallback(async () => {
-    const msg = appendFileAttachments(expandPastedTokens(value, pastedTexts).trim(), attachedFiles);
+    const text = expandPastedTokens(value, pastedTexts).trim();
+    const msg = appendFileAttachments(text, attachedFiles);
     if (!msg && !attachedImages.length) return;
+    const runtimeCommand = chatRuntimeCommand(engine);
+    if (runtimeCommand && text.split(/\s/, 1)[0] === `/${runtimeCommand}` && (attachedImages.length || attachedFiles.length)) {
+      setAttachmentError(t("chat.runtimeNoArgs", { command: runtimeCommand }));
+      return;
+    }
     if (isStreaming || attachmentJobRef.current || normalSendRef.current) return;
     onAudioUnlock?.();
     normalSendRef.current = true;
@@ -908,7 +918,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (accepted !== false) clearAccepted();
     } catch { /* A failed or ambiguous send retains the draft. */ }
     finally { normalSendRef.current = false; }
-  }, [value, attachedImages, attachedFiles, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, prepareOutgoing]);
+  }, [value, attachedImages, attachedFiles, pastedTexts, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, prepareOutgoing, engine, t]);
 
   const slashQuery = !attachedFiles.length && value.startsWith("/") && !/[\r\n]/.test(value)
     ? value.slice(1).toLowerCase()
@@ -949,7 +959,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim() || attachedFiles.length);
   const commandDraft = attachedFiles.length === 0 && value.trimStart().startsWith("/");
-  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !attachmentBusy && !queuedSendBusy
+  const runtimeCommand = chatRuntimeCommand(engine);
+  const runtimeCommandDraft = runtimeCommand && value.trimStart().split(/\s/, 1)[0] === `/${runtimeCommand}`;
+  const canQueueStreamingMessage = !runtimeCommandDraft && hasInputText && attachedImages.length === 0 && !attachmentBusy && !queuedSendBusy
     && !(engine === "claude" && commandDraft);
   const canQueueFollowUpMessage = canQueueStreamingMessage && !commandDraft;
 
@@ -1152,7 +1164,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = appendFileAttachments(expandPastedTokens(value, pastedTexts).trim(), attachedFiles);
     if (!msg || normalSendRef.current || queuedSendRef.current || attachedImages.length || attachmentJobRef.current) return;
-    if ((engine === "claude" || mode === "followup") && msg.startsWith("/")) return;
+    if (runtimeCommandDraft || (engine === "claude" || mode === "followup") && msg.startsWith("/")) return;
     onAudioUnlock?.();
     queuedSendRef.current = true; setQueuedSendBusy(true);
     const sentKey = draftKeyRef.current;
@@ -1174,7 +1186,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
     } catch { /* Keep the draft if a caller rejects instead of returning false. */ }
     finally { queuedSendRef.current = false; setQueuedSendBusy(false); }
-  }, [value, attachedImages, attachedFiles, pastedTexts, engine, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, prepareOutgoing]);
+  }, [value, attachedImages, attachedFiles, pastedTexts, engine, runtimeCommandDraft, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, prepareOutgoing]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;

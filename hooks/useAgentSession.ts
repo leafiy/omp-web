@@ -20,7 +20,7 @@ import { fetchHistoryTurn, historyClientCache, historyUrl, HistoryRequestError }
 import type { HistoryPage } from "@/lib/history-page";
 import { historyTurnKey, type HistoryTurnSummary } from "@/lib/history-turns";
 import { getDraft, prependDraftMessage, setDraft } from "@/lib/draft-store";
-import { engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { chatRuntimeCommand, engineForSession, engineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
 import { preferredModel, rememberChatChoice } from "@/lib/chat-preferences";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -1968,6 +1968,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
 
     try {
+      if (commandName === chatRuntimeCommand(engine)) {
+        if (!sid) return complete({ handled: true, error: "No active session" });
+        if (args) return complete({ handled: true, error: t("chat.runtimeNoArgs", { command: commandName }) });
+        if (agentRunningRef.current || bashRunningRef.current || isCompacting) return complete({ handled: true, error: t("chat.runtimeBusy", { command: commandName }) });
+        cancelEventStreamGrace();
+        try {
+          // Reloaded Pi extensions can ask questions; subscribe before dispatch.
+          if (engine === "pi") await ensureEventsConnected(sid);
+          await sendAgentCommand(sid, { type: commandName });
+          if (sessionIdRef.current !== sid) return { handled: true };
+          if (engine === "claude") {
+            closeEvents(); // An open SSE connection still belongs to the retired CLI.
+            await ensureEventsConnected(sid, true);
+          }
+          await loadSlashCommands();
+          return complete({ handled: true, message: t(engine === "pi" ? "chat.piReloaded" : "chat.claudeRestarted") });
+        } finally { if (sessionIdRef.current === sid) scheduleEventStreamClose(sid); }
+      }
       if (!supportsExtendedChat(engine)) {
         if (commandName === "login" || commandName === "logout") return complete({ handled: true, message: engine === "codex"
           ? "请在终端运行 codex login / codex logout 管理 Codex 登录，不要把登录凭据发到聊天里。"
@@ -2000,7 +2018,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         case "reload":
-          if (engine === "pi") return complete({ handled: true, error: "Pi RPC does not support reload. Start a new Pi chat after configuration changes." });
           // Route through the normal prompt/SSE path so OMP can ask UI questions.
           return { handled: false };
 
@@ -2116,7 +2133,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           addNotice({
             type: "success",
             message: engine === "pi"
-              ? "Slash commands available: /usage, /models, /compact, /name, /session, /copy, /export, /fork, /new, /login, /logout"
+              ? "Slash commands available: /usage, /models, /compact, /reload, /name, /session, /copy, /export, /fork, /new, /login, /logout"
               : "Slash commands available: /usage, /models, /compact, /reload, /name, /session, /copy, /export, /fork, /tree, /new, /login, /logout",
           });
           return complete({ handled: true, message: "Listed available commands" });
@@ -2149,7 +2166,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [activeLeafId, addNotice, engine, ensureNewSession, isCompacting, loadSession, loadSlashCommands, modelList, newSessionCwd, onNewSession, onSessionForked, onSessionStatsPanelOpen, promoteNewSession, session?.cwd]);
+  }, [activeLeafId, addNotice, cancelEventStreamGrace, closeEvents, engine, ensureEventsConnected, ensureNewSession, isCompacting, loadSession, loadSlashCommands, modelList, newSessionCwd, onNewSession, onSessionForked, onSessionStatsPanelOpen, promoteNewSession, scheduleEventStreamClose, session?.cwd, t]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An

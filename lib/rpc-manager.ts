@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sessionReadState } from "./session-read-state";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { AgentRpcClient, type AgentFrame, type AgentProcessOptions } from "./agent-rpc-client";
+import { AgentRpcClient, piReloadExtension, type AgentFrame, type AgentProcessOptions } from "./agent-rpc-client";
 import { engineForSession, nativeSessionId, parseEngine, sessionKey, type AgentEngine } from "./engine";
 import { piWebEvent, piWireCommand } from "./pi-rpc-adapter";
 import { ompEventNotice } from "./omp-rpc-events";
@@ -22,9 +22,13 @@ type EventListener = (event: AgentEvent) => void;
 export interface RpcSessionStartOptions {
   engine?: AgentEngine;
   toolNames?: string[];
+  restartClaude?: boolean;
   initialModel?: { provider: string; modelId: string };
   thinkingLevel?: string;
 }
+
+interface NativeCommand { name: string; description?: string; source: string; sourceInfo?: { path: string } }
+const isPiReloadBridge = (c: NativeCommand) => c.source === "extension" && c.sourceInfo?.path === piReloadExtension;
 
 interface NativeState {
   sessionId: string;
@@ -404,6 +408,28 @@ export class AgentSessionWrapper {
       try { await this.refreshTasks(); } catch { /* Lifecycle events still report the outcome. */ }
       return { stopped: result?.cancelled === true };
     }
+    if (type === "reload" && this.engine === "pi") {
+      if (this.isRunning() || this.hasPendingDialog()) throw new Error("Wait for Pi to finish before reloading");
+      // Interactive /reload is not an RPC command. Only invoke the extension
+      // we shipped, by its live invocation name; never fall back to model text.
+      const { commands } = await this.client.request<{ commands: NativeCommand[] }>({ type: "get_commands" });
+      const bridge = commands.find(isPiReloadBridge);
+      if (!bridge) throw new Error("This Pi process has not loaded the web reload extension");
+      if (this.isRunning() || this.hasPendingDialog()) throw new Error("Wait for Pi to finish before reloading");
+      let failure: string | undefined;
+      // Pi reports a throwing handler as extension_error AND a handled prompt.
+      const detach = this.client.onFrame(frame => {
+        if (frame.type === "extension_error" && frame.extensionPath === `command:${bridge.name}`) failure = String(frame.error);
+      });
+      try {
+        const result = await this.client.request<{ disposition: string }>({ type: "prompt", message: `/${bridge.name}` }, 0);
+        if (failure !== undefined) throw new Error(failure || "Pi reload failed");
+        if (result?.disposition !== "handled") throw new Error("Pi did not confirm the reload command");
+        invalidateModelsCache();
+        await this.refreshState();
+        return null;
+      } finally { detach(); }
+    }
     // Reject absent Pi capabilities before an OMP-only branch can translate them.
     const piCommand = this.engine === "pi" ? piWireCommand(command) : undefined;
     if (type === "get_state") {
@@ -420,8 +446,9 @@ export class AgentSessionWrapper {
       return (state.dumpTools ?? []).map((tool) => ({ ...tool, active: true }));
     }
     if (type === "get_commands") {
-      const result = await this.client.request<{ commands: Array<{ name: string; description?: string; source: string }> }>({ type: this.engine === "pi" ? "get_commands" : "get_available_commands" });
-      return { commands: result.commands.map((item) => ({ ...item, nativeSource: item.source, source: this.engine })) };
+      const result = await this.client.request<{ commands: NativeCommand[] }>({ type: this.engine === "pi" ? "get_commands" : "get_available_commands" });
+      const commands = this.engine === "pi" ? result.commands.filter(c => !isPiReloadBridge(c)) : result.commands;
+      return { commands: commands.map((item) => ({ ...item, nativeSource: item.source, source: this.engine })) };
     }
     if (type === "set_tools") throw new Error("Tool selection is owned by local OMP configuration; Pi tool presets are not supported.");
     if (type === "extension_ui_input") throw new Error("Raw terminal UI is not available over OMP RPC. Use the embedded terminal for TUI-only commands.");
@@ -656,7 +683,10 @@ export async function startRpcSession(
   if (options.engine !== undefined && parseEngine(options.engine) !== engine) {
     throw new Error("Requested engine does not match the session's native engine");
   }
-  if (existing?.isAlive()) return { session: existing, realSessionId: existing.sessionId };
+  if (options.restartClaude) {
+    if (engine !== "claude" || !sessionFile) throw new Error("Restart requires an existing Claude Code conversation");
+    if (existing?.isRunning() || existing?.hasPendingDialog()) throw new Error("Wait for the current session's work and dialogs to finish before restarting");
+  } else if (existing?.isAlive()) return { session: existing, realSessionId: existing.sessionId };
   const locks = globalThis.__ompWebStartLocks ??= new Map();
   const lockKey = `${engine}:${sessionId}`;
   const inflight = locks.get(lockKey);
@@ -672,6 +702,9 @@ export async function startRpcSession(
   const cwdKey = normalizeCwd(sessionCwd);
   startingCwds.set(cwdKey, (startingCwds.get(cwdKey) ?? 0) + 1);
   const starting = (async () => {
+    // shutdown closes the old wrapper synchronously; concurrent resumes share
+    // the start lock below until the new exact-ID session is ready.
+    if (options.restartClaude && existing) await existing.shutdown();
     const processOptions = { engine, cwd: sessionCwd, sessionFile: sessionFile || undefined, initialModel: options.initialModel, thinkingLevel: options.thinkingLevel };
     const changed = () => { invalidateSessionListCache(); notifyRunningChange(); };
     const native = engine === "codex"

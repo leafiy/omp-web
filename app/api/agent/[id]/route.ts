@@ -18,6 +18,13 @@ export async function POST(
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
+    if (body.type === "restart") {
+      if (engineForSession(id) !== "claude") return NextResponse.json({ error: "Only Claude Code sessions support /restart" }, { status: 400 });
+      const path = existing?.sessionFile || await resolveSessionPath(id);
+      if (!path) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      await startRpcSession(id, path, undefined, { restartClaude: true });
+      return NextResponse.json({ success: true, data: null });
+    }
     if (existing?.isAlive()) {
       const result = await existing.send(body);
       return NextResponse.json({ success: true, data: result });

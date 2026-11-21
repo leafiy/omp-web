@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getAgentExecutable } from "./agent-executable";
 import { nativeAgentEnvironment } from "./native-agent-environment";
 import { TextDecoder } from "node:util";
@@ -19,6 +19,8 @@ export function getOmpExecutable(): string { return getAgentExecutable("omp"); }
 
 /** Select native Pi, never the web package's older history-reader dependency. */
 export function getPiExecutable(): string { return getAgentExecutable("pi"); }
+
+export const piReloadExtension = resolve(process.env.OMP_WEB_APP_DIR ?? process.cwd(), "bin/pi-web-reload.mjs");
 
 const MAX_LOGICAL_BYTES = 64 * 1024 * 1024;
 const START_TIMEOUT_MS = 60_000;
@@ -179,6 +181,7 @@ export class AgentRpcClient {
       if (pi) args.push("--no-mcp", "--no-prompt-templates", "--exclude-tools", "*");
       else args.push("--no-rules", "--no-context-files", "--no-lsp", "--no-pty", "--no-prewalk", "--no-title");
     } else if (options.catalogOnly) args.push(...(pi ? ["--no-session"] : ["--no-session", "--no-ui"]));
+    else if (pi) args.push("--extension", piReloadExtension);
     // Title generation must never resume a caller's transcript, even by accident.
     // Pi --resume opens an interactive picker; --session is its exact-path option.
     if (options.sessionFile && !options.titleOnly) args.push(pi ? "--session" : "--resume", options.sessionFile);

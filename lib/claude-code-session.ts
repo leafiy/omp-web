@@ -160,7 +160,7 @@ export class ClaudeCodeSession {
   get sessionFile(): string { return this.transcript?.path ?? ""; }
   getActiveLeafId(): undefined { return undefined; }
   isAlive(): boolean { return this.ready && !this.closed; }
-  isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active); }
+  isRunning(): boolean { return this.isAlive() && (this.busy || this.tasks.active || this.stopping || this.changingModel || this.system.isCompacting || this.inputs.size > 0); }
   hasPendingDialog(): boolean { return this.isAlive() && this.dialogs.size > 0; }
   onDestroy(callback: () => void): void { this.onDestroyCallback = callback; }
   async waitUntilReady(): Promise<void> {
