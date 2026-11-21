@@ -49,6 +49,7 @@ import type { ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ClaudeMcpPanel } from "./ClaudeMcpPanel";
+import { TodoWidget } from "./TodoWidget";
 
 type SessionCopyField = "file" | "id";
 
@@ -406,6 +407,23 @@ export function AppShell() {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
   }, [router, isMobile, syncActiveProject]);
+
+  // A todo link names only the web session ID; select it from the server list.
+  const selectedSessionIdForTodo = selectedSession?.id ?? null;
+  const handleOpenTodoSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    if (selectedSessionIdForTodo === sessionId) return true;
+    try {
+      const response = await fetch("/api/sessions", { cache: "no-store" });
+      if (!response.ok) return false;
+      const data = await response.json() as { sessions?: SessionInfo[] };
+      const session = data.sessions?.find((item) => item.id === sessionId);
+      if (!session) return false;
+      handleSelectSession(session);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [selectedSessionIdForTodo, handleSelectSession]);
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string, engine?: AgentEngine) => {
     const chosenEngine = engine ?? preferredEngine(cwd) ?? newSessionEngine;
@@ -1173,6 +1191,14 @@ export function AppShell() {
               </button>
             );
           })()}
+          {/* Todo badge — the right-most top-bar item; pushes right unless an earlier item already does. */}
+          <TodoWidget
+            compact={compactTopBar}
+            currentSessionId={selectedSession?.id ?? null}
+            onOpenSession={handleOpenTodoSession}
+            onOpen={() => setActiveTopPanel(null)}
+            style={{ marginLeft: showChat && (compactTopBar || sessionStats || contextUsage) ? 0 : "auto" }}
+          />
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
             <div data-top-panel style={{

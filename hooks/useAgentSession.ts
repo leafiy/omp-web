@@ -2590,7 +2590,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue, handleRecallQueuedMessage, handleWithdrawQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
-    dispatch, setAgentRunning, setForkingEntryId,
+    dispatch, setAgentRunning, setForkingEntryId, pauseAutoScroll,
     bashRunning, pendingBash,
     // Subscriptions
     handleAgentEventRef,

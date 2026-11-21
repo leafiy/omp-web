@@ -23,6 +23,9 @@ import { useSessionReadState } from "@/hooks/useSessionReadState";
 import type { SessionReadSnapshot } from "@/lib/session-read-state";
 import { useSessionPins } from "@/hooks/useSessionPins";
 import type { SessionPinSnapshot } from "@/lib/session-pin-state";
+import { summarizeUserMessage } from "@/lib/user-message-content";
+import { todoExcerpt } from "@/lib/todo-client";
+import { SessionTodoMenu } from "./SessionTodoMenu";
 
 function ToolbarIconButton({
   onClick,
@@ -1328,9 +1331,15 @@ function SessionItem({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [todoMenu, setTodoMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeTodoMenu = useCallback(() => setTodoMenu(null), []);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const title = session.name?.trim() || t("sidebar.untitledSession");
+  // An untitled conversation is named after its first prompt in the todo list.
+  const todoTitle = session.name?.trim()
+    || todoExcerpt(summarizeUserMessage(session.firstMessage ?? ""), 120)
+    || title;
   const engine = session.engine ?? engineForSession(session.id);
   const tooltip = [
     title,
@@ -1415,6 +1424,11 @@ function SessionItem({
     <div
       className="sidebar-session-row"
       onClick={confirmDelete || renaming ? undefined : onClick}
+      onContextMenu={confirmDelete || renaming ? undefined : (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setTodoMenu({ x: event.clientX, y: event.clientY });
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       title={confirmDelete || renaming ? undefined : tooltip}
@@ -1633,6 +1647,9 @@ function SessionItem({
             </span>
           )}
         </>
+      )}
+      {todoMenu && (
+        <SessionTodoMenu x={todoMenu.x} y={todoMenu.y} sessionId={session.id} title={todoTitle} onClose={closeTodoMenu} />
       )}
     </div>
   );

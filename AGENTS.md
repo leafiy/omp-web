@@ -98,6 +98,12 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - `POST /api/translate` calls the OpenAI-compatible chat-completions API from the server (browsers may not reach a LAN gateway). Prompts live in `lib/translate-text.ts`: one user message, no system message. Index-Translate (the default) uses its fixed template with `temperature: 0`; `hy-mt*` models (anna's `/services/hy-mt2/v1`, model `hy-mt2-1.8b`) use the Hunyuan-MT template and the server's sampling. Code fences stay verbatim; long prose is chunked.
 - Message translations are display-only and never written to a transcript. The composer toggle under the input (off → ZH→EN → EN→ZH) is remembered per conversation under its draft key, so other chats stay off; a new chat keeps it when it becomes a session or changes directory. It translates send/steer/follow-up text before it goes out, so the transcript holds the translation. Paste markers stay atomic and `!`/`/` drafts go out untranslated. A failed or cancelled translation, or an edit meanwhile, sends nothing and keeps the draft.
 
+## Todo list
+
+- Web-only and shared by every signed-in device: `lib/todo-state.ts` keeps `~/.config/omp-web/todos.json` (or `OMP_WEB_TODO_FILE`), mode 0600, never in an agent directory or transcript. Like session pins, `POST /api/todos` applies one intent (`add`/`update`/`delete`/`clearDone`, client-generated IDs, idempotent) and never a device's whole list; the revision only grows.
+- `lib/todo-client.ts` is the one browser store (visible-tab polling, optimistic intents replayed over newer snapshots). Item text is a snapshot, editable; a `source` (`sessionId`, optional `entryId`/`turnId`/`role`) is only a navigation link and may outlive its conversation.
+- Jumps resolve in `hooks/useTodoJump.ts` against `data-entry-id` on rendered messages and `data-process-entries` on folded process groups; `turnId` (the turn's first entry) opens a folded history turn whole. Keep those attributes when restructuring `ChatWindow` rendering.
+
 ## Source map and checks
 
 Main routes are under `app/api/agent`, `app/api/sessions`, `app/api/models`, `app/api/files`, and `app/api/worktrees`. HTML export delegates to the session's pinned engine and cleans up a private temporary output directory.

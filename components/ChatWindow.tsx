@@ -24,6 +24,8 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { historyTurnKey, isTurnAnchor } from "@/lib/history-turns";
+import { TodoMessageContext, type TodoMessageContextValue } from "./TodoMessageButton";
+import { useTodoJump } from "@/hooks/useTodoJump";
 
 interface Props {
   session: SessionInfo | null;
@@ -213,7 +215,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     agentPhase,
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
-    lastUserMsgRef,
+    lastUserMsgRef, initialScrollDoneRef, pauseAutoScroll,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     previewRewind, handleRewind, handlePermissionModeChange, handleStopTask, handleBackgroundTasks,
     permissionMode, permissionModes,
@@ -318,6 +320,46 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     return history.reverse();
   }, [messages]);
   const messageRefs = useMessageRefs(displayedMessages.filter((m) => m.role === "user" || m.role === "assistant").length);
+
+  // Todo links remember the turn that holds a message, so a jump can open
+  // that folded turn later. Windows and expanded turns start at a turn boundary.
+  const todoTurnIds = useMemo(() => {
+    const map = new Map<string, string>();
+    const addSegment = (segMessages: AgentMessage[], segEntryIds: string[]) => {
+      let anchor = segEntryIds[0];
+      segMessages.forEach((message, index) => {
+        if (isTurnAnchor(message)) anchor = segEntryIds[index];
+        if (anchor && segEntryIds[index]) map.set(segEntryIds[index], anchor);
+      });
+    };
+    for (const turn of historyTurns) {
+      const state = historyTurnStates[historyTurnKey(turn)];
+      if (state?.messages && state.entryIds) addSegment(state.messages, state.entryIds);
+    }
+    addSegment(messages, entryIds);
+    return map;
+  }, [historyTurns, historyTurnStates, messages, entryIds]);
+  const todoMessageContext = useMemo<TodoMessageContextValue>(() => ({
+    sessionId: session?.id,
+    sessionTitle: session?.name?.trim() || undefined,
+    turnIdFor: (entryId) => todoTurnIds.get(entryId),
+  }), [session?.id, session?.name, todoTurnIds]);
+  const beforeTodoJump = useCallback(() => {
+    // Neither the first history scroll nor new streamed content may pull the
+    // reader away from the message they asked to see.
+    initialScrollDoneRef.current = true;
+    pauseAutoScroll();
+  }, [initialScrollDoneRef, pauseAutoScroll]);
+  useTodoJump({
+    sessionId: session?.id,
+    loading,
+    entryIds,
+    historyTurns,
+    historyTurnStates,
+    toggleHistoryTurn,
+    scrollContainerRef,
+    beforeScroll: beforeTodoJump,
+  });
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
@@ -520,6 +562,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
         <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-10 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
+              <TodoMessageContext.Provider value={todoMessageContext}>
               <ExtensionWidgets widgets={aboveEditorWidgets} />
 
             {(() => {
@@ -614,7 +657,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                   );
                   if (!isVisible || renderOptions.attachRef === false || currentRefIdx === undefined) return view;
                   return (
-                    <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+                    <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)} data-entry-id={segEntryIds[idx]}>
                       {view}
                     </div>
                   );
@@ -688,6 +731,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                       <div
                         key={`process-group-${userIdx}-${finalAssistantIdx}`}
                         ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
+                        data-process-entries={[...processIndices, ...(finalAnswerMessage ? [] : [finalAssistantIdx])].map((processIdx) => segEntryIds[processIdx]).filter(Boolean).join(" ")}
                       >
                         {processGroup}
                       </div>,
@@ -794,6 +838,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
             )}
 
             <div ref={messagesEndRef} />
+              </TodoMessageContext.Provider>
             </div>
           </div>
         </div>

@@ -11,8 +11,9 @@ import { claudeInputDiff, isClaudeFileTool, todoGroups, type TodoGroup } from "@
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { countLines, pastedTextPreview } from "@/lib/pasted-text";
-import { copyUserMessage, splitUserMessage } from "@/lib/user-message-content";
+import { copyUserMessage, splitUserMessage, summarizeUserMessage } from "@/lib/user-message-content";
 import { FileAttachment } from "./FileAttachment";
+import { TodoMessageButton } from "./TodoMessageButton";
 import { TranslateButtons, TranslationPanel, useMessageTranslation } from "./MessageTranslation";
 import type {
   AgentMessage,
@@ -309,6 +310,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             </button>
             <TranslateButtons translation={translation} />
           </div>
+          <TodoMessageButton entryId={entryId} role="user" text={summarizeUserMessage(content)} visible={hovered} />
           {(canFork || canNavigate || canRewind) && (
             <div style={{
               display: "flex", gap: 3,
@@ -697,6 +699,7 @@ function AssistantMessageView({
           </button>
         )}
         {!isStreaming && <TranslateButtons translation={translation} visible={hovered} />}
+        {!isStreaming && <TodoMessageButton entryId={entryId} role="assistant" text={textContent} visible={hovered} />}
         {time && !isStreaming && (
           <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}
