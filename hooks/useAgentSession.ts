@@ -111,7 +111,17 @@ type AgentStateResponse = {
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   queuedItems?: QueuedMessageItem[];
+  /** Claude Code native permission mode and the modes the web offers. */
+  permissionMode?: string;
+  permissionModes?: string[];
 };
+
+/** Claude Code Rewind preview: what restoring code and/or conversation would change. */
+export interface RewindPreview {
+  conversation: { canRewind: boolean; error?: string; messagesRemoved?: number };
+  files: { canRewind: boolean; error?: string; filesChanged: string[]; insertions: number; deletions: number };
+}
+export type RewindMode = "both" | "conversation" | "files";
 
 export interface QueuedMessageItem { id?: string; kind: "steer" | "follow_up"; text: string; state?: "queued" | "sending" | "unconfirmed"; source?: "web"; }
 export interface QueuedMessages {
@@ -488,6 +498,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setQueuedMessagesState(normalized);
   }, []);
   const [nativeSteeringAvailable, setNativeSteeringAvailable] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<string | null>(null);
+  const [permissionModes, setPermissionModes] = useState<string[]>([]);
   const [recallingQueue, setRecallingQueue] = useState(false);
   const recallingQueueRef = useRef(false);
 
@@ -659,6 +671,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const liveState = agentState.state;
         if (liveState) {
           if (liveState.supportsSteering !== undefined) setNativeSteeringAvailable(liveState.supportsSteering);
+          if (typeof liveState.permissionMode === "string") setPermissionMode(liveState.permissionMode);
+          if (Array.isArray(liveState.permissionModes)) setPermissionModes(liveState.permissionModes);
           if (contextRevision === contextRevisionRef.current && liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
@@ -1299,6 +1313,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (state.model) setCurrentModelOverride({ provider: state.model.provider, modelId: state.model.id });
         if (state.thinkingLevel !== undefined) setThinkingLevel(state.thinkingLevel as ThinkingLevelOption);
         if (state.supportsSteering !== undefined) setNativeSteeringAvailable(state.supportsSteering);
+        if (typeof state.permissionMode === "string") setPermissionMode(state.permissionMode);
+        if (Array.isArray(state.permissionModes)) setPermissionModes(state.permissionModes);
         if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
         if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
         if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
@@ -1515,6 +1531,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       case "agent_capabilities":
         if (engine === "claude") setNativeSteeringAvailable(event.supportsSteering === true);
+        break;
+      case "permission_mode":
+        // Native changes (Shift+Tab equivalents, ExitPlanMode approval) arrive here too.
+        if (engine === "claude" && typeof event.mode === "string") setPermissionMode(event.mode);
         break;
       case "queue_update":
         setQueuedMessages({
@@ -1743,10 +1763,70 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Fork failed:", e);
+      addNotice({ type: "error", message: `Fork failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setForkingEntryId(null);
     }
-  }, [onSessionForked]);
+  }, [onSessionForked, addNotice]);
+
+  /** Claude Code only: what Rewind would restore, without changing anything. */
+  const previewRewind = useCallback(async (entryId: string): Promise<RewindPreview> => {
+    const sid = sessionIdRef.current;
+    if (!sid) throw new Error("No active session");
+    return await sendAgentCommand<RewindPreview>(sid, { type: "rewind_preview", entryId });
+  }, []);
+
+  const handleRewind = useCallback(async (entryId: string, mode: RewindMode): Promise<boolean> => {
+    if (bashRunningRef.current || agentRunningRef.current) return false;
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ conversation?: boolean; text?: string; files?: { filesChanged?: string[] } }>(sid, { type: "rewind", entryId, mode });
+      historyClientCache.invalidate(sid);
+      await loadSession(sid, true);
+      // Like the terminal: the rewound prompt returns to the composer for editing.
+      if (result?.conversation && result.text) opts.chatInputRef?.current?.editText(result.text);
+      const changed = result?.files?.filesChanged?.length ?? 0;
+      addNotice({ type: "success", message: result?.conversation
+        ? (result.files ? `Rewound conversation and restored ${changed} file(s)` : "Rewound conversation")
+        : `Restored ${changed} file(s)` });
+      return true;
+    } catch (e) {
+      addNotice({ type: "error", message: `Rewind failed: ${e instanceof Error ? e.message : String(e)}` });
+      return false;
+    }
+  }, [addNotice, loadSession, opts.chatInputRef]);
+
+  const handlePermissionModeChange = useCallback(async (mode: string) => {
+    if (engine !== "claude") return;
+    const previous = permissionMode;
+    setPermissionMode(mode);
+    try {
+      const sid = sessionIdRef.current ?? await ensureNewSession();
+      if (!sid) throw new Error("No active session");
+      const result = await sendAgentCommand<{ permissionMode?: string }>(sid, { type: "set_permission_mode", mode });
+      if (typeof result?.permissionMode === "string") setPermissionMode(result.permissionMode);
+    } catch (e) {
+      setPermissionMode(previous);
+      addNotice({ type: "error", message: `Could not switch Claude Code mode: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }, [engine, permissionMode, ensureNewSession, addNotice]);
+
+  const handleStopTask = useCallback(async (taskId: string) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try { await sendAgentCommand(sid, { type: "stop_task", taskId }); }
+    catch (e) { addNotice({ type: "error", message: `Could not stop task: ${e instanceof Error ? e.message : String(e)}` }); }
+  }, [addNotice]);
+
+  const handleBackgroundTasks = useCallback(async (toolUseId?: string) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const result = await sendAgentCommand<{ backgrounded?: boolean }>(sid, { type: "background_tasks", ...(toolUseId ? { toolUseId } : {}) });
+      if (result?.backgrounded === false) addNotice({ type: "info", message: "That task is no longer running in the foreground" });
+    } catch (e) { addNotice({ type: "error", message: `Could not move to background: ${e instanceof Error ? e.message : String(e)}` }); }
+  }, [addNotice]);
 
   const handleNavigate = useCallback(async (entryId: string) => {
     if (bashRunningRef.current) return;
@@ -2337,6 +2417,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         if (agentState?.state) {
           if (agentState.state.supportsSteering !== undefined) setNativeSteeringAvailable(agentState.state.supportsSteering);
+          if (typeof agentState.state.permissionMode === "string") setPermissionMode(agentState.state.permissionMode);
+          if (Array.isArray(agentState.state.permissionModes)) setPermissionModes(agentState.state.permissionModes);
           if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
           if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
           if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
@@ -2491,6 +2573,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage: sessionStats?.contextUsage ?? contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
+    permissionMode, permissionModes,
     canSendDuringRun: supportsExtendedChat(engine) || (engine === "claude" && nativeSteeringAvailable),
     canQueueFollowUp: true,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
@@ -2502,6 +2585,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    previewRewind, handleRewind, handlePermissionModeChange, handleStopTask, handleBackgroundTasks,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue, handleRecallQueuedMessage, handleWithdrawQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,

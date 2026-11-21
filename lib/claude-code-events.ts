@@ -29,6 +29,33 @@ function assistantBlock(value: unknown): AssistantContentBlock | undefined {
   return undefined;
 }
 
+const MAX_DIFF_CHARS = 200_000;
+
+/**
+ * Claude Code's native Edit/Write results carry a structured patch with real
+ * line numbers. Render it as a unified diff for the existing diff view.
+ */
+export function claudeToolResultDiff(value: unknown): string | undefined {
+  const result = record(value);
+  const file = typeof result.filePath === "string" ? result.filePath : "";
+  const hunks = Array.isArray(result.structuredPatch) ? result.structuredPatch.map(record) : [];
+  const lines: string[] = [];
+  if (hunks.length) {
+    lines.push(`--- ${file || "a"}`, `+++ ${file || "b"}`);
+    for (const hunk of hunks) {
+      const numbers = [hunk.oldStart, hunk.oldLines, hunk.newStart, hunk.newLines];
+      if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n)) || !Array.isArray(hunk.lines)) return undefined;
+      lines.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
+      for (const line of hunk.lines) if (typeof line === "string") lines.push(line);
+    }
+  } else if (result.type === "create" && typeof result.content === "string") {
+    const body = result.content.replace(/\n$/, "").split("\n");
+    lines.push("--- /dev/null", `+++ ${file || "b"}`, `@@ -0,0 +1,${body.length} @@`, ...body.map((line) => `+${line}`));
+  } else return undefined;
+  const text = lines.join("\n");
+  return text.length <= MAX_DIFF_CHARS ? text : undefined;
+}
+
 /** Converts SDK messages; partial snapshots are never committed as final messages. */
 export class ClaudeEventProjector {
   private partial?: AssistantMessage;
@@ -96,12 +123,16 @@ export class ClaudeEventProjector {
       }
     } else {
       // Input messages are emitted by the sender; SDK user messages contain tool results.
+      const resultBlocks = blocks.filter((rawBlock) => record(rawBlock).type === "tool_result");
+      // The native structured result belongs to the frame's single tool result.
+      const diff = resultBlocks.length === 1 ? claudeToolResultDiff(frame.tool_use_result) : undefined;
       for (const rawBlock of blocks) {
         const b = record(rawBlock);
         if (b.type !== "tool_result" || typeof b.tool_use_id !== "string") continue;
         const result: AgentMessage = {
           role: "toolResult", toolCallId: b.tool_use_id, toolName: this.tools.get(b.tool_use_id),
           content: mediaContent(b.content), isError: b.is_error === true, timestamp: Date.now(),
+          ...(diff && b.is_error !== true ? { details: { diff } } : {}),
         };
         events.push({ type: "tool_execution_end", toolCallId: b.tool_use_id, toolName: result.toolName });
         events.push({ type: "message_end", message: result });

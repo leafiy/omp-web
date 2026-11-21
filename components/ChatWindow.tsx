@@ -2,7 +2,8 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
-import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, supportsMessageFork, type AgentEngine } from "@/lib/engine";
+import { ClaudeRewindDialog } from "./ClaudeRewindDialog";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
@@ -58,6 +59,8 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
+/** Claude Code tools whose foreground run can be moved to the background. */
+const BACKGROUNDABLE_TOOLS = new Set(["Bash", "Agent", "Task"]);
 const CHAT_COLUMN_PADDING = 24;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
@@ -212,6 +215,8 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    previewRewind, handleRewind, handlePermissionModeChange, handleStopTask, handleBackgroundTasks,
+    permissionMode, permissionModes,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueuedMessage, recallingQueue,
     handleBuiltinSlashCommand,
@@ -222,6 +227,12 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning;
+  const isClaude = engine === "claude";
+  // Claude Code Rewind: the dialog previews native checkpoints before restoring.
+  const [rewindEntryId, setRewindEntryId] = useState<string | null>(null);
+  const openRewind = useCallback((entryId: string) => { setRewindEntryId(entryId); }, []);
+  // Claude's native /compact runs through the prompt path, so its progress events apply.
+  const compactClaude = useCallback(() => { void handleSend("/compact"); }, [handleSend]);
 
   useEffect(() => {
     if (!extensionDialog || soundedExtensionDialogIdRef.current === extensionDialog.id) return;
@@ -350,7 +361,10 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       modelError={modelError}
       modelScopeWarnings={modelScopeWarnings}
       onModelChange={handleModelChange}
-      onCompact={supportsExtendedChat(engine) && (session || isNew) ? handleCompact : undefined}
+      onCompact={supportsExtendedChat(engine) && (session || isNew) ? handleCompact : isClaude && session ? compactClaude : undefined}
+      permissionMode={isClaude ? permissionMode : null}
+      permissionModes={isClaude ? permissionModes : undefined}
+      onPermissionModeChange={isClaude && (session || isNew) ? handlePermissionModeChange : undefined}
       onAbortCompaction={engine === "omp" ? handleAbortCompaction : undefined}
       isCompacting={isCompacting}
       compactError={compactError}
@@ -430,6 +444,16 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
         <ExtensionDialog
           request={extensionDialog}
           onRespond={respondToExtensionUi}
+        />
+      )}
+
+      {isClaude && rewindEntryId && (
+        <ClaudeRewindDialog
+          entryId={rewindEntryId}
+          cwd={session?.cwd ?? newSessionCwd ?? undefined}
+          onPreview={previewRewind}
+          onRewind={handleRewind}
+          onClose={() => setRewindEntryId(null)}
         />
       )}
 
@@ -577,9 +601,10 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                       cwd={messageCwd}
                       onOpenFile={onOpenFile}
                       entryId={segEntryIds[idx]}
-                      onFork={sessionBusy || isNew || !supportsExtendedChat(engine) || (options.branchStart && idx === 0 && msg.role === "user") ? undefined : handleFork}
+                      onFork={sessionBusy || isNew || !supportsMessageFork(engine) || (options.branchStart && idx === 0 && msg.role === "user") ? undefined : handleFork}
                       forking={forkingEntryId === segEntryIds[idx]}
                       onNavigate={sessionBusy || engine !== "omp" ? undefined : handleNavigate}
+                      onRewind={sessionBusy || isNew || !isClaude ? undefined : openRewind}
                       prevAssistantEntryId={sessionBusy || engine !== "omp" ? undefined : prevAssistantEntryId}
                       onEditContent={handleEditContent}
                       showTimestamp={showTimestamp}
@@ -734,8 +759,19 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
             )}
 
             {agentRunning && !streamState.streamingMessage && agentPhase && (
-              <div className="py-2 text-[13px] text-text-muted">
+              <div className="py-2 text-[13px] text-text-muted" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
+                {/* Claude Code's Ctrl+B: move a blocking Bash/agent call to the background. */}
+                {isClaude && agentPhase.kind === "running_tools" && agentPhase.tools.some((tool) => BACKGROUNDABLE_TOOLS.has(tool.name)) && (
+                  <button
+                    type="button"
+                    onClick={() => { for (const tool of agentPhase.tools) if (BACKGROUNDABLE_TOOLS.has(tool.name)) void handleBackgroundTasks(tool.id); }}
+                    title={t("tasks.backgroundTitle")}
+                    style={{ padding: "2px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}
+                  >
+                    {t("tasks.background")}
+                  </button>
+                )}
               </div>
             )}
 
@@ -782,7 +818,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
-            <AgentTasksPanel snapshot={taskSnapshot} mainRunning={sessionBusy} stale={taskStatusStale} onOpen={onOpenTask ? task => { if (sessionIdRef.current) onOpenTask(sessionIdRef.current, task); } : undefined} />
+            <AgentTasksPanel snapshot={taskSnapshot} mainRunning={sessionBusy} stale={taskStatusStale} onOpen={onOpenTask ? task => { if (sessionIdRef.current) onOpenTask(sessionIdRef.current, task); } : undefined} onStop={isClaude && !taskStatusStale ? task => handleStopTask(task.id) : undefined} />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>

@@ -7,6 +7,7 @@ import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getToolPreview } from "@/lib/tool-preview";
+import { claudeInputDiff, isClaudeFileTool, todoItems, type TodoItem } from "@/lib/tool-input-diff";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { countLines, pastedTextPreview } from "@/lib/pasted-text";
@@ -70,6 +71,8 @@ interface Props {
   onFork?: (entryId: string) => void;
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
+  /** Claude Code: restore code and/or conversation to before this user message. */
+  onRewind?: (entryId: string) => void;
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
   showTimestamp?: boolean;
@@ -104,9 +107,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onRewind={onRewind} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
@@ -136,6 +139,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onFork === next.onFork
     && prev.forking === next.forking
     && prev.onNavigate === next.onNavigate
+    && prev.onRewind === next.onRewind
     && prev.prevAssistantEntryId === next.prevAssistantEntryId
     && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
@@ -143,7 +147,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -151,6 +155,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onFork?: (entryId: string) => void;
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
+  onRewind?: (entryId: string) => void;
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
 }) {
@@ -187,6 +192,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
+  const canRewind = !!entryId && !!onRewind;
 
   const copyContent = () => {
     copyText(copyUserMessage(content)).then(() => {
@@ -303,13 +309,39 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             </button>
             <TranslateButtons translation={translation} />
           </div>
-          {(canFork || canNavigate) && (
+          {(canFork || canNavigate || canRewind) && (
             <div style={{
               display: "flex", gap: 3,
               opacity: (hovered || forking) ? 1 : 0,
               pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
+              {canRewind && (
+                <button
+                  type="button"
+                  onClick={() => { onRewind!(entryId!); }}
+                  title={t("chat.rewindTitle")}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    padding: "3px 8px", height: 22,
+                    background: "none", border: "none",
+                    borderRadius: 5,
+                    color: "var(--text-dim)",
+                    cursor: "pointer",
+                    fontSize: 11, fontWeight: 400,
+                    whiteSpace: "nowrap",
+                    transition: "color 0.12s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                    <polyline points="3 3 3 8 8 8" />
+                  </svg>
+                  {t("chat.rewind")}
+                </button>
+              )}
               {canNavigate && (
                 <button
                   onClick={() => { onNavigate!(prevAssistantEntryId!); onEditContent?.(content); }}
@@ -790,6 +822,11 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+  // Claude Code results without a native diff (older history): show the change from the input.
+  const inputDiff = useMemo(() => resultDiff || result?.isError ? null : claudeInputDiff(block.toolName, block.input), [resultDiff, result?.isError, block.toolName, block.input]);
+  const shownDiff = resultDiff ?? (inputDiff ? { text: inputDiff } : null);
+  const todos = useMemo(() => todoItems(block.toolName, block.input), [block.toolName, block.input]);
+  const hideInput = isEditTool || Boolean(todos) || Boolean(shownDiff && isClaudeFileTool(block.toolName));
 
   // Result display
   const resultText = result
@@ -841,8 +878,11 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         </svg>
       </button>
 
+      {/* ── Claude Code TodoWrite: the list itself, always visible ── */}
+      {todos && <TodoListView items={todos} />}
+
       {/* ── Expanded: input args ── */}
-      {expanded && !isEditTool && (
+      {expanded && !hideInput && (
         <pre
           style={{
             margin: 0,
@@ -861,21 +901,35 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         </pre>
       )}
 
-      {/* ── Paired result — only shown when expanded ── */}
-      {expanded && result && (
-        resultDiff ? (
-          <PairedDiffResult
-            diff={resultDiff}
-          />
-        ) : (
-          <PairedResult
-            text={resultText ?? ""}
-            isEmpty={resultIsEmpty}
-            isError={isError}
-          />
-        )
-      )}
+      {/* ── Paired result — only shown when expanded. A pending edit shows its input diff. ── */}
+      {expanded && (shownDiff ? (
+        <PairedDiffResult
+          diff={shownDiff}
+        />
+      ) : result && (
+        <PairedResult
+          text={resultText ?? ""}
+          isEmpty={resultIsEmpty}
+          isError={isError}
+        />
+      ))}
     </div>
+  );
+}
+
+function TodoListView({ items }: { items: TodoItem[] }) {
+  return (
+    <ul style={{ listStyle: "none", margin: 0, padding: "6px 10px 8px", borderTop: "1px solid rgba(34,197,94,0.15)", display: "grid", gap: 3 }}>
+      {items.map((item, index) => {
+        const done = item.status === "completed", active = item.status === "in_progress";
+        return (
+          <li key={index} style={{ display: "flex", gap: 7, alignItems: "baseline", fontSize: 12, lineHeight: 1.5, color: done ? "var(--text-dim)" : active ? "var(--text)" : "var(--text-muted)" }}>
+            <span aria-hidden="true" style={{ flexShrink: 0, width: 12, fontFamily: "var(--font-mono)", color: done ? "#16a34a" : active ? "var(--accent)" : "var(--text-dim)" }}>{done ? "✓" : active ? "▸" : "○"}</span>
+            <span style={{ textDecoration: done ? "line-through" : "none", fontWeight: active ? 600 : 400, overflowWrap: "anywhere" }}>{active && item.activeForm ? item.activeForm : item.content}</span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

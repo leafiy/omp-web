@@ -16,6 +16,15 @@ export function getToolPreview(
   const input = block.input;
   if (!input || typeof input !== "object") return "";
 
+  // Claude Code's TodoWrite: progress, not the raw todo array.
+  if (block.toolName === "TodoWrite" && Array.isArray(input.todos)) {
+    const todos = input.todos.filter((todo): todo is Record<string, unknown> => Boolean(todo) && typeof todo === "object");
+    const done = todos.filter((todo) => todo.status === "completed").length;
+    const active = todos.find((todo) => todo.status === "in_progress");
+    const label = active && (typeof active.activeForm === "string" ? active.activeForm : typeof active.content === "string" ? active.content : "");
+    if (todos.length) return compactPreview(`${done}/${todos.length} done${label ? ` · ${label}` : ""}`);
+  }
+
   if (block.toolName === "AskUserQuestion") {
     if (resultText?.trim() && resultText.trim() !== "(no output)") {
       return compactPreview(resultText);

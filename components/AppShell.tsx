@@ -32,7 +32,7 @@ import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
 import { DEFAULT_NEW_SESSION_CWD } from "@/lib/session-projects";
-import { engineForSession, engineLabel, parseEngine, supportsExtendedChat, type AgentEngine } from "@/lib/engine";
+import { engineForSession, engineLabel, parseEngine, supportsHtmlExport, type AgentEngine } from "@/lib/engine";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -48,6 +48,7 @@ import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { ClaudeMcpPanel } from "./ClaudeMcpPanel";
 
 type SessionCopyField = "file" | "id";
 
@@ -250,10 +251,10 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "language" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "language" | "mcp" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "language") => {
+  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "language" | "mcp") => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
   }, [isMobile]);
@@ -897,8 +898,9 @@ export function AppShell() {
           <ThemePicker compact={compactTopBar} onOpen={() => setActiveTopPanel(null)} />
           <LanguagePicker compact={compactTopBar} onOpen={() => setActiveTopPanel(null)} />
           {compactTopBar && showChat && <MobileToolbarMenu label={translate("toolbar.more")} onOpen={() => setActiveTopPanel(null)} items={[
-            { key: "history", label: translate("history.full"), disabled: !selectedSession || !supportsExtendedChat(activeEngine), onSelect: handleViewFullHistory },
+            { key: "history", label: translate("history.full"), disabled: !selectedSession || !supportsHtmlExport(activeEngine), onSelect: handleViewFullHistory },
             { key: "system", label: translate("system.prompt"), onSelect: () => toggleTopPanel("system") },
+            ...(activeEngine === "claude" && selectedSession ? [{ key: "mcp", label: translate("mcp.title"), onSelect: () => toggleTopPanel("mcp") }] : []),
             ...(sessionStats || contextUsage ? [{ key: "session", label: `${translate("session.title")}${contextUsage?.contextWindow ? ` · ${Math.round(contextUsage.contextWindow / 1000)}k` : ""}`, onSelect: () => toggleTopPanel("session") }] : []),
             ...(activeEngine === "omp" ? [{ key: "branches", label: translate("i18n.branches"), onSelect: () => toggleTopPanel("branches") }] : []),
             ...(projectTrust?.requiresTrust && !projectTrust.trusted ? [{ key: "trust", label: translate("trust.resourcesNotLoaded"), onSelect: () => { setProjectTrustError(null); setProjectTrustDialogOpen(true); } }] : []),
@@ -951,8 +953,8 @@ export function AppShell() {
             <div style={{ display: "flex", alignItems: "stretch", height: 36 }}>
               <button
                 onClick={handleViewFullHistory}
-                disabled={!selectedSession || !supportsExtendedChat(activeEngine)}
-                 title={!supportsExtendedChat(activeEngine) ? (locale === "zh-CN" ? `${engineLabel(activeEngine)} 暂不支持 HTML 导出` : `${engineLabel(activeEngine)} HTML export is not available yet`) : selectedSession ? translate("history.full") : translate("history.unsaved")}
+                disabled={!selectedSession || !supportsHtmlExport(activeEngine)}
+                 title={!supportsHtmlExport(activeEngine) ? (locale === "zh-CN" ? `${engineLabel(activeEngine)} 暂不支持 HTML 导出` : `${engineLabel(activeEngine)} HTML export is not available yet`) : selectedSession ? translate("history.full") : translate("history.unsaved")}
                  aria-label={translate("history.full")}
                 style={{
                   display: "flex",
@@ -1043,6 +1045,32 @@ export function AppShell() {
                 </svg>
                  {!isMobile && <span>{translate("system.label")}</span>}
               </button>
+              {activeEngine === "claude" && selectedSession && (
+                <button
+                  onClick={() => toggleTopPanel("mcp")}
+                  title={translate("mcp.title")}
+                  aria-label={translate("mcp.title")}
+                  aria-pressed={activeTopPanel === "mcp"}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    height: "100%", padding: "0 12px",
+                    background: activeTopPanel === "mcp" ? "var(--bg-selected)" : "none",
+                    border: "none",
+                    borderTop: activeTopPanel === "mcp" ? "2px solid var(--accent)" : "2px solid transparent",
+                    borderRight: "1px solid var(--border)",
+                    cursor: "pointer",
+                    color: activeTopPanel === "mcp" ? "var(--text)" : "var(--text-muted)",
+                    fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "mcp" ? "var(--text)" : "var(--text-muted)"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                    <path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a6 6 0 0 1-12 0V8Z" />
+                  </svg>
+                  {!isMobile && <span>MCP</span>}
+                </button>
+              )}
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -1184,6 +1212,9 @@ export function AppShell() {
                     </div>
                   )}
                 </div>
+              )}
+              {activeTopPanel === "mcp" && activeEngine === "claude" && selectedSession && (
+                <ClaudeMcpPanel sessionId={selectedSession.id} />
               )}
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{

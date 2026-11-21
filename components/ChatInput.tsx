@@ -87,6 +87,10 @@ interface Props {
   onSoundToggle?: () => void;
   onAudioUnlock?: () => void;
   draftKey?: string;
+  /** Claude Code permission mode (default, acceptEdits, plan, auto). */
+  permissionMode?: string | null;
+  permissionModes?: string[];
+  onPermissionModeChange?: (mode: string) => void;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
 }
@@ -391,6 +395,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onPromptWithStreamingBehavior,
   draftKey,
   cwd,
+  permissionMode, permissionModes, onPermissionModeChange,
 }: Props, ref) {
   const { t, locale } = useI18n();
   const isMobile = useIsMobile();
@@ -402,6 +407,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [modelFilter, setModelFilter] = useState("");
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
+  const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
@@ -450,6 +456,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
   const toolDropdownRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
+  const permissionDropdownRef = useRef<HTMLDivElement>(null);
   const controlsMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1491,6 +1498,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node)) {
         setThinkingDropdownOpen(false);
       }
+      if (permissionDropdownRef.current && !permissionDropdownRef.current.contains(e.target as Node)) {
+        setPermissionDropdownOpen(false);
+      }
       if (controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node)) {
         setControlsMenuOpen(false);
       }
@@ -2447,6 +2457,82 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 backdropFilter: "blur(10px)",
               } : null),
             }}>
+            {onPermissionModeChange && permissionModes && permissionModes.length > 0 && (
+              // Claude Code's Shift+Tab modes; switchable mid-run like the terminal.
+              <div ref={permissionDropdownRef} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setPermissionDropdownOpen((v) => !v)}
+                  title={t("chat.permissionModeTitle", { mode: t(`chat.permissionMode.${permissionMode ?? "default"}`) })}
+                  aria-label={t("chat.permissionModeLabel")}
+                  aria-expanded={permissionDropdownOpen}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                    padding: isMobile ? "0 10px" : "10px 14px",
+                    minWidth: 44,
+                    height: 44,
+                    background: permissionDropdownOpen ? "var(--bg-hover)" : "none",
+                    border: "none",
+                    borderRadius: 9,
+                    color: permissionMode === "plan" ? "#0891b2" : permissionMode === "acceptEdits" ? "#7c3aed" : permissionMode === "auto" ? "#d97706" : "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: 14,
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = permissionDropdownOpen ? "var(--bg-hover)" : "none"; }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    {permissionMode === "plan"
+                      ? <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M4 6h.01" /><path d="M4 12h.01" /><path d="M4 18h.01" /></>
+                      : permissionMode === "acceptEdits" || permissionMode === "auto"
+                        ? <><path d="m5 4 7 8-7 8" /><path d="m12 4 7 8-7 8" /></>
+                        : <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />}
+                  </svg>
+                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t(`chat.permissionMode.${permissionMode ?? "default"}`)}</span>}
+                </button>
+                {permissionDropdownOpen && (
+                  <div role="menu" style={{
+                    position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+                    zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
+                    borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
+                    overflow: "hidden", minWidth: 240,
+                  }}>
+                    {permissionModes.map((mode) => {
+                      const isActive = (permissionMode ?? "default") === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          onClick={() => { setPermissionDropdownOpen(false); if (!isActive) onPermissionModeChange(mode); }}
+                          style={{
+                            display: "flex", alignItems: "flex-start", gap: 8,
+                            width: "100%", padding: "7px 12px",
+                            background: isActive ? "var(--bg-selected)" : "none",
+                            border: "none",
+                            color: isActive ? "var(--text)" : "var(--text-muted)",
+                            cursor: "pointer", fontSize: 12, textAlign: "left",
+                            fontWeight: isActive ? 600 : 400,
+                          }}
+                          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
+                        >
+                          {isActive
+                            ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 3 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
+                            : <span style={{ width: 10, flexShrink: 0 }} />}
+                          <span style={{ display: "grid", gap: 1 }}>
+                            <span style={{ whiteSpace: "nowrap" }}>{t(`chat.permissionMode.${mode}`)}</span>
+                            <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 400 }}>{t(`chat.permissionModeDesc.${mode}`)}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button

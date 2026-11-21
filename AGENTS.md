@@ -41,6 +41,7 @@ GET /api/models     →      cache keyed by engine + cwd → ephemeral native RP
 - Claude Code titles live in its native transcript (`ai-title`/`custom-title`, read via SDK `getSessionInfo().customTitle`); the web projection only stores web renames, which take precedence.
 - Keep each engine's native tool/config/auth decisions. The old Pi `none/default/full` allow-list is not an OMP tool inventory. Stale tool-preset requests must not silently enable tools.
 - OMP `rpc-ui` and Pi RPC enable supported tool dialogs. Startup dialogs arriving before a browser can attach are cancelled, never approved, and surfaced as warnings. Replay pending dialog requests on SSE reconnect; cancellations remove them.
+- Claude Code "Always allow" offers only CC's own additive `suggestions` (session-scoped, or CC's native destination when labelled); never `bypassPermissions`. Web permission modes are `default/acceptEdits/plan/auto`. MCP elicitations become web dialogs; unrenderable schemas or non-HTTP(S) URLs decline. The MCP panel never receives server config (commands, URLs, headers, env). See [Claude Code advanced controls](./docs/claude-code-advanced.zh-CN.md).
 - Ordinary shell commands use native RPC `bash`. OMP refuses `!!` because its RPC has no exclude-from-context field; Pi supports its own wire field. The embedded terminal is independent.
 - Unsupported commands fail clearly, with unavailable actions hidden/disabled for the selected engine; never return fake success or substitute an engine.
 
@@ -51,7 +52,8 @@ GET /api/models     →      cache keyed by engine + cwd → ephemeral native RP
 - `lib/engine-paths.ts` selects isolated stores. Pi uses `OMP_WEB_PI_AGENT_DIR` or `~/.pi/agent`, not the service's legacy `PI_CODING_AGENT_DIR` (which currently belongs to OMP). Do not copy credentials between engines or allow both stores to resolve to the same directory.
 
 - Resume the selected engine by exact path, never by `--continue`. Each engine owns persistence; keep OMP's native session leases and never steal a terminal session.
-- Message Fork means before that user entry: OMP `branch`, Pi `fork`. Whole-session Fork uses the engine's own supported operation. Identity changes must release the OLD registry key before returning the new, engine-qualified web ID.
+- Message Fork means before that user entry: OMP `branch`, Pi `fork`, Claude Code `forkSession` up to the preceding native chain entry (its UUIDs are remapped; the web projection is copied with `parentSession`). Whole-session Fork uses the engine's own supported operation. Identity changes must release the OLD registry key before returning the new, engine-qualified web ID.
+- Claude Code Rewind restores files through native `rewindFiles` (file checkpointing on) and/or branches the web projection with a `native_rewind` marker. It closes the live CLI; the next start passes `resumeSessionAt` until an assistant reply lands on the new branch. Web sends record their native UUID; legacy entries match only unambiguous text. Never rewrite native transcripts.
 - OMP `navigate_tree` is an in-file branch change, not a new file. Its wire field is `entryId`, while the web command uses `targetId`. OMP may move the leaf before durable append; expose the cached native leaf. Do not imply Pi RPC supports navigation when its protocol does not.
 - Native title-slot records can precede the header. Preserve byte order and padding. GET/history/export must not rewrite the source file or construct a writable Pi SessionManager.
 - Native `model_change` has a combined `provider/modelId` and optional role. Adapt only the default role for display; preserve node IDs/parents. `activeLeafId` can keep late usage entries off the active branch.
@@ -74,7 +76,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 - Normalize tool-call field names in `lib/normalize.ts`: stored `{ id, name, arguments }` versus UI `{ toolCallId, toolName, input }`.
 - `entryIds` and displayed history messages must stay parallel for Fork/navigation targets.
 - Long history is folded per user turn (`lib/history-turns.ts`): recent turns load whole, older turns are outlined rows that fetch the whole turn on expand. Never split a turn, and never reintroduce per-message placeholders or "load more" paging. See [history cache](./docs/history-cache.zh-CN.md).
-- OMP `manual_compaction_start/end` maps to web `compaction_start/end`; Pi's supported events are adapted separately. Auto-compaction must remain busy until the engine settles.
+- OMP `manual_compaction_start/end` maps to web `compaction_start/end`; Pi's supported events are adapted separately. Claude's `status: compacting`/`compact_boundary`, `api_retry`, hooks and notices map in `lib/claude-system-events.ts`. Auto-compaction must remain busy until the engine settles.
 - Browser prompts may arrive concurrently from tools/subagents. Keep dialog IDs and queue pending dialogs rather than losing earlier ones.
 - Completion audio requires a user gesture; preserve `useAudio` unlock behavior.
 

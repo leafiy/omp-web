@@ -35,3 +35,9 @@ export function supportsExtendedChat(engine: AgentEngine): boolean { return engi
 
 /** Deletion has its own native-store support; it does not imply Fork/navigation. */
 export function supportsSessionDeletion(engine: AgentEngine): boolean { return engine !== "codex"; }
+
+/** OMP/Pi export natively; Claude Code renders its read-only web projection. */
+export function supportsHtmlExport(engine: AgentEngine): boolean { return engine !== "codex"; }
+
+/** Message Fork: OMP branch, Pi fork, Claude Code forkSession before the chosen user entry. */
+export function supportsMessageFork(engine: AgentEngine): boolean { return engine !== "codex"; }

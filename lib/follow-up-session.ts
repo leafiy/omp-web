@@ -283,13 +283,13 @@ export class FollowUpSession implements FollowUpNativeSession {
         return { steering: strings(nativeRemoved.steering), followUp: [...strings(nativeRemoved.followUp), ...removed.map(item => item.text)] };
       } finally { this.manualRequests--; this.schedule(); this.changed(); }
     }
-    if (this.pending.length && (["fork", "navigate_tree"].includes(type) || type === "prompt" && typeof command.message === "string" && command.message.trimStart().startsWith("/"))) throw new Error("Withdraw pending follow-ups before changing the session or running commands");
+    if (this.pending.length && (["fork", "rewind", "navigate_tree"].includes(type) || type === "prompt" && typeof command.message === "string" && command.message.trimStart().startsWith("/"))) throw new Error("Withdraw pending follow-ups before changing the session or running commands");
     if (type === "abort") {
       // Stop means no automatic follow-up may start after the interruption.
       this.pending = this.pending.filter(item => item.state === "sending"); this.paused = true; this.queueChanged();
     }
     if (type === "prompt" && this.pending.some(item => item.state === "sending")) throw new Error("A follow-up is being handed to the agent; retry shortly");
-    const mutation = ["prompt", "steer", "abort", "bash", "compact", "set_model", "fork", "navigate_tree"].includes(type);
+    const mutation = ["prompt", "steer", "abort", "bash", "compact", "set_model", "fork", "rewind", "navigate_tree"].includes(type);
     if (mutation) this.manualRequests++;
     if (["set_session_name", "fork", "navigate_tree", "abort"].includes(type)
       || type === "prompt" && typeof command.message === "string" && /^\s*\/name(?:\s|$)/.test(command.message)) this.suppressTitle();

@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { query as nativeClaudeQuery, type Options, type PermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as nativeClaudeQuery, type ElicitationRequest, type ElicitationResult, type Options, type PermissionMode, type PermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { ClaudeSystemEvents } from "./claude-system-events";
+import { CLAUDE_WEB_PERMISSION_MODES, allowSuggestions, describePermissionUpdates, isClaudePermissionMode, isClaudeWebPermissionMode, persistentDestination, sessionScoped } from "./claude-permissions";
+import { elicitationFields, parseElicitationAnswer, safeElicitationUrl } from "./claude-elicitation";
+import { projectMcpStatus } from "./claude-mcp";
+import { projectedUserText, resolveNativeTarget, type NativeChainEntry } from "./claude-rewind";
+import { forgetContextUsage } from "./context-usage-cache";
 import type { AgentFrame, AgentProcessOptions } from "./agent-rpc-client";
 import { sessionKey } from "./engine";
 import { claudeChildEnvironment, getClaudeConfig } from "./claude-code-config";
@@ -23,7 +29,26 @@ const readNativeChildMessages: ChildMessagesReader = async (parentId, taskId, cw
   const { getSubagentMessages } = await import("@anthropic-ai/claude-agent-sdk");
   return getSubagentMessages(parentId, taskId, { dir: cwd });
 };
+/** Read/fork Claude Code's native transcripts in-process (the CLI owns their format). */
+export interface ClaudeNativeSessions {
+  messages(sessionId: string, cwd: string): Promise<NativeChainEntry[]>;
+  fork(sessionId: string, cwd: string, upToMessageId: string): Promise<string>;
+}
+const nativeSessions: ClaudeNativeSessions = {
+  async messages(sessionId, cwd) {
+    const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
+    return (await getSessionMessages(sessionId, { dir: cwd })).map((entry) => ({ type: entry.type, uuid: entry.uuid, message: entry.message }));
+  },
+  async fork(sessionId, cwd, upToMessageId) {
+    const { forkSession } = await import("@anthropic-ai/claude-agent-sdk");
+    return (await forkSession(sessionId, { dir: cwd, upToMessageId })).sessionId;
+  },
+};
+type CanUseToolContext = Parameters<NonNullable<Options["canUseTool"]>>[2];
 type Dialog = Extract<ExtensionUiRequest, { method: "select" | "input" }>;
+const PLAN_ACCEPT_EDITS = "Approve and auto-accept edits";
+const PLAN_REVIEW_EDITS = "Approve and review each edit";
+const PLAN_KEEP = "Keep planning";
 type PendingDialog = { event: Dialog; background: boolean; finish: (response: Record<string, unknown>) => void };
 
 class PromptInput implements AsyncIterable<SDKUserMessage> {
@@ -98,6 +123,10 @@ export class ClaudeCodeSession {
   private tools: string[] = [];
   private terminalCommands: string[] = [];
   private lastError?: string;
+  private permissionMode: PermissionMode = "default";
+  private readonly system = new ClaudeSystemEvents();
+  /** Native UUIDs of web sends, so Fork/Rewind target the exact native entry. */
+  private readonly nativeUuids = new WeakMap<UserMessage, string>();
   private readonly context = new ClaudeContextCache(() => {
     if (this.closed || this.busy || this.changingModel) throw new Error("Context summary is unavailable during a transition");
     return this.query!.getContextUsage({ detail: "summary" });
@@ -121,6 +150,7 @@ export class ClaudeCodeSession {
     private readonly readChildMessages: ChildMessagesReader = readNativeChildMessages,
     // An injected query has no native transcript: never read the real ~/.claude for it.
     private readonly readNativeTitle: (nativeId: string, cwd: string) => Promise<string | undefined> = createQuery ? async () => undefined : readClaudeNativeTitle,
+    private readonly native: ClaudeNativeSessions = nativeSessions,
   ) {
     this.nativeId = options.nativeId ?? randomUUID();
     this.sessionId = sessionKey("claude", this.nativeId);
@@ -143,6 +173,8 @@ export class ClaudeCodeSession {
       listener({ type: "agent_capabilities", supportsSteering: true });
       listener({ type: "queue_update", ...this.inputs.queued(), items: this.recallItems() });
     }
+    if (this.ready) listener({ type: "permission_mode", mode: this.permissionMode });
+    if (this.system.isCompacting) listener({ type: "compaction_start", reason: "auto" });
     for (const { event } of this.dialogs.values()) listener(event);
     const name = this.sessionName();
     if (name) listener({ type: "session_info_update", sessionId: this.sessionId, title: name });
@@ -200,9 +232,14 @@ export class ClaudeCodeSession {
       this.projector = new ClaudeEventProjector(this.model);
       if (this.options.sessionFile) this.transcript = new ClaudeWebTranscript(this.nativeId, this.cwd, this.options.sessionFile);
       this.model ||= this.transcript?.model ?? "";
-      const resume = Boolean(this.options.sessionFile && this.transcript?.getMessages().some((m) => m.role === "user"));
+      // An unanswered conversation rewind resumes at its native chain point.
+      const resumeAt = this.options.catalogOnly ? undefined : this.transcript?.pendingResumeAt;
+      const resume = Boolean(this.options.sessionFile && (resumeAt || this.transcript?.getMessages().some((m) => m.role === "user")));
       const effort = this.options.thinkingLevel ?? this.transcript?.effort;
       if (effort && effort !== "auto" && !isClaudeEffort(effort)) throw new Error("Invalid Claude effort level");
+      // Only re-apply a mode the user chose in the web; otherwise Claude's settings decide.
+      const savedMode = this.transcript?.permissionMode;
+      const permissionMode = !this.options.catalogOnly && isClaudeWebPermissionMode(savedMode) ? savedMode : undefined;
       const factory = this.createQuery ?? nativeClaudeQuery;
       this.query = factory({
         prompt: this.input,
@@ -210,19 +247,24 @@ export class ClaudeCodeSession {
           cwd: this.cwd, env, pathToClaudeCodeExecutable: config.executable,
           ...(this.model ? { model: this.model } : {}),
           ...(isClaudeEffort(effort) ? { effort } : {}),
-          ...(this.options.catalogOnly ? {} : resume ? { resume: this.nativeId } : { sessionId: this.nativeId }),
+          ...(permissionMode ? { permissionMode } : {}),
+          ...(this.options.catalogOnly ? {} : resume ? { resume: this.nativeId, ...(resumeAt ? { resumeSessionAt: resumeAt } : {}) } : { sessionId: this.nativeId }),
           systemPrompt: { type: "preset", preset: "claude_code" },
           settingSources: ["user", "project", "local"],
           includePartialMessages: true, persistSession: !this.options.catalogOnly,
+          // Native checkpoints back Rewind's "restore code"; the CLI owns the backups.
+          enableFileCheckpointing: !this.options.catalogOnly,
+          includeHookEvents: true,
           canUseTool: (tool, input, context) => {
             const id = context.requestId || context.toolUseID;
             let reply = this.permissionReplies.get(id);
             if (!reply) {
-              reply = this.permission(tool, input, context.signal, Boolean(context.agentID));
+              reply = this.permission(tool, input, context, Boolean(context.agentID));
               this.permissionReplies.set(id, reply);
             }
             return reply;
           },
+          onElicitation: (request, { signal }) => this.elicit(request, signal),
           // Do not advertise user-dialog kinds we cannot render. SDK fails closed.
         },
       });
@@ -342,7 +384,10 @@ export class ClaudeCodeSession {
         if (!this.options.catalogOnly && frame.session_id && frame.session_id !== this.nativeId) throw new Error("Claude Code returned a different session ID");
         const raw = frame as unknown as Record<string, unknown>;
         this.tasks.claude(raw);
+        for (const event of this.system.consume(raw)) this.emit(event);
         if (raw.parent_tool_use_id) continue;
+        const nativeMode = raw.type === "system" && (raw.subtype === "init" || raw.subtype === "status") ? raw.permissionMode : undefined;
+        if (isClaudePermissionMode(nativeMode)) this.updatePermissionMode(nativeMode);
         if (!this.nativeTitle && (raw.type === "assistant" || raw.type === "stream_event")) this.watchNativeTitle();
         // A background task can wake the main agent without a new browser send.
         // Keep that continuation separate from child transcripts and input UUIDs.
@@ -417,9 +462,154 @@ export class ClaudeCodeSession {
 
   private deliver(messages: UserMessage[]): void {
     for (const message of messages) {
-      this.transcript?.append(message);
+      this.transcript?.append(message, this.nativeUuids.get(message));
       this.emit({ type: "message_end", message });
     }
+  }
+
+  private updatePermissionMode(mode: PermissionMode): void {
+    if (mode === this.permissionMode) return;
+    this.permissionMode = mode;
+    this.emit({ type: "permission_mode", mode });
+    this.changed();
+  }
+
+  /** Neither Fork nor Rewind may race a turn, a queued send or a model change. */
+  private requireIdle(action: string): void {
+    if (this.isRunning() || this.changingModel || this.stopping || this.inputs.size || this.dialogs.size) {
+      throw new Error(`Wait for Claude Code to finish before ${action}`);
+    }
+  }
+
+  private async nativeTarget(entryId: unknown) {
+    if (typeof entryId !== "string" || !entryId) throw new Error("entryId is required");
+    if (!this.transcript) throw new Error("This Claude Code session has no history yet");
+    const projected = this.transcript.getProjectedMessages();
+    const chain = await this.native.messages(this.nativeId, this.cwd);
+    return { projected, chain, ...resolveNativeTarget(projected, entryId, chain) };
+  }
+
+  /** Message Fork: a new native session holding everything before the chosen user message. */
+  private async fork(entryId: unknown): Promise<unknown> {
+    this.requireIdle("forking");
+    const { projected, chain, index, position } = await this.nativeTarget(entryId);
+    if (index === 0 || position === 0) throw new Error("There is nothing before the first message to fork; start a new chat instead");
+    const forkId = await this.native.fork(this.nativeId, this.cwd, chain[index - 1].uuid);
+    // forkSession remaps every native UUID; map ours by chain position when the copy lines up.
+    const copied = await this.native.messages(forkId, this.cwd).catch(() => [] as NativeChainEntry[]);
+    const remap = new Map<string, string>();
+    if (copied.length === index) chain.slice(0, index).forEach((entry, i) => remap.set(entry.uuid, copied[i].uuid));
+    const fork = new ClaudeWebTranscript(forkId, this.cwd, undefined, { parentSession: this.transcript!.path });
+    for (const item of projected.slice(0, position)) fork.append(item.message, item.nativeUuid ? remap.get(item.nativeUuid) : undefined);
+    if (this.model) fork.setModel(this.model);
+    if (this.transcript!.effort) fork.setEffort(this.transcript!.effort);
+    if (this.transcript!.permissionMode) fork.setPermissionMode(this.transcript!.permissionMode);
+    this.changed();
+    const newSessionId = sessionKey("claude", forkId);
+    return { cancelled: false, newSessionId, sessionId: newSessionId };
+  }
+
+  private async rewindPreview(entryId: unknown): Promise<unknown> {
+    this.requireIdle("rewinding");
+    const { projected, index, uuid, position } = await this.nativeTarget(entryId);
+    let files: Record<string, unknown>;
+    try {
+      const result = await this.query!.rewindFiles(uuid, { dryRun: true });
+      files = { canRewind: result.canRewind, ...(result.error ? { error: result.error } : {}), filesChanged: (result.filesChanged ?? []).slice(0, 200), insertions: result.insertions ?? 0, deletions: result.deletions ?? 0 };
+    } catch (error) {
+      files = { canRewind: false, error: error instanceof Error ? error.message : String(error), filesChanged: [], insertions: 0, deletions: 0 };
+    }
+    const conversation = index > 0 && position > 0;
+    return {
+      conversation: { canRewind: conversation, ...(conversation ? {} : { error: "This is the first message; start a new chat to discard the whole conversation" }), messagesRemoved: projected.length - position },
+      files,
+    };
+  }
+
+  /**
+   * Rewind like Claude Code's /rewind: restore files from native checkpoints
+   * and/or branch the conversation before the chosen user message. The live
+   * CLI still holds later turns in memory, so a conversation rewind closes it;
+   * the next request resumes the native session at the rewind point.
+   */
+  private async rewind(entryId: unknown, mode: unknown): Promise<unknown> {
+    if (mode !== "both" && mode !== "conversation" && mode !== "files") throw new Error("mode must be both, conversation or files");
+    this.requireIdle("rewinding");
+    const { projected, chain, index, uuid, position } = await this.nativeTarget(entryId);
+    const conversation = mode !== "files", files = mode !== "conversation";
+    if (conversation && (index === 0 || position === 0)) throw new Error("Cannot rewind the conversation before its first message; start a new chat instead");
+    let filesResult: Record<string, unknown> | undefined;
+    if (files) {
+      const result = await this.query!.rewindFiles(uuid);
+      if (!result.canRewind) throw new Error(result.error || "Claude Code cannot restore files to this point");
+      filesResult = { filesChanged: (result.filesChanged ?? []).slice(0, 200), insertions: result.insertions ?? 0, deletions: result.deletions ?? 0, ...(result.skippedLinks ? { skippedLinks: result.skippedLinks } : {}) };
+    }
+    const target = projected[position].message;
+    const text = target.role === "user" ? projectedUserText(target) : "";
+    if (conversation) {
+      this.transcript!.rewindBefore(entryId as string, { resumeSessionAt: chain[index - 1].uuid, nativeUuid: uuid });
+      forgetContextUsage(this.sessionId);
+      this.changed();
+      this.destroy();
+    }
+    return { conversation, ...(filesResult ? { files: filesResult } : {}), text };
+  }
+
+  private async elicit(request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult> {
+    if (this.options.catalogOnly || !this.ready) return { action: "decline" };
+    const server = request.displayName || request.serverName;
+    const heading = request.title?.trim() || `MCP server ${server}`;
+    const message = [request.message, request.description].filter((part) => part && part.trim()).join("\n\n");
+    if (request.mode === "url") {
+      const url = safeElicitationUrl(request.url);
+      if (!url) return { action: "decline" };
+      this.emit({ type: "extension_ui_request", id: randomUUID(), method: "open_url", url, instructions: `${heading}: ${request.message}` });
+      const choice = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `${heading} asks you to open a link\n${message}\n\n${url}`, options: ["I have opened the link", "Decline"] }, signal);
+      if (choice.cancelled || signal.aborted) return { action: "cancel" };
+      return { action: choice.value === "I have opened the link" ? "accept" : "decline" };
+    }
+    const fields = elicitationFields(request.requestedSchema);
+    if (!fields) {
+      this.emit({ type: "extension_ui_request", id: randomUUID(), method: "notify", message: `${heading} requested a form the web cannot display; it was declined.`, notifyType: "warning" });
+      return { action: "decline" };
+    }
+    const start = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `${heading} requests information\n${message || "No details provided."}`, options: ["Respond", "Decline"] }, signal);
+    if (start.cancelled || signal.aborted) return { action: "cancel" };
+    if (start.value !== "Respond") return { action: "decline" };
+    const content: Record<string, unknown> = {};
+    for (const field of fields) {
+      const label = `${heading}: ${field.title}${field.required ? "" : " (optional)"}`;
+      if (field.kind === "enum" || field.kind === "boolean") {
+        const options = field.kind === "boolean" ? ["Yes", "No"] : field.options.map((option) => option.label);
+        const choice = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: field.description ? `${label}\n${field.description}` : label, options: field.required ? options : [...options, "Skip"] }, signal);
+        if (choice.cancelled || signal.aborted || typeof choice.value !== "string") return { action: "cancel" };
+        if (choice.value === "Skip" && !field.required) continue;
+        content[field.key] = field.kind === "boolean" ? choice.value === "Yes" : field.options.find((option) => option.label === choice.value)?.value;
+        continue;
+      }
+      let problem = "";
+      for (let attempt = 0; ; attempt++) {
+        const answer = await this.ask({
+          type: "extension_ui_request", id: randomUUID(), method: "input",
+          title: [label, problem || field.description].filter(Boolean).join("\n"),
+          ...(field.kind === "multi" ? { choices: field.options.map((option) => ({ label: option.label })) } : {}),
+          placeholder: field.kind === "multi" ? "Comma-separated choices" : field.kind === "string" && field.format ? field.format : field.required ? "Required" : "Leave empty to skip",
+        }, signal);
+        if (answer.cancelled || signal.aborted || typeof answer.value !== "string") return { action: "cancel" };
+        if (!answer.value.trim() && !field.required) break;
+        try {
+          if (!answer.value.trim()) throw new Error("This field is required");
+          content[field.key] = parseElicitationAnswer(field, answer.value);
+          break;
+        }
+        catch (error) {
+          if (attempt >= 2) return { action: "cancel" };
+          problem = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+    // Values are validated per field above: strings, numbers, booleans or string arrays.
+    return { action: "accept", content } as ElicitationResult;
   }
 
   private recallItems() { return this.steeringAvailable && this.query && canRecallClaudeInput(this.query) ? this.inputs.pendingItems() : []; }
@@ -432,6 +622,7 @@ export class ClaudeCodeSession {
     clearTimeout(this.stopTimer);
     this.queueChanged();
     this.cancelDialogs(false);
+    for (const event of this.system.reset()) this.emit(event);
     this.busy = false;
     this.context.invalidate();
     this.interruptRequested = false;
@@ -472,9 +663,22 @@ export class ClaudeCodeSession {
     });
   }
 
-  private async permission(tool: string, input: Record<string, unknown>, signal: AbortSignal, background = false): Promise<PermissionResult> {
+  private async permission(tool: string, input: Record<string, unknown>, context: CanUseToolContext, background = false): Promise<PermissionResult> {
+    const signal = context.signal;
     const deny: PermissionResult = { behavior: "deny", message: "Not approved in the web UI (denied, cancelled or timed out)." };
     if (this.options.catalogOnly) return deny;
+    if (tool === "ExitPlanMode") {
+      const plan = typeof input.plan === "string" && input.plan.trim() ? input.plan : "Claude Code did not include a plan.";
+      const choice = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `Claude Code: ready to leave plan mode?\n${plan.slice(0, 24_000)}`, options: [PLAN_ACCEPT_EDITS, PLAN_REVIEW_EDITS, PLAN_KEEP] }, signal, background);
+      if (choice.cancelled || signal.aborted || typeof choice.value !== "string") return deny;
+      if (choice.value === PLAN_ACCEPT_EDITS || choice.value === PLAN_REVIEW_EDITS) {
+        const mode: PermissionMode = choice.value === PLAN_ACCEPT_EDITS ? "acceptEdits" : "default";
+        return { behavior: "allow", updatedInput: input, updatedPermissions: [{ type: "setMode", mode, destination: "session" }] };
+      }
+      const feedback = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "input", title: "What should Claude change in the plan?", placeholder: "Optional feedback" }, signal, background);
+      const note = !feedback.cancelled && typeof feedback.value === "string" ? feedback.value.trim().slice(0, 8000) : "";
+      return { behavior: "deny", message: note ? `The user wants to keep planning. Feedback: ${note}` : "The user wants to keep planning. Do not start implementing yet." };
+    }
     if (tool === "AskUserQuestion") {
       if (!Array.isArray(input.questions) || !input.questions.length) return deny;
       const answers: Record<string, string> = {};
@@ -488,10 +692,23 @@ export class ClaudeCodeSession {
     }
     const details = JSON.stringify(input, null, 2);
     if (details.length > 24_000) return { behavior: "deny", message: "Tool input is too large to review safely in the web approval dialog" };
-    // First choice is denial; no permission persistence and no bypassPermissions.
-    const response = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `Claude Code: ${tool}\n${details}`, options: ["Deny", "Allow once"] }, signal, background);
-    return response.value === "Allow once" && !response.cancelled && !signal.aborted
-      ? { behavior: "allow", updatedInput: input } : deny;
+    // First choice is denial. "Always allow" applies only Claude's own additive
+    // suggestions for this call; never bypassPermissions.
+    const suggestions = context.suppressAlwaysAllowRule ? [] : allowSuggestions(context.suggestions);
+    const rule = describePermissionUpdates(suggestions);
+    const persistent = persistentDestination(suggestions);
+    const sessionOption = `Always allow in this session: ${rule}`;
+    const persistentOption = persistent ? `Always allow (save to ${persistent}): ${rule}` : undefined;
+    const options = ["Deny", "Allow once", ...(suggestions.length ? [sessionOption] : []), ...(persistentOption ? [persistentOption] : [])];
+    const notes = [context.description, context.decisionReason, context.blockedPath && `Path: ${context.blockedPath}`]
+      .filter((note): note is string => typeof note === "string" && Boolean(note.trim())).map((note) => note.replace(/\s+/g, " ").trim());
+    const heading = [context.title?.trim() || `Claude Code: ${context.displayName || tool}`, ...notes].join(" — ").slice(0, 600);
+    const response = await this.ask({ type: "extension_ui_request", id: randomUUID(), method: "select", title: `${heading}\n${details}`, options }, signal, background);
+    if (response.cancelled || signal.aborted || typeof response.value !== "string") return deny;
+    if (response.value === "Allow once") return { behavior: "allow", updatedInput: input };
+    if (suggestions.length && response.value === sessionOption) return { behavior: "allow", updatedInput: input, updatedPermissions: sessionScoped(suggestions) };
+    if (persistentOption && response.value === persistentOption) return { behavior: "allow", updatedInput: input, updatedPermissions: suggestions };
+    return deny;
   }
 
   async send(command: Record<string, unknown>): Promise<unknown> {
@@ -507,8 +724,9 @@ export class ClaudeCodeSession {
           thinkingLevel: this.modelSettings?.effort ?? "auto", effortControlAvailable: this.effortControlAvailable,
           isPromptRunning: this.busy, isStreaming: this.busy, isSettled: !this.busy && !this.tasks.active,
           tasks: this.tasks.snapshot(),
-          isBashRunning: false, isCompacting: false, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
+          isBashRunning: false, isCompacting: this.system.isCompacting, pendingMessageCount: this.inputs.queued().steering.length + this.inputs.queued().followUp.length,
           supportsSteering: this.steeringAvailable,
+          permissionMode: this.permissionMode, permissionModes: CLAUDE_WEB_PERMISSION_MODES,
           queuedMessages: this.inputs.queued(), queuedItems: this.recallItems(), extensionStatuses: [], extensionWidgets: [],
           systemPrompt: "", contextUsage,
         };
@@ -548,6 +766,45 @@ export class ClaudeCodeSession {
           return { thinkingLevel: this.modelSettings?.effort ?? "auto" };
         } finally { this.changingModel = false; this.context.invalidate(); }
       }
+      case "set_permission_mode": {
+        const mode = command.mode;
+        if (!isClaudeWebPermissionMode(mode)) throw new Error("Unsupported Claude Code permission mode");
+        if (this.stopping || this.changingModel) throw new Error("Claude is stopping or switching models; retry shortly");
+        // The CLI validates availability (e.g. auto mode needs a supported account/model).
+        await this.query!.setPermissionMode(mode);
+        this.updatePermissionMode(mode);
+        this.transcript?.setPermissionMode(mode);
+        return { permissionMode: this.permissionMode };
+      }
+      case "get_mcp_status": return { servers: projectMcpStatus(await this.query!.mcpServerStatus()) };
+      case "mcp_reconnect":
+      case "mcp_toggle": {
+        const name = command.name;
+        if (typeof name !== "string" || !name) throw new Error("name is required");
+        // Only act on a server Claude Code itself reports for this session.
+        if (!projectMcpStatus(await this.query!.mcpServerStatus()).some((server) => server.name === name)) throw new Error("Unknown MCP server in this session");
+        if (command.type === "mcp_reconnect") await this.query!.reconnectMcpServer(name);
+        else {
+          if (typeof command.enabled !== "boolean") throw new Error("enabled must be a boolean");
+          await this.query!.toggleMcpServer(name, command.enabled);
+        }
+        return { servers: projectMcpStatus(await this.query!.mcpServerStatus()) };
+      }
+      case "stop_task": {
+        const id = String(command.taskId ?? "");
+        const detail = this.tasks.detail(id); // Ownership check: only tasks this session reported.
+        if (!detail.task.active) return { stopped: false };
+        await this.query!.stopTask(id);
+        return { stopped: true };
+      }
+      case "background_tasks": {
+        if (!this.busy) throw new Error("Nothing is running in the foreground");
+        const toolUseId = typeof command.toolUseId === "string" && command.toolUseId ? command.toolUseId : undefined;
+        return { backgrounded: await this.query!.backgroundTasks(toolUseId) };
+      }
+      case "fork": return this.fork(command.entryId);
+      case "rewind_preview": return this.rewindPreview(command.entryId);
+      case "rewind": return this.rewind(command.entryId, command.mode);
       case "get_messages": return { messages: this.transcript!.getMessages() };
       case "get_last_assistant_text": {
         const last = this.transcript!.getMessages().findLast((m) => m.role === "assistant");
@@ -677,6 +934,7 @@ export class ClaudeCodeSession {
         const message: UserMessage = { role: "user", content, timestamp: Date.now() };
         const queued = this.busy, id = randomUUID();
         this.inputs.add(id, message, queued ? kind : "prompt");
+        this.nativeUuids.set(message, id);
         if (!queued) {
           this.projector!.resetTurn();
           this.permissionReplies.clear();
@@ -723,6 +981,7 @@ export class ClaudeCodeSession {
     clearTimeout(this.idleTimer);
     this.cancelDialogs();
     this.finishTurn();
+    for (const event of this.system.reset()) this.emit(event);
     this.input.close();
     this.query?.close();
     this.emit({ type: "agent_closed" });
