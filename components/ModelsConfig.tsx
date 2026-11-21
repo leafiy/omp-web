@@ -6,84 +6,88 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
-// Color icons (have their own fill colors — no background needed)
-import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
-import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
-import GoogleColorIcon from "@lobehub/icons/es/Google/components/Color";
-import DeepSeekColorIcon from "@lobehub/icons/es/DeepSeek/components/Color";
-import GroqIcon from "@lobehub/icons/es/Groq/components/Mono";
-import MistralColorIcon from "@lobehub/icons/es/Mistral/components/Color";
-import MoonshotIcon from "@lobehub/icons/es/Moonshot/components/Mono";
-import MinimaxColorIcon from "@lobehub/icons/es/Minimax/components/Color";
-import FireworksColorIcon from "@lobehub/icons/es/Fireworks/components/Color";
-import HuggingFaceColorIcon from "@lobehub/icons/es/HuggingFace/components/Color";
-import CerebrasColorIcon from "@lobehub/icons/es/Cerebras/components/Color";
-import OpenRouterIcon from "@lobehub/icons/es/OpenRouter/components/Mono";
-import XAIIcon from "@lobehub/icons/es/XAI/components/Mono";
-import CloudflareColorIcon from "@lobehub/icons/es/Cloudflare/components/Color";
-import VercelIcon from "@lobehub/icons/es/Vercel/components/Mono";
-import GithubCopilotIcon from "@lobehub/icons/es/GithubCopilot/components/Mono";
-import AwsColorIcon from "@lobehub/icons/es/Aws/components/Color";
-import AzureColorIcon from "@lobehub/icons/es/Azure/components/Color";
-import KimiColorIcon from "@lobehub/icons/es/Kimi/components/Color";
-import QwenColorIcon from "@lobehub/icons/es/Qwen/components/Color";
-import ZhipuColorIcon from "@lobehub/icons/es/Zhipu/components/Color";
-import CohereColorIcon from "@lobehub/icons/es/Cohere/components/Color";
-import PerplexityColorIcon from "@lobehub/icons/es/Perplexity/components/Color";
-import TogetherColorIcon from "@lobehub/icons/es/Together/components/Color";
-import GrokIcon from "@lobehub/icons/es/Grok/components/Mono";
-import AntGroupColorIcon from "@lobehub/icons/es/AntGroup/components/Color";
-import NvidiaColorIcon from "@lobehub/icons/es/Nvidia/components/Color";
-import OpenCodeIcon from "@lobehub/icons/es/OpenCode/components/Mono";
-import XiaomiMiMoIcon from "@lobehub/icons/es/XiaomiMiMo/components/Mono";
-import ZAIIcon from "@lobehub/icons/es/ZAI/components/Mono";
+// Provider logos are plain SVG files from @lobehub/icons-static-svg (MIT, no
+// dependencies); each import becomes a hashed /_next/static asset URL.
+// "-color" files carry their own fills. The others are single-color
+// (currentColor) shapes and are drawn as a mask in the theme text color.
+import anthropicLogo from "@lobehub/icons-static-svg/icons/anthropic.svg";
+import openaiLogo from "@lobehub/icons-static-svg/icons/openai.svg";
+import googleColorLogo from "@lobehub/icons-static-svg/icons/google-color.svg";
+import deepseekColorLogo from "@lobehub/icons-static-svg/icons/deepseek-color.svg";
+import groqLogo from "@lobehub/icons-static-svg/icons/groq.svg";
+import mistralColorLogo from "@lobehub/icons-static-svg/icons/mistral-color.svg";
+import moonshotLogo from "@lobehub/icons-static-svg/icons/moonshot.svg";
+import minimaxColorLogo from "@lobehub/icons-static-svg/icons/minimax-color.svg";
+import fireworksColorLogo from "@lobehub/icons-static-svg/icons/fireworks-color.svg";
+import huggingfaceColorLogo from "@lobehub/icons-static-svg/icons/huggingface-color.svg";
+import cerebrasColorLogo from "@lobehub/icons-static-svg/icons/cerebras-color.svg";
+import openrouterLogo from "@lobehub/icons-static-svg/icons/openrouter.svg";
+import xaiLogo from "@lobehub/icons-static-svg/icons/xai.svg";
+import cloudflareColorLogo from "@lobehub/icons-static-svg/icons/cloudflare-color.svg";
+import vercelLogo from "@lobehub/icons-static-svg/icons/vercel.svg";
+import githubCopilotLogo from "@lobehub/icons-static-svg/icons/githubcopilot.svg";
+import awsColorLogo from "@lobehub/icons-static-svg/icons/aws-color.svg";
+import azureColorLogo from "@lobehub/icons-static-svg/icons/azure-color.svg";
+import kimiColorLogo from "@lobehub/icons-static-svg/icons/kimi-color.svg";
+import qwenColorLogo from "@lobehub/icons-static-svg/icons/qwen-color.svg";
+import zhipuColorLogo from "@lobehub/icons-static-svg/icons/zhipu-color.svg";
+import cohereColorLogo from "@lobehub/icons-static-svg/icons/cohere-color.svg";
+import perplexityColorLogo from "@lobehub/icons-static-svg/icons/perplexity-color.svg";
+import togetherColorLogo from "@lobehub/icons-static-svg/icons/together-color.svg";
+import grokLogo from "@lobehub/icons-static-svg/icons/grok.svg";
+import antGroupColorLogo from "@lobehub/icons-static-svg/icons/antgroup-color.svg";
+import nvidiaColorLogo from "@lobehub/icons-static-svg/icons/nvidia-color.svg";
+import opencodeLogo from "@lobehub/icons-static-svg/icons/opencode.svg";
+import xiaomiMimoLogo from "@lobehub/icons-static-svg/icons/xiaomimimo.svg";
+import zaiLogo from "@lobehub/icons-static-svg/icons/zai.svg";
 
-type IconComponent = React.ComponentType<{ size?: number | string; style?: React.CSSProperties }>;
+// A static image import: Next yields { src, width, height }; keep a plain URL working too.
+type LogoAsset = string | { src: string };
 
-// hasColor=true → Color icon (self-colored SVG, no wrapper)
-// hasColor=false → Mono icon (rendered with currentColor, inherits theme text color)
-const PROVIDER_ICONS: Record<string, { Icon: IconComponent; hasColor: boolean }> = {
-  "anthropic":              { Icon: AnthropicIcon,        hasColor: false },
-  "openai":                 { Icon: OpenAIIcon,           hasColor: false },
-  "openai-codex":           { Icon: OpenAIIcon,           hasColor: false },
-  "google":                 { Icon: GoogleColorIcon,      hasColor: true },
-  "google-vertex":          { Icon: GoogleColorIcon,      hasColor: true },
-  "ant-ling":               { Icon: AntGroupColorIcon,    hasColor: true },
-  "deepseek":               { Icon: DeepSeekColorIcon,    hasColor: true },
-  "groq":                   { Icon: GroqIcon,             hasColor: false },
-  "mistral":                { Icon: MistralColorIcon,     hasColor: true },
-  "moonshotai":             { Icon: MoonshotIcon,         hasColor: false },
-  "moonshotai-cn":          { Icon: MoonshotIcon,         hasColor: false },
-  "moonshot":               { Icon: MoonshotIcon,         hasColor: false },
-  "minimax":                { Icon: MinimaxColorIcon,     hasColor: true },
-  "minimax-cn":             { Icon: MinimaxColorIcon,     hasColor: true },
-  "fireworks":              { Icon: FireworksColorIcon,   hasColor: true },
-  "huggingface":            { Icon: HuggingFaceColorIcon, hasColor: true },
-  "cerebras":               { Icon: CerebrasColorIcon,    hasColor: true },
-  "openrouter":             { Icon: OpenRouterIcon,       hasColor: false },
-  "xai":                    { Icon: XAIIcon,              hasColor: false },
-  "cloudflare-ai-gateway":  { Icon: CloudflareColorIcon,  hasColor: true },
-  "cloudflare-workers-ai":  { Icon: CloudflareColorIcon,  hasColor: true },
-  "vercel-ai-gateway":      { Icon: VercelIcon,           hasColor: false },
-  "github-copilot":         { Icon: GithubCopilotIcon,    hasColor: false },
-  "amazon-bedrock":         { Icon: AwsColorIcon,         hasColor: true },
-  "azure-openai-responses": { Icon: AzureColorIcon,       hasColor: true },
-  "kimi-coding":            { Icon: KimiColorIcon,        hasColor: true },
-  "nvidia":                 { Icon: NvidiaColorIcon,      hasColor: true },
-  "opencode":               { Icon: OpenCodeIcon,         hasColor: false },
-  "opencode-go":            { Icon: OpenCodeIcon,         hasColor: false },
-  "qwen":                   { Icon: QwenColorIcon,        hasColor: true },
-  "xiaomi":                 { Icon: XiaomiMiMoIcon,       hasColor: false },
-  "xiaomi-token-plan-ams":  { Icon: XiaomiMiMoIcon,       hasColor: false },
-  "xiaomi-token-plan-cn":   { Icon: XiaomiMiMoIcon,       hasColor: false },
-  "xiaomi-token-plan-sgp":  { Icon: XiaomiMiMoIcon,       hasColor: false },
-  "zai":                    { Icon: ZAIIcon,              hasColor: false },
-  "zai-coding-cn":          { Icon: ZAIIcon,              hasColor: false },
-  "zhipu":                  { Icon: ZhipuColorIcon,       hasColor: true },
-  "cohere":                 { Icon: CohereColorIcon,      hasColor: true },
-  "perplexity":             { Icon: PerplexityColorIcon,  hasColor: true },
-  "together":               { Icon: TogetherColorIcon,    hasColor: true },
-  "grok":                   { Icon: GrokIcon,             hasColor: false },
+// hasColor=true → self-colored SVG drawn as an image
+// hasColor=false → single-color SVG used as a mask, filled with the theme text color
+const PROVIDER_ICONS: Record<string, { logo: LogoAsset; hasColor: boolean }> = {
+  "anthropic":              { logo: anthropicLogo,        hasColor: false },
+  "openai":                 { logo: openaiLogo,           hasColor: false },
+  "openai-codex":           { logo: openaiLogo,           hasColor: false },
+  "google":                 { logo: googleColorLogo,      hasColor: true },
+  "google-vertex":          { logo: googleColorLogo,      hasColor: true },
+  "ant-ling":               { logo: antGroupColorLogo,    hasColor: true },
+  "deepseek":               { logo: deepseekColorLogo,    hasColor: true },
+  "groq":                   { logo: groqLogo,             hasColor: false },
+  "mistral":                { logo: mistralColorLogo,     hasColor: true },
+  "moonshotai":             { logo: moonshotLogo,         hasColor: false },
+  "moonshotai-cn":          { logo: moonshotLogo,         hasColor: false },
+  "moonshot":               { logo: moonshotLogo,         hasColor: false },
+  "minimax":                { logo: minimaxColorLogo,     hasColor: true },
+  "minimax-cn":             { logo: minimaxColorLogo,     hasColor: true },
+  "fireworks":              { logo: fireworksColorLogo,   hasColor: true },
+  "huggingface":            { logo: huggingfaceColorLogo, hasColor: true },
+  "cerebras":               { logo: cerebrasColorLogo,    hasColor: true },
+  "openrouter":             { logo: openrouterLogo,       hasColor: false },
+  "xai":                    { logo: xaiLogo,              hasColor: false },
+  "cloudflare-ai-gateway":  { logo: cloudflareColorLogo,  hasColor: true },
+  "cloudflare-workers-ai":  { logo: cloudflareColorLogo,  hasColor: true },
+  "vercel-ai-gateway":      { logo: vercelLogo,           hasColor: false },
+  "github-copilot":         { logo: githubCopilotLogo,    hasColor: false },
+  "amazon-bedrock":         { logo: awsColorLogo,         hasColor: true },
+  "azure-openai-responses": { logo: azureColorLogo,       hasColor: true },
+  "kimi-coding":            { logo: kimiColorLogo,        hasColor: true },
+  "nvidia":                 { logo: nvidiaColorLogo,      hasColor: true },
+  "opencode":               { logo: opencodeLogo,         hasColor: false },
+  "opencode-go":            { logo: opencodeLogo,         hasColor: false },
+  "qwen":                   { logo: qwenColorLogo,        hasColor: true },
+  "xiaomi":                 { logo: xiaomiMimoLogo,       hasColor: false },
+  "xiaomi-token-plan-ams":  { logo: xiaomiMimoLogo,       hasColor: false },
+  "xiaomi-token-plan-cn":   { logo: xiaomiMimoLogo,       hasColor: false },
+  "xiaomi-token-plan-sgp":  { logo: xiaomiMimoLogo,       hasColor: false },
+  "zai":                    { logo: zaiLogo,              hasColor: false },
+  "zai-coding-cn":          { logo: zaiLogo,              hasColor: false },
+  "zhipu":                  { logo: zhipuColorLogo,       hasColor: true },
+  "cohere":                 { logo: cohereColorLogo,      hasColor: true },
+  "perplexity":             { logo: perplexityColorLogo,  hasColor: true },
+  "together":               { logo: togetherColorLogo,    hasColor: true },
+  "grok":                   { logo: grokLogo,             hasColor: false },
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1546,10 +1550,20 @@ function ProviderIcon({ id, size }: { id: string; size: number }) {
       </span>
     );
   }
-  // Color icons: self-colored SVG, no wrapper needed
-  if (pi.hasColor) return <pi.Icon size={size} />;
-  // Mono icons: use currentColor so they adapt to light/dark theme
-  return <pi.Icon size={size} style={{ color: "var(--text-muted)" }} />;
+  const src = typeof pi.logo === "string" ? pi.logo : pi.logo.src;
+  if (pi.hasColor) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt="" aria-hidden="true" draggable={false} width={size} height={size}
+        style={{ width: size, height: size, flex: "none", display: "inline-block" }} />
+    );
+  }
+  // As an <img>, currentColor would stay black; the mask lets the theme color show through.
+  const mask = `url("${src}") center / contain no-repeat`;
+  return (
+    <span aria-hidden="true"
+      style={{ width: size, height: size, flex: "none", display: "inline-block", backgroundColor: "var(--text-muted)", WebkitMask: mask, mask }} />
+  );
 }
 
 // ── Add provider picker ───────────────────────────────────────────────────────
