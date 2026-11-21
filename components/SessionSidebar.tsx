@@ -25,7 +25,7 @@ import { useSessionPins } from "@/hooks/useSessionPins";
 import type { SessionPinSnapshot } from "@/lib/session-pin-state";
 import { summarizeUserMessage } from "@/lib/user-message-content";
 import { todoExcerpt } from "@/lib/todo-client";
-import { SessionTodoMenu } from "./SessionTodoMenu";
+import { SessionTodoButton } from "./SessionTodoButton";
 
 function ToolbarIconButton({
   onClick,
@@ -1331,8 +1331,6 @@ function SessionItem({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [todoMenu, setTodoMenu] = useState<{ x: number; y: number } | null>(null);
-  const closeTodoMenu = useCallback(() => setTodoMenu(null), []);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const title = session.name?.trim() || t("sidebar.untitledSession");
@@ -1411,11 +1409,12 @@ function SessionItem({
 
   // Fixed-height row — content swaps in place so the list never reflows
   const ITEM_HEIGHT = 32;
+  // Pin, todo, rename and delete share one size and one gap.
   const actionButtonStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
-    width: 24, height: 24, padding: 0,
+    width: 20, height: 20, padding: 0,
     background: "none", border: "none",
-    borderRadius: 5, color: "var(--text-dim)",
+    borderRadius: 4, color: "var(--text-dim)",
     cursor: "pointer", flexShrink: 0,
     transition: "background 0.12s, color 0.12s",
   };
@@ -1424,11 +1423,6 @@ function SessionItem({
     <div
       className="sidebar-session-row"
       onClick={confirmDelete || renaming ? undefined : onClick}
-      onContextMenu={confirmDelete || renaming ? undefined : (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setTodoMenu({ x: event.clientX, y: event.clientY });
-      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       title={confirmDelete || renaming ? undefined : tooltip}
@@ -1565,20 +1559,6 @@ function SessionItem({
             </span>
           )}
 
-          {hovered && <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
-            title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
-            aria-label={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
-            aria-pressed={isPinned}
-            disabled={pinDisabled}
-            style={{ ...actionButtonStyle, color: isPinned ? "var(--accent)" : "var(--text-dim)", flexShrink: 0, opacity: pinDisabled ? 0.5 : 1, cursor: pinDisabled ? "default" : "pointer" }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M16 3l5 5-4 1-4 4-1 5-6-6 5-1 4-4zM2 22l7-7" />
-            </svg>
-          </button>}
-
           {/* Collapse toggle — always visible when has children */}
           {hasChildren && (
             <button
@@ -1601,10 +1581,35 @@ function SessionItem({
 
           {/* Selected rows also expose actions for touch/keyboard users. */}
           {(hovered || isSelected) ? (
-            <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
               <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
+                title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
+                aria-label={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
+                aria-pressed={isPinned}
+                disabled={pinDisabled}
+                style={{ ...actionButtonStyle, color: isPinned ? "var(--accent)" : "var(--text-dim)", opacity: pinDisabled ? 0.5 : 1, cursor: pinDisabled ? "default" : "pointer" }}
+                onMouseEnter={(e) => {
+                  if (pinDisabled) return;
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--accent)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "none";
+                  e.currentTarget.style.color = isPinned ? "var(--accent)" : "var(--text-dim)";
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 3l5 5-4 1-4 4-1 5-6-6 5-1 4-4zM2 22l7-7" />
+                </svg>
+              </button>
+              <SessionTodoButton sessionId={session.id} title={todoTitle} style={actionButtonStyle} />
+              <button
+                type="button"
                 onClick={startRename}
                 title={t("sidebar.rename")}
+                aria-label={t("sidebar.rename")}
                 style={actionButtonStyle}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-hover)";
@@ -1615,14 +1620,16 @@ function SessionItem({
                   e.currentTarget.style.color = "var(--text-dim)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
               {supportsSessionDeletion(engineForSession(session.id)) && <button
+                type="button"
                 onClick={handleDeleteClick}
                 disabled={deleting}
                 title={t("sidebar.deleteWithShiftClick")}
+                aria-label={t("sidebar.deleteWithShiftClick")}
                 style={actionButtonStyle}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(239,68,68,0.08)";
@@ -1633,7 +1640,7 @@ function SessionItem({
                   e.currentTarget.style.color = "var(--text-dim)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="3 6 5 6 21 6" />
                   <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                   <path d="M10 11v6M14 11v6" />
@@ -1647,9 +1654,6 @@ function SessionItem({
             </span>
           )}
         </>
-      )}
-      {todoMenu && (
-        <SessionTodoMenu x={todoMenu.x} y={todoMenu.y} sessionId={session.id} title={todoTitle} onClose={closeTodoMenu} />
       )}
     </div>
   );
