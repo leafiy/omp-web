@@ -7,7 +7,7 @@ import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getToolPreview } from "@/lib/tool-preview";
-import { claudeInputDiff, isClaudeFileTool, todoItems, type TodoItem } from "@/lib/tool-input-diff";
+import { claudeInputDiff, isClaudeFileTool, todoGroups, type TodoGroup } from "@/lib/tool-input-diff";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { countLines, pastedTextPreview } from "@/lib/pasted-text";
@@ -825,8 +825,9 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   // Claude Code results without a native diff (older history): show the change from the input.
   const inputDiff = useMemo(() => resultDiff || result?.isError ? null : claudeInputDiff(block.toolName, block.input), [resultDiff, result?.isError, block.toolName, block.input]);
   const shownDiff = resultDiff ?? (inputDiff ? { text: inputDiff } : null);
-  const todos = useMemo(() => todoItems(block.toolName, block.input), [block.toolName, block.input]);
-  const hideInput = isEditTool || Boolean(todos) || Boolean(shownDiff && isClaudeFileTool(block.toolName));
+  // Claude TodoWrite (input) or OMP todo (result snapshot); errors keep the plain result.
+  const todos = useMemo(() => result?.isError ? null : todoGroups(block.toolName, block.input, result?.details), [block.toolName, block.input, result?.isError, result?.details]);
+  const hideInput = isEditTool || Boolean(todos && block.toolName === "TodoWrite") || Boolean(shownDiff && isClaudeFileTool(block.toolName));
 
   // Result display
   const resultText = result
@@ -879,7 +880,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
       </button>
 
       {/* ── Claude Code TodoWrite: the list itself, always visible ── */}
-      {todos && <TodoListView items={todos} />}
+      {todos && <TodoListView groups={todos} />}
 
       {/* ── Expanded: input args ── */}
       {expanded && !hideInput && (
@@ -917,19 +918,26 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   );
 }
 
-function TodoListView({ items }: { items: TodoItem[] }) {
+function TodoListView({ groups }: { groups: TodoGroup[] }) {
   return (
-    <ul style={{ listStyle: "none", margin: 0, padding: "6px 10px 8px", borderTop: "1px solid rgba(34,197,94,0.15)", display: "grid", gap: 3 }}>
-      {items.map((item, index) => {
-        const done = item.status === "completed", active = item.status === "in_progress";
-        return (
-          <li key={index} style={{ display: "flex", gap: 7, alignItems: "baseline", fontSize: 12, lineHeight: 1.5, color: done ? "var(--text-dim)" : active ? "var(--text)" : "var(--text-muted)" }}>
-            <span aria-hidden="true" style={{ flexShrink: 0, width: 12, fontFamily: "var(--font-mono)", color: done ? "#16a34a" : active ? "var(--accent)" : "var(--text-dim)" }}>{done ? "✓" : active ? "▸" : "○"}</span>
-            <span style={{ textDecoration: done ? "line-through" : "none", fontWeight: active ? 600 : 400, overflowWrap: "anywhere" }}>{active && item.activeForm ? item.activeForm : item.content}</span>
-          </li>
-        );
-      })}
-    </ul>
+    <div style={{ padding: "6px 10px 8px", borderTop: "1px solid rgba(34,197,94,0.15)", display: "grid", gap: 6 }}>
+      {groups.map((group, groupIndex) => (
+        <div key={groupIndex}>
+          {group.name && <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 2, overflowWrap: "anywhere" }}>{group.name}</div>}
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 3 }}>
+            {group.items.map((item, index) => {
+              const done = item.status === "completed", active = item.status === "in_progress", dropped = item.status === "abandoned";
+              return (
+                <li key={index} style={{ display: "flex", gap: 7, alignItems: "baseline", fontSize: 12, lineHeight: 1.5, color: done || dropped ? "var(--text-dim)" : active ? "var(--text)" : "var(--text-muted)" }}>
+                  <span aria-hidden="true" style={{ flexShrink: 0, width: 12, fontFamily: "var(--font-mono)", color: done ? "#16a34a" : active ? "var(--accent)" : "var(--text-dim)" }}>{done ? "✓" : active ? "▸" : dropped ? "×" : "○"}</span>
+                  <span style={{ textDecoration: done || dropped ? "line-through" : "none", fontWeight: active ? 600 : 400, overflowWrap: "anywhere" }}>{active && item.activeForm ? item.activeForm : item.content}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 

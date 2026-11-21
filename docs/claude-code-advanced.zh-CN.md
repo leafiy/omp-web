@@ -51,3 +51,23 @@ node --test lib/claude-advanced.test.mjs lib/claude-code.test.mjs lib/tool-previ
 ```
 
 测试使用模拟 SDK 和临时目录，不调用真实 CC 或模型。真实 CC 上的 `rewindFiles`、`resumeSessionAt`、`forkSession` 行为、hook 事件和 elicitation 尚未实测。
+
+## OMP / Pi 对照（2026-11-21）
+
+依据：OMP 上游 `docs/rpc.md` 与 `src/modes/rpc/rpc-types.ts`（main 分支），本机 OMP 16.4.2 的 `src/tools/todo.ts`；本机 Pi 1.6.0 的 `dist/modes/rpc/rpc-types.d.ts`、`dist/core/agent-session.d.ts` 和内置 MCP 扩展。只接入原生 RPC 明确提供的能力；未运行任何引擎。
+
+| 功能 | OMP | Pi | 网页处理 |
+| --- | --- | --- | --- |
+| Fork | `branch` / `fork` | `fork` / `clone` | 早已接入 |
+| Rewind 对话 | `navigate_tree`（“从这里编辑”） | RPC 无导航 | OMP 早已接入；Pi 不提供 |
+| Rewind 代码 | 无文件检查点 | 无 | 不提供 |
+| HTML 导出、完整历史 | `export_html` | `export_html` | 早已接入 |
+| 权限模式 / 始终允许 | 无 RPC 控制（plan 只见于 goal 约束） | 无 | 不提供 |
+| MCP elicitation | MCP 仅作 `xd://` 设备，无 elicitation | 内置 MCP 扩展未处理 elicitation | 不提供 |
+| 压缩状态 | `auto_/manual_compaction_*` | `compaction_*`（带 reason） | 早已接入；**新增** Pi `summarization_retry_*` → 重试提示 |
+| 系统事件 | `notice`、`retry_fallback_applied`、`ttsr_triggered` | 重试事件 | `notice` 早已接入；**新增** OMP 模型回退、规则注入通知（不显示规则正文）。OMP/Pi 无 hook 事件帧 |
+| 后台任务 | `cancel_subagent`（无后台 bash 控制） | 无 | **新增** OMP 任务面板“停止”；“转到后台”无原生支持 |
+| 工具展示 | 编辑结果自带 diff；`todo` 工具结果 `details.phases` | 编辑结果自带 diff | diff 早已接入；**新增** OMP `todo` 按阶段显示清单，标题显示操作和目标 |
+| MCP 面板 | 无 RPC 状态接口（改配置需重启进程） | `/mcp`、`/mcp reconnect` 等命令，只返回文本通知 | 不做结构化面板；Pi 的 `/mcp` 仍可从命令菜单执行 |
+
+新增代码：`lib/omp-rpc-events.ts`、`lib/pi-rpc-adapter.ts`（重试映射）、`AgentSessionWrapper` 的 `stop_task`、`lib/tool-input-diff.ts` 的 `todoGroups`。回归入口：`node --test lib/native-advanced.test.mjs lib/omp-rpc.test.mjs`（需授权运行）。

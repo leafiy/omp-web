@@ -24,6 +24,11 @@ export function getToolPreview(
     const label = active && (typeof active.activeForm === "string" ? active.activeForm : typeof active.content === "string" ? active.content : "");
     if (todos.length) return compactPreview(`${done}/${todos.length} done${label ? ` · ${label}` : ""}`);
   }
+  // OMP's todo tool: the operation and its target, not just the op keyword.
+  if (block.toolName === "todo" && typeof input.op === "string") {
+    const target = typeof input.task === "string" ? input.task : typeof input.phase === "string" ? input.phase : "";
+    return compactPreview(`${input.op}${target ? ` · ${target}` : ""}`);
+  }
 
   if (block.toolName === "AskUserQuestion") {
     if (resultText?.trim() && resultText.trim() !== "(no output)") {

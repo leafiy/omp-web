@@ -32,7 +32,7 @@ export function claudeInputDiff(toolName: string, input: Record<string, unknown>
 
 export interface TodoItem {
   content: string;
-  status: "pending" | "in_progress" | "completed";
+  status: "pending" | "in_progress" | "completed" | "abandoned";
   activeForm?: string;
 }
 
@@ -47,4 +47,33 @@ export function todoItems(toolName: string, input: Record<string, unknown> | und
     return [{ content: todo.content, status, ...(typeof todo.activeForm === "string" ? { activeForm: todo.activeForm } : {}) }];
   });
   return items.length ? items : null;
+}
+
+export interface TodoGroup {
+  /** OMP phase name; Claude Code's TodoWrite has one unnamed list. */
+  name?: string;
+  items: TodoItem[];
+}
+
+/**
+ * The todo list a tool call shows: Claude Code's TodoWrite input, or the
+ * snapshot OMP's `todo` tool returns in its result details (`phases`).
+ */
+export function todoGroups(toolName: string, input: Record<string, unknown> | undefined, details?: unknown): TodoGroup[] | null {
+  const claude = todoItems(toolName, input);
+  if (claude) return [{ items: claude }];
+  if (toolName !== "todo" || !details || typeof details !== "object") return null;
+  const phases = (details as { phases?: unknown }).phases;
+  if (!Array.isArray(phases)) return null;
+  const groups = phases.flatMap((raw): TodoGroup[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const phase = raw as { name?: unknown; tasks?: unknown };
+    const items = Array.isArray(phase.tasks) ? phase.tasks.flatMap((task): TodoItem[] => {
+      if (!task || typeof task !== "object" || typeof (task as { content?: unknown }).content !== "string") return [];
+      const status = (task as { status?: unknown }).status;
+      return [{ content: (task as { content: string }).content, status: status === "completed" || status === "in_progress" || status === "abandoned" ? status : "pending" }];
+    }) : [];
+    return items.length ? [{ ...(typeof phase.name === "string" && phase.name ? { name: phase.name } : {}), items }] : [];
+  });
+  return groups.length ? groups : null;
 }

@@ -31,5 +31,15 @@ export function piWebEvent(frame: AgentFrame): AgentFrame {
   if ((frame.type === "compaction_start" || frame.type === "compaction_end") && frame.reason !== "manual") {
     return { ...frame, type: frame.type === "compaction_start" ? "auto_compaction_start" : "auto_compaction_end" };
   }
+  // Retries of the compaction/branch summary request use the same retry indicator.
+  if (frame.type === "summarization_retry_scheduled") {
+    return {
+      type: "auto_retry_start",
+      attempt: typeof frame.attempt === "number" ? frame.attempt : 1,
+      maxAttempts: typeof frame.maxAttempts === "number" ? frame.maxAttempts : 0,
+      errorMessage: `Summary request failed${typeof frame.errorMessage === "string" && frame.errorMessage ? `: ${frame.errorMessage}` : ""}`,
+    };
+  }
+  if (frame.type === "summarization_retry_finished") return { type: "auto_retry_end" };
   return frame;
 }

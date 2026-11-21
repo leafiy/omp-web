@@ -41,3 +41,6 @@ export function supportsHtmlExport(engine: AgentEngine): boolean { return engine
 
 /** Message Fork: OMP branch, Pi fork, Claude Code forkSession before the chosen user entry. */
 export function supportsMessageFork(engine: AgentEngine): boolean { return engine !== "codex"; }
+
+/** Per-task stop: Claude Code `stopTask`, OMP `cancel_subagent`. Pi RPC has no task control. */
+export function supportsTaskStop(engine: AgentEngine): boolean { return engine === "claude" || engine === "omp"; }

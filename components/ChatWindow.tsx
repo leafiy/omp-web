@@ -2,7 +2,7 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
-import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, supportsMessageFork, type AgentEngine } from "@/lib/engine";
+import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, supportsMessageFork, supportsTaskStop, type AgentEngine } from "@/lib/engine";
 import { ClaudeRewindDialog } from "./ClaudeRewindDialog";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -818,7 +818,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
-            <AgentTasksPanel snapshot={taskSnapshot} mainRunning={sessionBusy} stale={taskStatusStale} onOpen={onOpenTask ? task => { if (sessionIdRef.current) onOpenTask(sessionIdRef.current, task); } : undefined} onStop={isClaude && !taskStatusStale ? task => handleStopTask(task.id) : undefined} />
+            <AgentTasksPanel snapshot={taskSnapshot} mainRunning={sessionBusy} stale={taskStatusStale} onOpen={onOpenTask ? task => { if (sessionIdRef.current) onOpenTask(sessionIdRef.current, task); } : undefined} onStop={supportsTaskStop(engine) && !taskStatusStale ? task => handleStopTask(task.id) : undefined} />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>

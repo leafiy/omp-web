@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { AgentRpcClient, type AgentFrame, type AgentProcessOptions } from "./agent-rpc-client";
 import { engineForSession, nativeSessionId, parseEngine, sessionKey, type AgentEngine } from "./engine";
 import { piWebEvent, piWireCommand } from "./pi-rpc-adapter";
+import { ompEventNotice } from "./omp-rpc-events";
 import { AgentTasks } from "./agent-tasks";
 import { taskTranscript } from "./agent-task-messages";
 import { ClaudeCodeSession } from "./claude-code-session";
@@ -221,6 +222,9 @@ export class AgentSessionWrapper {
       this.handleUiRequest(frame);
     } else if (frame.type === "command_output" || frame.type === "notice") {
       this.emit({ type: "extension_ui_request", id: randomUUID(), method: "notify", message: frame.text ?? frame.message, notifyType: frame.level ?? "info" });
+    } else if (this.engine === "omp" && (frame.type === "retry_fallback_applied" || frame.type === "ttsr_triggered")) {
+      const notice = ompEventNotice(frame);
+      if (notice) this.emit(notice);
     } else if (frame.type === "rpc_frame_error") {
       this.emit({ type: "prompt_error", errorMessage: "OMP could not transmit an oversized event. The full transcript remains in the local session file." });
     } else {
@@ -389,6 +393,16 @@ export class AgentSessionWrapper {
       if (this.engine === "pi") return detail;
       const result = await this.client.request<{ messages: unknown[] }>({ type: "get_subagent_messages", subagentId: id }, 10_000);
       return this.tasks.detail(id, taskTranscript(result.messages));
+    }
+    if (type === "stop_task") {
+      // OMP stops one subagent natively; Pi RPC has no task control.
+      if (this.engine !== "omp") throw new Error(`${this.label} RPC cannot stop an individual task`);
+      const id = String(command.taskId ?? "");
+      const detail = this.tasks.detail(id); // Ownership: only subagents this session reported.
+      if (!detail.task.active) return { stopped: false };
+      const result = await this.client.request<{ cancelled?: boolean }>({ type: "cancel_subagent", subagentId: id }, 10_000);
+      try { await this.refreshTasks(); } catch { /* Lifecycle events still report the outcome. */ }
+      return { stopped: result?.cancelled === true };
     }
     // Reject absent Pi capabilities before an OMP-only branch can translate them.
     const piCommand = this.engine === "pi" ? piWireCommand(command) : undefined;
