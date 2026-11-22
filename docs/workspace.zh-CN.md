@@ -44,6 +44,7 @@ fi
 - 构建指纹包括依赖指纹、完整 Git 提交、`NEXT_*` / `NODE_*` / `npm_config_*` / `CI` 环境变量及四个生产构建相关 `.env*` 文件。构建记录还检查 `.next` 的必要文件和产物文件清单（大小与修改时间；忽略缓存、开发输出和诊断追踪）。完全匹配才跳过构建，不停止正在运行的服务。服务已停止时仍尝试启动。
 - 成功记录分别存放在 `node_modules/.omp-web-install.json` 和 `.next/.omp-web-build.json`，只记录哈希，不保存配置或环境变量原文。安装/构建开始前删除旧记录，成功后原子保存新记录；失败、缺失、损坏的记录均不能用于跳过。
 - `bash scripts/install.sh update --force-build` 强制重建；`--force-install` 强制重装依赖并重建。直接依赖检查不是整个 `node_modules` 的完整性审计；怀疑嵌套依赖损坏时使用 `--force-install`。未来若构建读取其他自定义环境变量或外部资源，应补入指纹，在此之前使用 `--force-build`。
+- `bash scripts/install.sh restart` 只重启已安装的服务（systemd `restart`；launchd 先 bootout 再 bootstrap），不拉取、不装依赖、不构建，也不接受其他选项。缺少 `.next/.omp-web-build.json` 成功记录、systemd 仍有中断更新留下的启动保持，或从服务自身的终端/agent 中运行时拒绝执行。
 - 日志显示安装、构建和整体更新的秒数，便于比较不同机器的实际瓶颈。不关闭类型检查。
 - 生产构建使用 Turbopack（`next build --turbopack`，与 `next dev` 相同）。webpack 构建要在 JS 里再做一遍依赖文件追踪（`collect-build-traces`），曾占整次构建的六成以上；Turbopack 在编译时原生完成追踪。Turbopack 的构建文件缓存（`experimental.turbopackFileSystemCacheForBuild`）在 Next 16.2 仍是实验选项，未开启。
 - `next.config.ts` 把 `outputFileTracingRoot`（Turbopack 下同时作为 `turbopack.root`）固定为本目录。不固定时，上级目录的锁文件（例如误生成的 `~/package-lock.json`）会让 Next 把家目录推断为工作区根，构建追踪随之遍历 `~/.claude`、`~/.codex`、`~/.omp` 等全部 Agent 数据：webpack 时曾实测约 1.4 万个文件、3.5 GB，追踪耗时占整次构建的约四分之三，且随会话增多变慢。分阶段耗时见 `.next/trace-build`；`.next/required-server-files.json` 中的 `config.outputFileTracingRoot` 应为本目录。

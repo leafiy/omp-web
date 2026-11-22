@@ -76,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install
 2. 选项目和引擎，拖入样本或粘贴截图，发出第一条需求。
 3. 看 diff，在内嵌终端跑测试；把需要复查的回复加入 Todo。
 
-远程访问请用 HTTPS 或私有网络，**不要把终端明文暴露到公网**。更新请在网页外运行 `bash ~/code/omp-web/scripts/install.sh update`；重建会中断聊天和终端。
+远程访问请用 HTTPS 或私有网络，**不要把终端明文暴露到公网**。更新请在网页外运行 `bash ~/code/omp-web/scripts/install.sh update`；重建会中断聊天和终端。`bash ~/code/omp-web/scripts/install.sh restart` 只按现有构建重启已安装的服务，不更新。
 
 [手动安装与终端](./docs/self-hosting.zh-CN.md) · [部署与更新](./docs/workspace.zh-CN.md) · [文件与附件](./docs/file-browser.zh-CN.md) · [Claude 高级控制](./docs/claude-code-advanced.zh-CN.md) · [全部文档](./docs/)
 

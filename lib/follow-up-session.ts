@@ -170,7 +170,10 @@ export class FollowUpSession implements FollowUpNativeSession {
     const timeout = setTimeout(() => controller.abort(new Error("Session title generation timed out")), 90_000);
     timeout.unref();
     this.changed();
-    this.titleWork = this.nameSession(controller, input).catch(() => {
+    this.titleWork = this.nameSession(controller, input).catch((error) => {
+      // The chat only gets a generic notice; keep the reason in the server log.
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[omp-web] ${this.engine} automatic session naming failed:`, reason.slice(0, 500));
       if (this.isAlive() && !this.titleSuppressed) this.emit({
         type: "extension_ui_request", id: randomUUID(), method: "notify", notifyType: "warning",
         message: "Automatic session naming failed. You can set a title with Rename.",

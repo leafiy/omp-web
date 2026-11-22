@@ -4,6 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
 #   bash ~/code/omp-web/scripts/install.sh update
+#   bash ~/code/omp-web/scripts/install.sh restart
 #
 # Requires git, Node.js 22.19+ and npm. It never installs runtimes or system
 # packages. Checkout location is fixed: ~/code/omp-web.
@@ -12,6 +13,8 @@
 #   (none)           install, or update while asking before each disruptive step
 #   update           one-step update: pull, stop the service, rebuild, start it
 #                    again. Asks nothing and keeps the login and service settings.
+#   restart          restart the installed service on its current build: no pull,
+#                    no dependency install, no build. Takes no options.
 #
 # Options:
 #   --service        install and start a background service
@@ -39,19 +42,20 @@ main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
   local mode="install" ref="" host="127.0.0.1" port="30141" service="ask"
   local dir="$HOME/code/omp-web"
-  local force_build="no" force_install="no" total_started=$SECONDS
+  local force_build="no" force_install="no" total_started=$SECONDS options_given="no"
 
   while [ $# -gt 0 ]; do
     case "$1" in
       update|--update) mode="update" ;;
-      --service) service="yes" ;;
-      --no-service) service="no" ;;
-      --host) host="${2:?--host needs a value}"; shift ;;
-      --port) port="${2:?--port needs a value}"; shift ;;
-      --ref) ref="${2:?--ref needs a value}"; shift ;;
-      --force-build) force_build="yes" ;;
-      --force-install) force_install="yes"; force_build="yes" ;;
-      -h|--help) sed -n '2,27p' "$0" 2>/dev/null || true; return 0 ;;
+      restart|--restart) mode="restart" ;;
+      --service) service="yes"; options_given="yes" ;;
+      --no-service) service="no"; options_given="yes" ;;
+      --host) host="${2:?--host needs a value}"; options_given="yes"; shift ;;
+      --port) port="${2:?--port needs a value}"; options_given="yes"; shift ;;
+      --ref) ref="${2:?--ref needs a value}"; options_given="yes"; shift ;;
+      --force-build) force_build="yes"; options_given="yes" ;;
+      --force-install) force_install="yes"; force_build="yes"; options_given="yes" ;;
+      -h|--help) sed -n '2,30p' "$0" 2>/dev/null || true; return 0 ;;
       *) fail "Unknown option: $1" ;;
     esac
     shift
@@ -61,6 +65,13 @@ main() {
   if [ -r /dev/tty ] && [ -w /dev/tty ] && { : </dev/tty; } 2>/dev/null; then tty="/dev/tty"; fi
 
   detect_platform
+
+  if [ "$mode" = "restart" ]; then
+    # A restart must not silently drop a requested setting change.
+    [ "$options_given" = "no" ] || fail "restart takes no options; it keeps the installed service's settings. Use 'update' or a plain install to change them."
+    restart_installed_service "$dir"
+    return 0
+  fi
 
   say "Checking prerequisites"
   command -v git >/dev/null 2>&1 || fail "git is required. Install it first."
@@ -202,6 +213,7 @@ main() {
     echo "  Open:   http://$host:$port"
   fi
   echo "  Update later:  bash ~/code/omp-web/scripts/install.sh update"
+  if service_installed; then echo "  Restart only:  bash ~/code/omp-web/scripts/install.sh restart"; fi
   echo "  Change the web login in Settings, or run: node ~/code/omp-web/bin/omp-web.js passwd"
 }
 
@@ -361,6 +373,36 @@ service_start() {
         || fail "launchctl could not load $LAUNCHD_PLIST. The agent needs this user's desktop session; log in on the Mac and run this again."
       ;;
   esac
+}
+
+service_restart() {
+  case "$PLATFORM" in
+    systemd) run_root systemctl restart omp-web.service ;; # also starts an inactive unit
+    launchd)
+      if launchd_loaded; then service_stop; fi
+      service_start
+      ;;
+  esac
+}
+
+# Restarts the installed service on the build it already has. Nothing is pulled,
+# installed or built, so it neither needs nor touches git/npm state.
+restart_installed_service() {
+  local dir="$1"
+  [ "$PLATFORM" != "none" ] || fail "No supported service manager (systemd or launchd) is available; stop and start omp-web manually."
+  service_installed || fail "No background service is installed. Install one with: bash ~/code/omp-web/scripts/install.sh --service"
+  # The receipt is removed before every build and recorded only after it succeeds.
+  [ -f "$dir/.next/.omp-web-build.json" ] || fail "No completed build in $dir. Run: bash ~/code/omp-web/scripts/install.sh update"
+  if [ "$PLATFORM" = "systemd" ] && [ -f "$HOLD_DROPIN" ]; then
+    fail "An interrupted update holds omp-web.service stopped. Finish it with: bash ~/code/omp-web/scripts/install.sh update"
+  fi
+  if service_active && inside_service; then
+    fail "This shell runs inside omp-web (its terminal or one of its agents). Restarting would kill this run halfway. Run it from a separate terminal, e.g. over SSH."
+  fi
+  say "Restarting $(service_name) (no update; active chats and terminals will be interrupted)"
+  service_restart
+  say "$(service_name) restarted on the existing build."
+  echo "  Logs: $(service_logs_hint "$dir")"
 }
 
 has_login() {

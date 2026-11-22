@@ -76,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install
 2. Choose a project and an engine, drop in a test fixture or paste a screenshot, and send your request.
 3. Inspect the diff, run the tests in the embedded terminal, and add any reply you want to revisit to your todos.
 
-For remote access use HTTPS or a private network. **Don't expose the terminal over public plain HTTP.** Run `bash ~/code/omp-web/scripts/install.sh update` outside the workspace to update; a rebuild interrupts chats and terminals.
+For remote access use HTTPS or a private network. **Don't expose the terminal over public plain HTTP.** Run `bash ~/code/omp-web/scripts/install.sh update` outside the workspace to update; a rebuild interrupts chats and terminals. `bash ~/code/omp-web/scripts/install.sh restart` only restarts the installed service on its current build, without updating.
 
 [Manual install and terminal](./docs/self-hosting.zh-CN.md) · [Deployment and updates](./docs/workspace.zh-CN.md) · [Files and attachments](./docs/file-browser.zh-CN.md) · [Claude controls](./docs/claude-code-advanced.zh-CN.md) · [All docs](./docs/)
 
