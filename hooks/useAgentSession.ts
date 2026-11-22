@@ -53,6 +53,8 @@ export interface SessionData {
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
+  /** Live session whose native transcript is not written yet: keep the local view. */
+  unpersisted?: boolean;
 }
 
 interface StreamingState {
@@ -634,6 +636,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const url = historyUrl(sid);
     const apply = (d: SessionData) => {
       if (!current() || d.sessionId !== sid) return;
+      if (d.unpersisted) {
+        // A new chat's first prompt and stream are shown locally; the engine writes
+        // its file once a reply lands. Keep that view and the pending sync.
+        setError(null);
+        messagesLoaded = true; if (showLoading) setLoading(false);
+        return;
+      }
       historySyncNeededRef.current = false;
       setData(d); setActiveLeafId(d.leafId);
       // A conditional 304 returns the same snapshot. Do not churn the message
@@ -710,7 +719,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const revision = ++historyLoadRevision.current, streamRevision = messageRevision.current;
     try {
       const d = await historyClientCache.load(historyUrl(sid, leafId ? { leafId } : {}));
-      if (!mountedRef.current || sessionIdRef.current !== sid || historyLoadRevision.current !== revision || messageRevision.current !== streamRevision) return;
+      if (!mountedRef.current || sessionIdRef.current !== sid || historyLoadRevision.current !== revision || messageRevision.current !== streamRevision || d.unpersisted) return;
       applyHistoryWindow(d);
     } catch { if (mountedRef.current && historyLoadRevision.current === revision) setHistoryPageError("History could not be loaded. Please retry."); }
   }, [applyHistoryWindow]);

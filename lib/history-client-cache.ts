@@ -41,7 +41,8 @@ export function createHistoryClientCache(fetcher: typeof fetch = (...args) => fe
         const text = await response.text(), data = JSON.parse(text) as SessionData;
         const expectedId = decodeURIComponent(new URL(url, "http://history.local").pathname.split("/").at(-1)!);
         if (data.sessionId !== expectedId || !Array.isArray(data.context?.messages) || data.context.messages.length !== data.context.entryIds?.length) throw new Error("Invalid history response");
-        if (cache.get(url) === entry) {
+        // An unwritten live session has no snapshot to keep or revalidate.
+        if (cache.get(url) === entry && !data.unpersisted) {
           entry.data = data; entry.etag = response.headers.get("etag") ?? undefined; entry.bytes = text.length * 3; trim();
         }
         return data;

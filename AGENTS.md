@@ -59,7 +59,7 @@ GET /api/models     →      cache keyed by engine + cwd → ephemeral native RP
 - Native title-slot records can precede the header. Preserve byte order and padding. GET/history/export must not rewrite the source file or construct a writable Pi SessionManager.
 - Native `model_change` has a combined `provider/modelId` and optional role. Adapt only the default role for display; preserve node IDs/parents. `activeLeafId` can keep late usage entries off the active branch.
 - Native titles and parent references can differ from Pi metadata; preserve original JSONL. File-path caches are bidirectional and must be invalidated after deletion/renaming.
-- A session can have a file path before its first transcript flush. Keep the process identity authoritative during startup.
+- A session can have a file path before its first transcript flush. Keep the process identity authoritative during startup: history GET answers such a live session with an uncached `unpersisted` empty snapshot (never 404), and the browser keeps its local prompt/stream view.
 
 ## Auth, models and project resources
 

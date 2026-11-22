@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { sessionFileVersion } from "@/lib/session-file-cache";
 import { windowHistory, lightHistoryTree } from "@/lib/history-page";
 import { guardHistoryRequest, historyHeaders } from "@/lib/history-http";
-import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import {
   resolveSessionPath,
@@ -120,6 +120,19 @@ function projectTreeForResponse<T extends { entry: { id: string }; children: T[]
   return projectedRoots;
 }
 
+/**
+ * A live native process owns its session file path before the first transcript
+ * flush (OMP/Pi write it once a reply lands). That session exists; it just has
+ * no durable history yet. Returns that path, or null for an ordinary lookup.
+ */
+function unpersistedLiveSessionFile(id: string, filePath: string | null): string | null {
+  const live = getRpcSession(id);
+  const nativeFile = live?.isAlive() ? live.sessionFile : "";
+  if (!nativeFile || existsSync(nativeFile)) return null;
+  if (filePath && sessionPathKey(filePath) !== sessionPathKey(nativeFile)) return null;
+  return nativeFile;
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -129,6 +142,14 @@ export async function GET(
   const { id } = await params;
   try {
     const filePath = await resolveSessionPath(id);
+    const unpersistedFile = unpersistedLiveSessionFile(id, filePath);
+    if (unpersistedFile) {
+      // No ETag: this is not a history snapshot and must not be revalidated as one.
+      return NextResponse.json({
+        sessionId: id, filePath: unpersistedFile, info: null, leafId: null, tree: [],
+        context: buildSessionContext([], null), unpersisted: true,
+      }, { headers: historyHeaders });
+    }
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
