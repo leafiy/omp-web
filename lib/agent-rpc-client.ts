@@ -21,6 +21,8 @@ export function getOmpExecutable(): string { return getAgentExecutable("omp"); }
 export function getPiExecutable(): string { return getAgentExecutable("pi"); }
 
 export const piReloadExtension = resolve(process.env.OMP_WEB_APP_DIR ?? process.cwd(), "bin/pi-web-reload.mjs");
+/** `--config` overlay for a new OMP chat: the user's `autoResume` must not reopen the cwd's latest session. */
+export const ompNewSessionConfig = resolve(process.env.OMP_WEB_APP_DIR ?? process.cwd(), "bin/omp-new-session.yml");
 
 const MAX_LOGICAL_BYTES = 64 * 1024 * 1024;
 const START_TIMEOUT_MS = 60_000;
@@ -185,6 +187,9 @@ export class AgentRpcClient {
     // Title generation must never resume a caller's transcript, even by accident.
     // Pi --resume opens an interactive picker; --session is its exact-path option.
     if (options.sessionFile && !options.titleOnly) args.push(pi ? "--session" : "--resume", options.sessionFile);
+    // A plain launch is a new chat, but OMP's autoResume would continue the
+    // cwd's latest session instead. Explicit --resume already bypasses it.
+    else if (!pi && !options.titleOnly && !options.catalogOnly) args.push("--config", ompNewSessionConfig);
     if (options.initialModel) args.push("--model", `${options.initialModel.provider}/${options.initialModel.modelId}`);
     if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const agentDir = pi ? getPiAgentDir() : getOmpAgentDir();

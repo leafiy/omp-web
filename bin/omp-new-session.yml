@@ -1,0 +1,6 @@
+# Loaded with `omp --config` only when omp-web starts a NEW chat. OMP's own
+# `autoResume` setting would otherwise reopen the most recent session in the
+# chat's directory instead of creating one. Resumed chats use --resume and do
+# not load this file. Keep it on disk: OMP re-reads overlays when its settings
+# reload and passes them on to subagent processes (PI_CONFIG_FILES).
+autoResume: false

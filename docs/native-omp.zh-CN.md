@@ -32,7 +32,7 @@ OMP 可执行文件解析顺序：
 OMP_WEB_EXECUTABLE=/root/2/devbox-distrobox/.bun/bin/omp
 ```
 
-这份说明不会自动修改 systemd 环境。进程以服务用户身份在所选项目 cwd 中运行；恢复会话使用精确文件路径（OMP `--resume`，Pi `--session`），而不是自动续接最近会话。每个引擎负责自己的持久化、模型、工具和凭据。若 OMP 会话被终端占用，保留原生租约报错，不抢占会话。
+这份说明不会自动修改 systemd 环境。进程以服务用户身份在所选项目 cwd 中运行；恢复会话使用精确文件路径（OMP `--resume`，Pi `--session`），而不是自动续接最近会话。OMP 的原生设置 `autoResume` 开启时，不带会话参数的启动会续接该目录最近的会话（被其他 omp 进程占用的除外），因此网页新建 OMP 对话时加载 `--config bin/omp-new-session.yml`（`autoResume: false`）覆盖层，只作用于本次进程，不改用户配置；该文件需保留在磁盘上，OMP 重载设置和启动子代理时会再次读取。每个引擎负责自己的持久化、模型、工具和凭据。若 OMP 会话被终端占用，保留原生租约报错，不抢占会话。
 
 OMP 数据目录继续由 `OMP_CODING_AGENT_DIR`、`PI_CODING_AGENT_DIR`、`~/.omp/agent` 按优先级选择。Pi 子进程使用独立的 `OMP_WEB_PI_AGENT_DIR` 或 `~/.pi/agent`，并仅在子进程环境中把它设为 `PI_CODING_AGENT_DIR`；不会误用目前服务指向 OMP 的同名变量。两者数据目录解析到同一路径时拒绝使用。各引擎自己发现项目配置、扩展、技能和凭据，不复制 OAuth、API Key 或配置到另一引擎。
 
