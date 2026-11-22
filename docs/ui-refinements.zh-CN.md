@@ -27,7 +27,8 @@
 
 此前 Claude 会话在侧栏几乎总是“未命名会话”，而 OMP 会话有标题，原因是两类标题来源不同：
 
-- OMP 原生自动命名写入自己的标题槽，侧栏直接读取。
+- OMP 原生自动命名写入自己的标题槽，侧栏直接读取。原生命名按 `tiny`/`commit`/`smol` 角色选模型；角色未设置时可能落到凭据失效的提供商（例如 401），这时由网页命名兜底。
+- OMP 19 起 `dev.autoqa` 默认开启，`report_issue` 特殊工具在 `setActiveTools([])` 后仍会出现，网页独立命名进程的空工具校验因此失败（"Native title process still exposes tools"）。命名进程现以 `PI_AUTO_QA=0` 启动（显式环境值优先于所有配置层），只影响这次独立请求，不改主会话的 Auto-QA。
 - Claude Code 把自动生成的 `ai-title`（以及 `/rename` 的 `custom-title`）写在**原生**会话 JSONL（`~/.claude/projects/...`）里；网页投影只记录网页重命名，侧栏也只读投影，所以从未显示 Claude 自己的标题。
 
 现在：网页重命名优先；投影没有名称时，通过 SDK `getSessionInfo(id, { dir: cwd })` 只读取 `customTitle`（即 custom-title，否则 ai-title），不使用会回退到首条提示的 `summary`，不写原生文件。侧栏列表按投影修改时间缓存（找到 5 分钟、未找到 30 秒）；活动会话在每轮结束及恢复时刷新原生标题，变化时推送 `session_info_update` 并使侧栏缓存失效，SSE 重连可恢复。状态里已有原生标题时，网页自动命名直接跳过，不再额外请求模型。清空网页名称会回到 Claude 原生标题。

@@ -198,7 +198,13 @@ export class AgentRpcClient {
       // Do not inherit the hosting OMP's resource/config directories or session store.
       delete env.OMP_CODING_AGENT_DIR;
       delete env.PI_CODING_AGENT_SESSION_DIR;
-    } else env.OMP_CODING_AGENT_DIR = agentDir;
+    } else {
+      env.OMP_CODING_AGENT_DIR = agentDir;
+      // OMP 19 enables Auto-QA by default, and its `report_issue` special tool
+      // survives setActiveTools([]). The explicit env value outranks every
+      // settings layer; only the isolated title run opts out.
+      if (options.titleOnly) env.PI_AUTO_QA = "0";
+    }
     for (const key of ["PI_SESSION_ID", "PI_SESSION_FILE", "PI_MODEL", "PI_PROVIDER", "PI_REASONING_LEVEL"]) delete env[key];
     this.ready = new Promise((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
     void this.ready.catch(() => {});
@@ -314,7 +320,8 @@ export class AgentRpcClient {
         try { tools = JSON.parse(frame.message.slice(this.titleGuard.marker.length)); }
         catch { this.fail(new Error("Invalid native title tool attestation")); return; }
         if (!Array.isArray(tools) || tools.length !== 0) {
-          this.fail(new Error("Native title process still exposes tools"));
+          const names = Array.isArray(tools) ? tools.filter((name) => typeof name === "string").slice(0, 8).join(", ") : "";
+          this.fail(new Error(`Native title process still exposes tools${names ? `: ${names}` : ""}`));
           return;
         }
         this.titleGuard.resolve();
