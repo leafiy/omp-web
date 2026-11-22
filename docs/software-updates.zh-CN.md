@@ -24,7 +24,8 @@
 - Codex 同样确认实际全局 npm 安装，再更新 `@openai/codex@latest`。默认使用 PATH 中的 `codex`，可由管理员用 `OMP_WEB_CODEX_EXECUTABLE` 指定；网页不接收这个路径。
 - 两个 npm 更新都固定正确 prefix、保留 optional dependencies、跳过生命周期脚本。未识别的安装方式明确禁用，不另装一份并冒充更新成功。
 - Claude Code 当前支持原生安装器管理的 `~/.local/bin/claude`，调用 `claude update`。专用 `CLAUDE_CONFIG_DIR` 沿用网页目录，不读取或复制终端登录。固定到某一版本的自定义 launcher 不支持网页更新。
-- 开始更新前核对 systemd 控制组和 InvocationID。更新命令成功、同一个 launcher 的版本输出有效后才请求重启；只有新的网页服务实例才能报告成功。该检查不等于新版本的完整聊天兼容性验收。
+- macOS 使用安装脚本创建的当前用户 LaunchAgent。网页核对 `launchctl print gui/<uid>/io.github.leafiy.omp-web` 的主 PID 是否是 Next 服务的父进程；手动启动的网页不能借它重启别的实例。更新完成后再次核对，调用 `launchctl kickstart -k`，并由新的 LaunchAgent 主进程确认重启。无需 sudo。识别到 Homebrew Cask 管理的 Codex 时使用同一前缀的 `brew upgrade --cask codex`；不会改装 npm 版本。没有安装或无法识别来源的工具仍不可更新。
+- Linux 开始更新前核对 systemd 控制组和 InvocationID。更新命令成功、同一个 launcher 的版本输出有效后才请求重启；只有新的网页服务实例才能报告成功。该检查不等于新版本的完整聊天兼容性验收。
 - `systemctl` 与网页同属一个控制组。重启时它可能先收到 SIGTERM，无法向旧网页进程返回结果；这不是升级失败。新任务在发出重启前保存时间和已验证的版本，由新 InvocationID 确认成功。同一实例两分钟后仍未重启，显示“工具已更新，但未确认网页重启”，不自动重试；明确的重启命令错误立即显示并保留原因。
 - 更新状态沿用 `~/.local/state/omp-web/omp-update.json`（或 XDG_STATE_HOME），兼容旧 OMP 记录。轮询失败只重试 GET，绝不自动重发 POST；关闭设置不会停止已接受的更新。
 - 不更新 omp-web、Claude Agent SDK 或本地 Codex 代理，不改订阅和模型，不删除登录或历史。实际安装仍由对应官方更新器/npm 完成，网页不承诺二进制自动回滚。

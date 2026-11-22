@@ -10,7 +10,10 @@ import { discoverAgent } from "./agent-executable";
 import { resolveToolUpdatePlan, updateEnvironment, validToolVersion, type ToolUpdatePlan } from "./tool-update-plan";
 import { isUpdatableTool, TOOL_IDS, TOOL_LABELS, type ToolUpdatesSnapshot, type ToolUpdateStatus, type UpdateTarget } from "./tool-update-types";
 
+import { LAUNCHCTL, launchdInvocation, launchdTarget, launchdUnavailable } from "./tool-update-launchd";
+
 const exec = promisify(execFile);
+const invocationId = () => process.platform === "darwin" ? launchdInvocation() : process.env.INVOCATION_ID;
 const SERVICE = "omp-web.service";
 const SYSTEMCTL = "/usr/bin/systemctl";
 const MAX_OUTPUT = 16_384;
@@ -33,6 +36,7 @@ function statePath(): string {
 }
 
 function unavailableReason(): string | undefined {
+  if (process.platform === "darwin") return launchdUnavailable();
   if (process.platform !== "linux" || process.getuid?.() !== 0 || !process.env.INVOCATION_ID) {
     return "Updates require the root-owned systemd omp-web.service on Linux.";
   }
@@ -73,14 +77,15 @@ function ownerAlive(pid: number): boolean {
 function observedJob(job: Job | undefined, reason: string | undefined): Omit<ToolUpdateStatus, "available"> | undefined {
   if (!job) return undefined;
   const { invocation, pid, restartRequestedAt, ...status } = job;
-  const newInvocation = Boolean(process.env.INVOCATION_ID && process.env.INVOCATION_ID !== invocation);
+  const current = invocationId();
+  const newInvocation = Boolean(current && current !== invocation);
   // A disconnected browser or queued restart is not a successful update.
   if (status.phase === "restarting") {
     if (!reason && newInvocation) status.phase = "succeeded";
-    else if (process.env.INVOCATION_ID === invocation && typeof restartRequestedAt === "number"
+    else if (current === invocation && typeof restartRequestedAt === "number"
       && Date.now() - restartRequestedAt >= RESTART_CONFIRM_TIMEOUT) {
       status.phase = "failed";
-      status.error = "Software updated, but the web service restart was not confirmed within two minutes. Check omp-web.service before retrying.";
+      status.error = "Software updated, but the web service restart was not confirmed within two minutes. Check the omp-web service before retrying.";
     }
   } else if (status.phase === "updating" && (newInvocation || !ownerAlive(pid))) {
     status.phase = "failed";
@@ -89,7 +94,7 @@ function observedJob(job: Job | undefined, reason: string | undefined): Omit<Too
   return status;
 }
 
-/** Coordinator snapshot only: no subprocesses. GET enriches its version separately. */
+/** Local service/installation snapshot. GET enriches tool versions separately. */
 export function getToolUpdates(): ToolUpdatesSnapshot {
   const reason = unavailableReason();
   const job = observedJob(readJob(), reason);
@@ -189,7 +194,14 @@ async function performUpdate(plans: ToolUpdatePlan[], job: Job, release: () => P
     job.restartRequestedAt = Date.now();
     assertLock(); saveJob(job);
     try {
-      await exec(SYSTEMCTL, ["--system", "--no-ask-password", "--no-block", "restart", SERVICE], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
+      const options = { timeout: 10_000, killSignal: "SIGKILL" as const, maxBuffer: 65_536 };
+      if (process.platform === "darwin") {
+        const reason = launchdUnavailable(true);
+        if (reason || invocationId() !== job.invocation) throw new Error(reason || "LaunchAgent instance changed during update.");
+        await exec(LAUNCHCTL, ["kickstart", "-k", launchdTarget()], options);
+      } else {
+        await exec(SYSTEMCTL, ["--system", "--no-ask-password", "--no-block", "restart", SERVICE], options);
+      }
     } catch (error) {
       // systemctl belongs to the unit it is restarting. systemd can SIGTERM it
       // before it acknowledges the queued job. Leave confirmation to observedJob.
@@ -230,10 +242,15 @@ export async function startToolUpdate(tool: UpdateTarget): Promise<ToolUpdatesSn
     let plans: ToolUpdatePlan[];
     try { plans = targets.map(id => resolveToolUpdatePlan(id)); }
     catch (error) { throw new ToolUpdateError(error instanceof Error ? error.message : String(error), 503); }
-    const { stdout } = await exec(SYSTEMCTL, ["--system", "--no-ask-password", "show", SERVICE, "--property=InvocationID", "--value"], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
-    if (stdout.trim() !== process.env.INVOCATION_ID) throw new ToolUpdateError("Refusing to restart a different systemd service instance.", 503);
+    if (process.platform === "darwin") {
+      const reason = launchdUnavailable(true);
+      if (reason) throw new ToolUpdateError(reason, 503);
+    } else {
+      const { stdout } = await exec(SYSTEMCTL, ["--system", "--no-ask-password", "show", SERVICE, "--property=InvocationID", "--value"], { timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 65_536 });
+      if (stdout.trim() !== process.env.INVOCATION_ID) throw new ToolUpdateError("Refusing to restart a different systemd service instance.", 503);
+    }
     if (lockError) throw lockError;
-    const job: Job = { tool: plans[0].tool, batch: tool === "all", id: randomUUID(), phase: "updating", startedAt: new Date().toISOString(), output: "", invocation: process.env.INVOCATION_ID!, pid: process.pid };
+    const job: Job = { tool: plans[0].tool, batch: tool === "all", id: randomUUID(), phase: "updating", startedAt: new Date().toISOString(), output: "", invocation: invocationId()!, pid: process.pid };
     saveJob(job);
     globalThis.__ompWebToolUpdateJob = job;
     handedOff = true;

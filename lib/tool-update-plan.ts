@@ -54,6 +54,16 @@ export function planToolUpdate(tool: UpdatableTool, configured: string, home = h
     return { tool, executable, command: executable, args: ["update"], installedVersion: version };
   }
 
+  if (process.platform === "darwin" && tool === "codex") {
+    // Bind brew, the public launcher and the installed receipt to one prefix.
+    const cask = /^(.*)\/Caskroom\/codex\/(\d+\.\d+\.\d+)\/bin\/codex$/.exec(actual);
+    if (cask && realpathSync(dirname(executable)) === join(cask[1], "bin") &&
+      statSync(join(cask[1], "Caskroom/codex/.metadata/INSTALL_RECEIPT.json")).isFile()) {
+      return { tool, executable, command: findExecutable(join(cask[1], "bin/brew"), searchPath),
+        args: ["upgrade", "--cask", "codex"], installedVersion: cask[2] };
+    }
+  }
+
   // Do not update whichever npm prefix happens to be the default. Trace the
   // actual selected CLI (including symlink chains) to its global package/bin.
   const packageName = tool === "pi" ? "@earendil-works/pi-coding-agent" : "@openai/codex";
