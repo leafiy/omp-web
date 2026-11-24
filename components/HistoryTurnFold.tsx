@@ -58,11 +58,7 @@ export function CollapsedHistoryTurn({ turn, state, onToggle, t, rowRef }: { tur
             onClick={onToggle}
             disabled={state?.loading}
             title={t("chat.turnExpand")}
-            style={{
-              maxWidth: "85%", minWidth: 0, textAlign: "left", cursor: state?.loading ? "progress" : "pointer",
-              background: "var(--user-bg)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 12, padding: "8px 12px",
-              fontSize: 14, lineHeight: 1.6, color: "var(--text)", wordBreak: "break-word",
-            }}
+            style={{ cursor: state?.loading ? "progress" : "pointer" }}
           >
             <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
               {turn.images > 0 && <span style={{ color: "var(--text-muted)", fontSize: 12, marginRight: 6 }}>[{t("chat.turnImages", { count: turn.images })}]</span>}

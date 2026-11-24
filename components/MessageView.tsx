@@ -210,58 +210,41 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "85%" }}>
-        <div
-          className="sf-user-bubble"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            background: "var(--user-bg)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: "8px 12px",
-            fontSize: 14,
-            lineHeight: 1.6,
-            color: "var(--text)",
-            wordBreak: "break-word",
-          }}
-        >
-          {imageBlocks.length > 0 && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
-              {imageBlocks.map((img, i) => {
-                // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
-                // pi-ai on-disk format uses flat {data, mimeType} — handle both
-                const flat = img as unknown as { data?: string; mimeType?: string };
-                const src = img.source
-                  ? img.source.type === "base64"
-                    ? `data:${img.source.media_type};base64,${img.source.data}`
-                    : img.source.url ?? ""
-                  : flat.data
-                    ? `data:${flat.mimeType};base64,${flat.data}`
-                    : "";
-                return (
-                  <ChatImage
-                    key={i}
-                    cwd={cwd}
-                    onOpenFile={onOpenFile}
-                    src={src}
-                    alt=""
-                    style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
-                  />
-                );
-              })}
-            </div>
-          )}
-          {displayContent && segments.map((segment, i) => {
-            if (segment.type === "file") return <div key={i} style={{ margin: "4px 0" }}><FileAttachment file={segment.file} onOpenFile={onOpenFile} /></div>;
-            if (segment.type === "paste") return <PastedTextAttachment key={i} text={segment.text} />;
-            if (segment.type === "todo") return <TodoListAttachment key={i} text={segment.text} />;
-            return segments.length === 1 || segment.text.trim()
-              ? <MarkdownBody key={i} className="markdown-user-message markdown-reading" cwd={cwd} onOpenFile={onOpenFile}>{segment.text}</MarkdownBody>
-              : null;
-          })}
-        </div>
-
+      <div className="sf-user-bubble">
+        {imageBlocks.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
+            {imageBlocks.map((img, i) => {
+              // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
+              // pi-ai on-disk format uses flat {data, mimeType} — handle both
+              const flat = img as unknown as { data?: string; mimeType?: string };
+              const src = img.source
+                ? img.source.type === "base64"
+                  ? `data:${img.source.media_type};base64,${img.source.data}`
+                  : img.source.url ?? ""
+                : flat.data
+                  ? `data:${flat.mimeType};base64,${flat.data}`
+                  : "";
+              return (
+                <ChatImage
+                  key={i}
+                  cwd={cwd}
+                  onOpenFile={onOpenFile}
+                  src={src}
+                  alt=""
+                  style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
+                />
+              );
+            })}
+          </div>
+        )}
+        {displayContent && segments.map((segment, i) => {
+          if (segment.type === "file") return <div key={i} style={{ margin: "4px 0" }}><FileAttachment file={segment.file} onOpenFile={onOpenFile} /></div>;
+          if (segment.type === "paste") return <PastedTextAttachment key={i} text={segment.text} />;
+          if (segment.type === "todo") return <TodoListAttachment key={i} text={segment.text} />;
+          return segments.length === 1 || segment.text.trim()
+            ? <MarkdownBody key={i} className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{segment.text}</MarkdownBody>
+            : null;
+        })}
       </div>
 
       <TranslationPanel translation={translation} cwd={cwd} onOpenFile={onOpenFile} maxWidth="85%" />
