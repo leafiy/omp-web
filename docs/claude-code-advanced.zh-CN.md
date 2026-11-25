@@ -16,7 +16,7 @@
 | ExitPlanMode | 审批弹窗显示计划 | `setMode` 权限更新 | `permission()` |
 | MCP elicitation | 输入/选择弹窗 | `Options.onElicitation` | `elicit()`、`lib/claude-elicitation.ts` |
 | 压缩状态 | 输入栏压缩提示、压缩按钮 | `status: compacting`、`compact_boundary` | `lib/claude-system-events.ts` |
-| 系统事件 | 通知、状态栏 | `api_retry`、`hook_*`、`notification`、`permission_denied` 等 | 同上，`includeHookEvents: true` |
+| 系统事件 | 通知、状态栏（新出现的状态持续 1 秒才显示，瞬时 hook 不会让布局跳动） | `api_retry`、`hook_*`、`notification`、`permission_denied` 等 | 同上，`includeHookEvents: true`；延迟在 `ExtensionStatusBar` |
 | 后台任务 | 任务面板“停止”、运行提示“转到后台” | `stopTask`、`backgroundTasks(toolUseId)` | `stop_task` / `background_tasks` |
 | 工具展示 | 工具块 | Edit/Write 结果的 `structuredPatch` | `claudeToolResultDiff`、`lib/tool-input-diff.ts` |
 | MCP 面板 | 顶栏 “MCP” | `mcpServerStatus`、`reconnectMcpServer`、`toggleMcpServer` | `ClaudeMcpPanel`、`lib/claude-mcp.ts` |
