@@ -80,6 +80,8 @@ interface Props {
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
+  /** A folded history prompt has its text but not its image data: show how many images it had. */
+  omittedImages?: number;
 }
 
 export function formatTime(ts?: number): string | null {
@@ -109,9 +111,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, omittedImages }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onRewind={onRewind} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} sessionId={sessionId} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onRewind={onRewind} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} sessionId={sessionId} omittedImages={omittedImages} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
@@ -146,10 +148,11 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
-    && prev.sessionId === next.sessionId;
+    && prev.sessionId === next.sessionId
+    && prev.omittedImages === next.omittedImages;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, sessionId }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onRewind, prevAssistantEntryId, onEditContent, sessionId, omittedImages = 0 }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -161,6 +164,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
   sessionId?: string;
+  omittedImages?: number;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -182,7 +186,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   // Pi adds this coordinate-mapping note for the model when resizing images.
   // Hide only standalone generated notes beside actual images; keep the native
   // transcript and the original content used by copy/edit unchanged.
-  const displayContent = imageBlocks.length > 0
+  const displayContent = imageBlocks.length > 0 || omittedImages > 0
     ? content.replace(/^\[Image: original \d+x\d+, displayed at \d+x\d+\. Multiply coordinates by \d+(?:\.\d+)? to map to original image\.\][ \t]*(?:\r?\n|$)/gm, "")
     : content;
 
@@ -236,6 +240,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               );
             })}
           </div>
+        )}
+        {omittedImages > 0 && (
+          <div style={{ marginBottom: displayContent ? 6 : 0, color: "var(--text-muted)", fontSize: 12 }}>[{t("chat.turnImages", { count: omittedImages })}]</div>
         )}
         {displayContent && segments.map((segment, i) => {
           if (segment.type === "file") return <div key={i} style={{ margin: "4px 0" }}><FileAttachment file={segment.file} onOpenFile={onOpenFile} /></div>;

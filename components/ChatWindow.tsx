@@ -1,7 +1,7 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { engineForSession, engineLabel as getEngineLabel, supportsExtendedChat, supportsMessageFork, supportsTaskStop, type AgentEngine } from "@/lib/engine";
 import { ClaudeRewindDialog } from "./ClaudeRewindDialog";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
@@ -10,7 +10,7 @@ import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantB
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { CollapsedHistoryTurn, HistoryTurnToggle } from "./HistoryTurnFold";
+import { HistoryTurnToggle } from "./HistoryTurnFold";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { NewSessionDirectoryPicker } from "./NewSessionDirectoryPicker";
 import { clearDraft, getDraft, setDraft } from "@/lib/draft-store";
@@ -293,20 +293,35 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
+  // The user's own prompts are never folded: a collapsed history turn still
+  // shows its whole prompt (text from the outline, images as a count) and
+  // hides only the reply. Stable objects keep the memoized bubbles from
+  // re-rendering on every streamed delta.
+  const collapsedPrompts = useMemo(() => {
+    const prompts = new Map<string, UserMessage>();
+    for (const turn of historyTurns) {
+      if (turn.kind !== "user") continue;
+      prompts.set(historyTurnKey(turn), { role: "user", content: turn.text, ...(turn.timestamp !== undefined ? { timestamp: turn.timestamp } : {}) });
+    }
+    return prompts;
+  }, [historyTurns]);
+
   // Everything shown, in display order: open history turns in full, a
-  // collapsed prompt turn as its preview, then the loaded window. The
+  // collapsed prompt turn as its prompt, then the loaded window. The
   // minimap walks this list; its user/assistant entries index messageRefs.
   const displayedMessages = useMemo(() => {
     if (historyTurns.length === 0) return messages;
     const list: AgentMessage[] = [];
     for (const turn of historyTurns) {
-      const state = historyTurnStates[historyTurnKey(turn)];
+      const key = historyTurnKey(turn);
+      const state = historyTurnStates[key];
+      const prompt = collapsedPrompts.get(key);
       if (state?.expanded && state.messages) list.push(...state.messages);
-      else if (turn.kind === "user") list.push({ role: "user", content: turn.text, timestamp: turn.timestamp });
+      else if (prompt) list.push(prompt);
     }
     list.push(...messages);
     return list;
-  }, [historyTurns, historyTurnStates, messages]);
+  }, [historyTurns, historyTurnStates, collapsedPrompts, messages]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
@@ -333,6 +348,8 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
       });
     };
     for (const turn of historyTurns) {
+      // A collapsed turn's prompt is on screen too, so it can be added to the list.
+      map.set(turn.id, turn.id);
       const state = historyTurnStates[historyTurnKey(turn)];
       if (state?.messages && state.entryIds) addSegment(state.messages, state.entryIds);
     }
@@ -572,7 +589,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
               const renderSegment = (
                 segMessages: AgentMessage[],
                 segEntryIds: string[],
-                options: { refBase: number; live: boolean; branchStart: boolean; prevAssistantEntryId?: string },
+                options: { refBase: number; live: boolean; branchStart: boolean; prevAssistantEntryId?: string; omittedImages?: number },
               ): ReactNode[] => {
                 const toolResultsMap = new Map<string, ToolResultMessage>();
                 for (const msg of segMessages) {
@@ -653,6 +670,7 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                       showTimestamp={showTimestamp}
                       prevTimestamp={idx > 0 ? (segMessages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                       sessionId={session?.id ?? sessionIdRef.current ?? undefined}
+                      omittedImages={idx === 0 ? options.omittedImages : undefined}
                     />
                   );
                   if (!isVisible || renderOptions.attachRef === false || currentRefIdx === undefined) return view;
@@ -749,40 +767,32 @@ export function ChatWindow({ session, newSessionCwd, engine: newChatEngine, onNe
                 return rendered;
               };
 
-              // Older turns, one per prompt: collapsed rows keep every prompt on
-              // the page (and in the minimap) for direct jumps; an opened turn is
-              // rendered whole, exactly like the recent window below.
+              // Older turns, one per prompt: every prompt stays on the page in
+              // full (and in the minimap) for direct jumps; only the reply folds
+              // under the bar. An opened turn is rendered whole, exactly like the
+              // recent window below, and a collapsed one renders its prompt the
+              // same way, so the prompt looks and acts alike in both states.
               const rendered: ReactNode[] = [];
               let refCursor = 0;
               historyTurns.forEach((turn, turnIndex) => {
                 const key = historyTurnKey(turn);
                 const state = historyTurnStates[key];
                 const toggle = () => { void toggleHistoryTurn(turn); };
-                if (state?.expanded && state.messages && state.entryIds) {
-                  const previous = historyTurns[turnIndex - 1];
-                  const nodes = renderSegment(state.messages, state.entryIds, {
-                    refBase: refCursor,
-                    live: false,
-                    branchStart: turnIndex === 0,
-                    prevAssistantEntryId: previous?.endsWithAssistant ? previous.lastId : undefined,
-                  });
-                  // The bar stays directly under the prompt, where it was while collapsed.
-                  nodes.splice(turn.kind === "user" ? 1 : 0, 0, <HistoryTurnToggle key="history-turn-toggle" turn={turn} state={state} onToggle={toggle} t={t} />);
-                  rendered.push(<div key={`history-turn-${key}`} data-history-turn={turn.id}>{nodes}</div>);
-                  refCursor += state.messages.filter((m) => m.role === "user" || m.role === "assistant").length;
-                  return;
-                }
-                const refIndex = turn.kind === "user" ? refCursor++ : undefined;
-                rendered.push(
-                  <CollapsedHistoryTurn
-                    key={`history-turn-${key}`}
-                    turn={turn}
-                    state={state}
-                    onToggle={toggle}
-                    t={t}
-                    rowRef={refIndex === undefined ? undefined : (el) => { messageRefs.current[refIndex] = el; }}
-                  />,
-                );
+                const previous = historyTurns[turnIndex - 1];
+                const opened = state?.expanded && state.messages && state.entryIds ? { messages: state.messages, entryIds: state.entryIds } : null;
+                const prompt = collapsedPrompts.get(key);
+                const segment: { messages: AgentMessage[]; entryIds: string[] } = opened ?? { messages: prompt ? [prompt] : [], entryIds: prompt ? [turn.id] : [] };
+                const nodes = renderSegment(segment.messages, segment.entryIds, {
+                  refBase: refCursor,
+                  live: false,
+                  branchStart: turnIndex === 0,
+                  prevAssistantEntryId: previous?.endsWithAssistant ? previous.lastId : undefined,
+                  ...(opened ? {} : { omittedImages: turn.images }),
+                });
+                // The bar stays directly under the prompt whether the turn is open or not.
+                nodes.splice(turn.kind === "user" ? 1 : 0, 0, <HistoryTurnToggle key="history-turn-toggle" turn={turn} state={state} onToggle={toggle} t={t} />);
+                rendered.push(<div key={`history-turn-${key}`} data-history-turn={turn.id}>{nodes}</div>);
+                refCursor += segment.messages.filter((m) => m.role === "user" || m.role === "assistant").length;
               });
               const lastHistoryTurn = historyTurns.at(-1);
               rendered.push(...renderSegment(messages, entryIds, {

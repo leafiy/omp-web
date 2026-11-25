@@ -1,12 +1,14 @@
 "use client";
-import type { Ref } from "react";
 import type { HistoryTurnState } from "@/hooks/useAgentSession";
 import type { HistoryTurnSummary } from "@/lib/history-turns";
 import { formatTime } from "./MessageView";
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 
-/** Disclosure bar for one history turn; it stays in place while the turn opens below it. */
+/**
+ * Disclosure bar for one history turn. It sits directly under the prompt,
+ * which is always shown in full; only the reply opens and closes below it.
+ */
 export function HistoryTurnToggle({ turn, state, onToggle, t }: { turn: HistoryTurnSummary; state?: HistoryTurnState; onToggle: () => void; t: Translate }) {
   const expanded = Boolean(state?.expanded && state.messages);
   const action = state?.loading ? t("chat.turnLoading")
@@ -39,36 +41,5 @@ export function HistoryTurnToggle({ turn, state, onToggle, t }: { turn: HistoryT
       </svg>
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{parts.join(" · ")}</span>
     </button>
-  );
-}
-
-/**
- * A turn that is not loaded or was collapsed: the prompt preview (clamped)
- * plus its toggle. Clicking either opens the whole turn.
- */
-export function CollapsedHistoryTurn({ turn, state, onToggle, t, rowRef }: { turn: HistoryTurnSummary; state?: HistoryTurnState; onToggle: () => void; t: Translate; rowRef?: Ref<HTMLDivElement> }) {
-  const time = formatTime(turn.timestamp);
-  return (
-    <div ref={rowRef} data-history-turn={turn.id}>
-      {turn.kind === "user" && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginBottom: 4 }}>
-          <button
-            type="button"
-            className="sf-user-bubble"
-            onClick={onToggle}
-            disabled={state?.loading}
-            title={t("chat.turnExpand")}
-            style={{ cursor: state?.loading ? "progress" : "pointer" }}
-          >
-            <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-              {turn.images > 0 && <span style={{ color: "var(--text-muted)", fontSize: 12, marginRight: 6 }}>[{t("chat.turnImages", { count: turn.images })}]</span>}
-              {turn.text || (turn.images > 0 ? null : <span style={{ color: "var(--text-muted)" }}>{t("chat.turnNoText")}</span>)}
-            </span>
-          </button>
-          {time && <span style={{ marginTop: 3, fontSize: 11, color: "var(--text-dim)" }}>{time}</span>}
-        </div>
-      )}
-      <HistoryTurnToggle turn={turn} state={state} onToggle={onToggle} t={t} />
-    </div>
   );
 }

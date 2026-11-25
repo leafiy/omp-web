@@ -415,7 +415,6 @@ export const zhCNLocale: LocalePlugin = {
     "chat.turnLoadFailed": "读取失败，点击重试",
     "chat.turnChanged": "会话历史已变化，点击重试",
     "chat.turnImages": "{count} 张图片",
-    "chat.turnNoText": "（无文字内容）",
     "chat.turnCompaction": "上下文压缩",
     "chat.turnPreamble": "会话开头",
     "chat.extensionRequest": "扩展请求",

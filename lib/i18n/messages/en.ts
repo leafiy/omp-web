@@ -415,7 +415,6 @@ export const enLocale: LocalePlugin = {
     "chat.turnLoadFailed": "Could not load; click to retry",
     "chat.turnChanged": "History changed; click to retry",
     "chat.turnImages": "{count} image(s)",
-    "chat.turnNoText": "(no text)",
     "chat.turnCompaction": "Context compaction",
     "chat.turnPreamble": "Session start",
     "chat.extensionRequest": "extension request",
