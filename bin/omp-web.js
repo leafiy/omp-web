@@ -81,7 +81,7 @@ async function startServer() {
   });
 
   let browserOpened = false;
-  const url = `http://${hostname}:${port}`;
+  const url = `http://${hostname === "0.0.0.0" ? "127.0.0.1" : hostname}:${port}`;
 
   child.stdout.on("data", (chunk) => {
     const text = chunk.toString();

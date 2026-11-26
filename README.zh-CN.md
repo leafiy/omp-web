@@ -69,10 +69,10 @@
 **主机需要** Linux 或 macOS、Node.js 22.19.0+、npm、Git，以及至少一个已安装并登录的 Agent。文件管理器的修改操作目前限 Linux。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service
 ```
 
-1. 按提示设置网页账号，在主机打开 [127.0.0.1:30141](http://127.0.0.1:30141) 登录。
+1. 按提示设置网页账号，在主机打开 [127.0.0.1:30141](http://127.0.0.1:30141) 登录。同一局域网的设备可打开 `http://<主机局域网 IP>:30141`。默认监听所有 IPv4 接口；只允许本机访问时，安装命令加 `--host 127.0.0.1`。
 2. 选项目和引擎，拖入样本或粘贴截图，发出第一条需求。
 3. 看 diff，在内嵌终端跑测试；把需要复查的回复加入 Todo。
 

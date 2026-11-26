@@ -2,7 +2,7 @@
 # One-step installer / updater for omp-web (Linux and macOS).
 #
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service --host 127.0.0.1 --port 30141
+#   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service
 #   bash ~/code/omp-web/scripts/install.sh update
 #   bash ~/code/omp-web/scripts/install.sh restart
 #
@@ -21,7 +21,7 @@
 #                    (Linux: systemd omp-web.service, starts on boot;
 #                     macOS: launchd agent in ~/Library/LaunchAgents, starts at login)
 #   --no-service     never ask about a background service
-#   --host HOST      listen address for the service (default 127.0.0.1)
+#   --host HOST      listen address for the service (default 0.0.0.0; use 127.0.0.1 for local-only access)
 #   --port PORT      listen port for the service (default 30141)
 #   --ref REF        Git branch to install (default main; update keeps the current branch)
 #   --force-build    rebuild even when the successful build is current
@@ -40,7 +40,7 @@ HOLD_ACTIVE="no"
 
 main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
-  local mode="install" ref="" host="127.0.0.1" port="30141" service="ask"
+  local mode="install" ref="" host="0.0.0.0" port="30141" service="ask"
   local dir="$HOME/code/omp-web"
   local force_build="no" force_install="no" total_started=$SECONDS options_given="no"
 
@@ -198,7 +198,7 @@ main() {
   say "Done in $((SECONDS - total_started))s."
   if [ "$started" = "yes" ]; then
     if [ "$service" = "yes" ]; then
-      echo "  $(service_name) is running: http://$host:$port"
+      echo "  $(service_name) is running: http://${host/#0.0.0.0/127.0.0.1}:$port"
     else
       echo "  $(service_name) is running again with its existing settings."
     fi
@@ -210,7 +210,7 @@ main() {
       echo "  No background service is installed. Restart your running omp-web to load the new build."
     fi
     echo "  Start:  cd ~/code/omp-web && node bin/omp-web.js --hostname $host --port $port"
-    echo "  Open:   http://$host:$port"
+    echo "  Open:   http://${host/#0.0.0.0/127.0.0.1}:$port"
   fi
   echo "  Update later:  bash ~/code/omp-web/scripts/install.sh update"
   if service_installed; then echo "  Restart only:  bash ~/code/omp-web/scripts/install.sh restart"; fi
