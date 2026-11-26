@@ -7,7 +7,7 @@
 - 源码、Git 历史、依赖、构建和服务运行共用该检出；`node_modules/`、`.next/` 是目录内的真实目录。
 - 不创建第二份 clone、worktree 或外置 staging/release/build 目录；不通过 `/opt` 别名继续开发或启动。
 - `.local/` 已忽略提交，仅存放维护日志、状态文件、旧构建及不可直接运行的历史归档。它不是另一份活动源码。
-- systemd 的 `WorkingDirectory`、`ExecStart` 直接指向本目录。`bin/omp-web.js` 和 npm 的 dev/build/start 入口检查物理目录；npm 入口还拒绝在生产服务运行时启动第二个实例或覆盖构建。检查是操作防错，不是对 root 用户的安全沙箱。
+- systemd 的 `WorkingDirectory`、`ExecStart` 直接指向本目录。`bin/omp-web.js` 和 npm 的 dev/build/start 入口不限制检出路径，只检查已有的 `node_modules` 和 `.next` 是检出内的真实目录；npm 入口还拒绝在生产服务运行时启动第二个实例或覆盖构建。检查是操作防错，不是对 root 用户的安全沙箱。
 - `/etc/omp-web` 的访问密码/环境、`~/.claude`、`~/.pi`、`~/.omp`、`~/.codex` 及网页会话存储不搬入 Git 仓库；原生 Agent CLI 仍使用自己的安装位置。
 
 ## 日常更新

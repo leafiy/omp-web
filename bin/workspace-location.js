@@ -1,17 +1,12 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 
-/** This fork has one checkout per service account, shared by dev/build/runtime. */
-function assertWorkspaceLocation(root, home = os.homedir()) {
-  const expected = path.join(home, "code", "omp-web");
-  if (fs.realpathSync(root) !== expected) {
-    throw new Error(`omp-web must be developed, built and run from ${expected}`);
-  }
+function assertWorkspaceLocation(root) {
+  const workspace = fs.realpathSync(root);
   for (const name of ["node_modules", ".next"]) {
-    const entry = path.join(expected, name);
+    const entry = path.join(workspace, name);
     let stat;
     try { stat = fs.lstatSync(entry); }
     catch (error) { if (error.code === "ENOENT") continue; throw error; }
@@ -19,7 +14,7 @@ function assertWorkspaceLocation(root, home = os.homedir()) {
       throw new Error(`${entry} must be stored in the canonical workspace, not linked to another release`);
     }
   }
-  return expected;
+  return workspace;
 }
 
 /** Label of the macOS LaunchAgent written by scripts/install.sh. */
