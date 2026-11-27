@@ -10,6 +10,7 @@ import { useCodeTheme } from "@/hooks/useCodeTheme";
 import ReactMarkdown from "react-markdown";
 import {
   DOCX_PREVIEW_MAX_BYTES,
+  HTML_PREVIEW_SANDBOX,
   getFileExt,
   getVideoMime,
   isAudioPath,
@@ -192,7 +193,7 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
 
 function getFileApiUrl(
   filePath: string,
-  type: "read" | "download" | "meta" | "preview" | "watch",
+  type: "read" | "download" | "meta" | "preview" | "html-preview" | "watch",
   sourceSessionId?: string | null,
   params: Record<string, string | number | undefined> = {},
 ): string {
@@ -414,6 +415,60 @@ function MediaLoadStatus({ cancelled, toggle }: { cancelled: boolean; toggle: ()
     {!cancelled && <><span className="file-preview-spinner" aria-hidden="true" />{t("i18n.loading")}</>}
     <button type="button" onClick={toggle}>{t(cancelled ? "files.reloadPreview" : "i18n.cancel")}</button>
   </div>;
+}
+
+/**
+ * Renders an HTML file as a page. The server serves it from a tokenized path so
+ * relative assets resolve, inside a sandbox without allow-same-origin: the
+ * page's scripts run in an opaque origin and cannot reach omp-web.
+ */
+function HtmlPreviewFrame({ filePath, sourceSessionId, revision }: { filePath: string; sourceSessionId?: string | null; revision: number }) {
+  const { t } = useI18n();
+  const [frame, setFrame] = useState<{ url?: string; error?: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        // Re-requested on every file change: the server reuses a live grant
+        // and replaces one lost to an idle timeout or a restart.
+        const response = await fetch(getFileApiUrl(filePath, "html-preview", sourceSessionId), { signal: controller.signal });
+        const result = await response.json().catch(() => ({})) as { url?: unknown; error?: unknown };
+        if (!response.ok || typeof result.url !== "string") {
+          throw new Error(typeof result.error === "string" ? result.error : response.statusText);
+        }
+        if (!controller.signal.aborted) setFrame({ url: result.url });
+      } catch (error) {
+        if (!controller.signal.aborted) setFrame({ error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return () => controller.abort();
+  }, [filePath, sourceSessionId, revision]);
+
+  if (frame?.error) {
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 13, padding: 16, textAlign: "center" }}>
+        {frame.error}
+      </div>
+    );
+  }
+  if (!frame?.url) {
+    return (
+      <div role="status" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "var(--text-muted)", fontSize: 13 }}>
+        <span className="file-preview-spinner" aria-hidden="true" />
+        {t("i18n.loading")}
+      </div>
+    );
+  }
+  return (
+    <iframe
+      src={`${frame.url}?v=${revision}`}
+      sandbox={HTML_PREVIEW_SANDBOX}
+      referrerPolicy="no-referrer"
+      title={t("i18n.htmlPreview")}
+      // Pages without their own background expect a browser's white canvas.
+      style={{ display: "block", width: "100%", height: "100%", border: "none", background: "#fff" }}
+    />
+  );
 }
 
 function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
@@ -924,7 +979,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   }, [fetchGitDiff, filePath, gitRefreshKey]);
 
   useEffect(() => {
-    if (data?.pages === 1 && data.language === "markdown" && initialDisplayMode !== "diff") {
+    // HTML renders from its file, so any size opens as a page; Markdown only when whole.
+    if (((data?.pages === 1 && data.language === "markdown") || data?.language === "html") && initialDisplayMode !== "diff") {
       setDisplayMode("preview");
     }
   }, [data?.language, data?.pages, initialDisplayMode]);
@@ -1045,9 +1101,9 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
   const isHtml = language === "html";
   const isMarkdown = language === "markdown";
   const paged = (data?.pages ?? 1) > 1;
-  const hasPreview = !paged && (isHtml || isMarkdown);
+  const hasPreview = isHtml || (!paged && isMarkdown);
   const markdownDirectory = getFileDirectory(filePath);
-  const effectiveDisplayMode = isDeletedDiff ? "diff" : paged && displayMode === "preview" ? "source" : displayMode;
+  const effectiveDisplayMode = isDeletedDiff ? "diff" : !hasPreview && displayMode === "preview" ? "source" : displayMode;
   const displayModes: DisplayMode[] = isDeletedDiff
     ? ["diff"]
     : [
@@ -1169,15 +1225,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
       <div ref={contentRef} className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
           <DiffView patch={gitDiff.patch!} />
+        ) : isHtml && effectiveDisplayMode === "preview" ? (
+          <HtmlPreviewFrame filePath={filePath} sourceSessionId={sourceSessionId} revision={revision} />
         ) : paged ? (
           <pre style={{ ...FILE_CODE_STYLE, margin: 0, whiteSpace: wrapLines ? "pre-wrap" : "pre", overflowWrap: "anywhere" }}>{content}</pre>
-        ) : isHtml && effectiveDisplayMode === "preview" ? (
-          <iframe
-            srcDoc={content}
-            sandbox="allow-scripts"
-            style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
-             title={t("i18n.htmlPreview")}
-          />
         ) : isMarkdown && effectiveDisplayMode === "preview" ? (
           <div
             className="markdown-body markdown-file-preview"

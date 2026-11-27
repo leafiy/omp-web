@@ -1,5 +1,11 @@
 export const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 export const DOCX_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * Sandbox for rendered HTML file previews, on both the viewer's iframe and the
+ * served document. Never add `allow-same-origin`: the page would then run as
+ * omp-web itself (see lib/html-preview.ts).
+ */
+export const HTML_PREVIEW_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
 export type DocumentPreviewKind = "pdf" | "docx";
 

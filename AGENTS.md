@@ -84,6 +84,7 @@ The frontend shows the active engine, not a Pi dependency version under an OMP l
 ## Files, worktrees, terminal and uploads
 
 - `/api/files` is allow-list based, not unrestricted file browsing. Roots derive from session cwd, resolved main repo roots, and explicitly registered directories. New-session/cwd/worktree operations update `allowFileRoot()`.
+- HTML files open rendered (`lib/html-preview.ts`): `?type=html-preview` mints an idle-expiring token and the viewer frames `/html-preview/<token>/<path>` so relative assets resolve. The page runs in an opaque-origin sandbox (`HTML_PREVIEW_SANDBOX`, never `allow-same-origin`) that sends no login cookie, so that route sits outside the proxy: it checks Host and the token itself and serves only allow-listed web asset types below the grant root.
 - `lib/worktree.ts` groups linked worktrees by main `projectRoot`. Dirty removal returns 409 so the user can decide whether to force it.
 - Session trees are projected to shallow UI structures in the session route; avoid recursive operations over arbitrarily deep histories.
 - The embedded terminal uses its own registry/stream endpoints and can run independently of chat. Its security switches must not disable agent RPC accidentally. A browser shell preference is only a request: `lib/terminal-shells.ts` spawns an `/etc/shells` entry or its automatic default, resolved once at creation; reattaching keeps the running shell.
