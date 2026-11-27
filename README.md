@@ -66,17 +66,17 @@ On my PC, omp-web has replaced the standalone terminal window. **Set up the host
 
 ## Install
 
-**Host:** Linux or macOS, Node.js 22.19.0+, npm, Git, and at least one installed, signed-in agent. File-manager mutations currently require Linux.
+**Host:** Linux (systemd) or macOS, Node.js 22.19.0 or newer (including Node 26), npm, Git, and at least one installed, signed-in agent. File-manager mutations currently require Linux.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 ```
 
-1. Set your web credentials when prompted. On the host, open [127.0.0.1:30141](http://127.0.0.1:30141) and sign in. On your LAN, open `http://<host LAN IP>:30141`. The default listens on all IPv4 interfaces; add `--host 127.0.0.1` to the install command for local-only access.
+1. The installer starts the background service and prints an initial password for `admin` on first install. Open [127.0.0.1:30141](http://127.0.0.1:30141) on the host and sign in. Existing accounts are kept.
 2. Choose a project and an engine, drop in a test fixture or paste a screenshot, and send your request.
 3. Inspect the diff, run the tests in the embedded terminal, and add any reply you want to revisit to your todos.
 
-For remote access use HTTPS or a private network. **Don't expose the terminal over public plain HTTP.** Run `bash ~/code/omp-web/scripts/install.sh update` outside the workspace to update; a rebuild interrupts chats and terminals. `bash ~/code/omp-web/scripts/install.sh restart` only restarts the installed service on its current build, without updating.
+The default is local-only. For remote access use HTTPS or a private network; you can explicitly choose a bind address with `--service --host <address>`. **Don't expose the terminal over public plain HTTP.** Run `bash ~/code/omp-web/scripts/install.sh update` outside the web app to update; a rebuild interrupts chats and terminals. `bash ~/code/omp-web/scripts/install.sh restart` only restarts the installed service on its current build, without updating.
 
 [Manual install and terminal](./docs/self-hosting.zh-CN.md) · [Deployment and updates](./docs/workspace.zh-CN.md) · [Files and attachments](./docs/file-browser.zh-CN.md) · [Claude controls](./docs/claude-code-advanced.zh-CN.md) · [All docs](./docs/)
 

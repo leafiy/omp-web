@@ -37,6 +37,8 @@ else
 fi
 ```
 
+首次安装无需加 `--service`：有 systemd 或 launchd 时，安装器会创建并启动服务，默认只监听 `127.0.0.1:30141`。首次自动生成 `admin` 的登录密码，仅在安装输出显示，凭据文件不保存明文密码。已安装的服务和账号配置默认保留；`--service` 可显式重写服务定义，`--no-service` 可跳过新建服务。
+
 不需要保留旧构建时，`bash scripts/install.sh update` 一步完成拉取、按需安装依赖与构建、启动（Linux 用 systemd，macOS 用 launchd）；它不备份 `.next`，只删除 Turbopack 不再使用的 `.next/cache/webpack`，保留其余 `.next/cache`。更新采用本机成功记录来避免重复工作：
 
 - 首次使用新流程没有记录，仍执行完整安装和构建；不根据已有目录猜测上一次是否成功。

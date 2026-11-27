@@ -11,6 +11,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22', '26']
 
     steps:
       - name: Checkout code
@@ -19,11 +22,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci --include=dev
+
+      - name: SQLite-backed OMP auth and models
+        run: node --test lib/omp-auth.test.mjs lib/omp-models.test.mjs
 
       - name: Run Typecheck
         run: npx tsc --noEmit --incremental false

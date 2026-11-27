@@ -2,7 +2,6 @@
 # One-step installer / updater for omp-web (Linux and macOS).
 #
 #   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service
 #   bash ~/code/omp-web/scripts/install.sh update
 #   bash ~/code/omp-web/scripts/install.sh restart
 #
@@ -10,24 +9,24 @@
 # packages. Checkout location is fixed: ~/code/omp-web.
 #
 # Commands:
-#   (none)           install, or update while asking before each disruptive step
-#   update           one-step update: pull, stop the service, rebuild, start it
-#                    again. Asks nothing and keeps the login and service settings.
+#   (none)           install or update, and provision the background service
+#   update           update on the current branch instead of main
+#                    Existing login and service settings are kept by default.
 #   restart          restart the installed service on its current build: no pull,
 #                    no dependency install, no build. Takes no options.
 #
 # Options:
-#   --service        install and start a background service
-#                    (Linux: systemd omp-web.service, starts on boot;
-#                     macOS: launchd agent in ~/Library/LaunchAgents, starts at login)
-#   --no-service     never ask about a background service
-#   --host HOST      listen address for the service (default 0.0.0.0; use 127.0.0.1 for local-only access)
+#   --service        explicitly install or reconfigure the background service
+#                    (Linux: systemd, starts on boot; macOS: launchd, starts at login)
+#   --no-service     do not provision a new service or start an inactive one
+#   --host HOST      listen address for a new/reconfigured service (default 127.0.0.1)
 #   --port PORT      listen port for the service (default 30141)
 #   --ref REF        Git branch to install (default main; update keeps the current branch)
 #   --force-build    rebuild even when the successful build is current
 #   --force-install  reinstall dependencies and rebuild (repair missing/broken packages)
 #
-# Unattended login setup: set OMP_WEB_USERNAME and OMP_WEB_PASSWORD.
+# The first install creates a login and prints its initial password. To supply
+# your own, set OMP_WEB_USERNAME and OMP_WEB_PASSWORD before that install.
 set -euo pipefail
 
 # systemd | launchd | none. Set by detect_platform.
@@ -40,7 +39,7 @@ HOLD_ACTIVE="no"
 
 main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
-  local mode="install" ref="" host="0.0.0.0" port="30141" service="ask"
+  local mode="install" ref="" host="127.0.0.1" port="30141" service="auto"
   local dir="$HOME/code/omp-web"
   local force_build="no" force_install="no" total_started=$SECONDS options_given="no"
 
@@ -61,9 +60,6 @@ main() {
     shift
   done
 
-  local tty=""
-  if [ -r /dev/tty ] && [ -w /dev/tty ] && { : </dev/tty; } 2>/dev/null; then tty="/dev/tty"; fi
-
   detect_platform
 
   if [ "$mode" = "restart" ]; then
@@ -71,6 +67,14 @@ main() {
     [ "$options_given" = "no" ] || fail "restart takes no options; it keeps the installed service's settings. Use 'update' or a plain install to change them."
     restart_installed_service "$dir"
     return 0
+  fi
+
+  local provision_service="no"
+  if [ "$service" = "yes" ]; then
+    [ "$PLATFORM" != "none" ] || fail "No supported service manager (systemd or launchd) is available."
+    provision_service="yes"
+  elif [ "$service" = "auto" ] && [ "$PLATFORM" != "none" ] && ! service_installed; then
+    provision_service="yes"
   fi
 
   say "Checking prerequisites"
@@ -126,15 +130,11 @@ main() {
   # The build guard refuses to overwrite .next while the service runs.
   # A no-op update must not interrupt chats or terminals.
   local was_active="no"
-  if [ "$build_needed" = "yes" ] && service_active; then
+  if { [ "$build_needed" = "yes" ] || [ "$provision_service" = "yes" ]; } && service_active; then
     if inside_service; then
       fail "This shell runs inside omp-web (its terminal or one of its agents). Stopping the service would kill this run halfway. Run it from a separate terminal, e.g. over SSH."
     fi
-    if [ "$mode" = "update" ] || confirm "$(service_name) is running. Stop it now to rebuild? Active chats and terminals will be interrupted." "$tty"; then
-      was_active="yes"
-    else
-      fail "Stopped. Rebuild later after stopping $(service_name)."
-    fi
+    was_active="yes"
   fi
   # Other units can start the service by themselves (a Wants= dependency, a
   # timer, a restart loop). Keep it stopped until the new build is complete.
@@ -175,20 +175,19 @@ main() {
     if [ "$PLATFORM" = "systemd" ] && [ -f "$HOLD_DROPIN" ]; then HOLD_ACTIVE="yes"; fi
   fi
 
-  # An update keeps the existing login; it only asks when there is none yet.
-  if [ "$mode" != "update" ] || ! has_login; then
-    setup_login "$tty"
+  # Existing service definitions can manage their own authentication.
+  if [ "$provision_service" = "yes" ] || ! service_installed; then
+    setup_login
   fi
   release_hold
 
-  if [ "$service" = "ask" ] && [ "$mode" != "update" ] && [ "$PLATFORM" != "none" ] && [ -n "$tty" ] && ! service_installed; then
-    if confirm "Install a background service that starts omp-web automatically?" "$tty"; then service="yes"; fi
-  fi
-  local started="no"
-  if [ "$service" = "yes" ]; then
+  local started="no" url
+  url="$(service_url "$host" "$port")"
+  if [ "$provision_service" = "yes" ]; then
     install_service "$dir" "$host" "$port"
+    wait_for_web "$url" || fail "$(service_name) did not become ready at $url. Logs: $(service_logs_hint "$dir")"
     started="yes"
-  elif [ "$was_active" = "yes" ] || { [ "$mode" = "update" ] && service_installed && ! service_active; }; then
+  elif [ "$was_active" = "yes" ] || { [ "$service" != "no" ] && service_installed && ! service_active; }; then
     say "Starting $(service_name)"
     service_start
     started="yes"
@@ -197,20 +196,18 @@ main() {
   echo
   say "Done in $((SECONDS - total_started))s."
   if [ "$started" = "yes" ]; then
-    if [ "$service" = "yes" ]; then
-      echo "  $(service_name) is running: http://${host/#0.0.0.0/127.0.0.1}:$port"
+    if [ "$provision_service" = "yes" ]; then
+      echo "  Open: $url"
     else
       echo "  $(service_name) is running again with its existing settings."
     fi
     echo "  Logs: $(service_logs_hint "$dir")"
   elif service_active; then
-    echo "  $(service_name) was left running; no restart was needed."
+    echo "  $(service_name) was not restarted."
   else
-    if [ "$mode" = "update" ]; then
-      echo "  No background service is installed. Restart your running omp-web to load the new build."
-    fi
+    echo "  No background service is running."
     echo "  Start:  cd ~/code/omp-web && node bin/omp-web.js --hostname $host --port $port"
-    echo "  Open:   http://${host/#0.0.0.0/127.0.0.1}:$port"
+    echo "  Open:   $url"
   fi
   echo "  Update later:  bash ~/code/omp-web/scripts/install.sh update"
   if service_installed; then echo "  Restart only:  bash ~/code/omp-web/scripts/install.sh restart"; fi
@@ -219,14 +216,6 @@ main() {
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-
-confirm() {
-  local question="$1" tty="$2" answer=""
-  [ -n "$tty" ] || return 1
-  printf '%s [y/N] ' "$question" >"$tty"
-  read -r answer <"$tty" || true
-  case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
-}
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then "$@"
@@ -248,6 +237,37 @@ service_name() {
 
 service_logs_hint() {
   if [ "$PLATFORM" = "launchd" ]; then printf 'tail -f %s/.local/logs/omp-web.log' "$1"; else printf 'journalctl -u omp-web -f'; fi
+}
+
+service_url() {
+  local host="$1"
+  case "$host" in
+    0.0.0.0) host="127.0.0.1" ;;
+    ::|'[::]') host="[::1]" ;;
+    \[*\]) ;;
+    *:*) host="[$host]" ;;
+  esac
+  printf 'http://%s:%s' "$host" "$2"
+}
+
+wait_for_web() {
+  say "Waiting for $(service_name) to serve the login page"
+  node - "$1" <<'JS'
+const { setTimeout: delay } = require("node:timers/promises");
+const url = new URL("/api/web-auth/status", process.argv[2]);
+async function wait() {
+  const expiresAt = Date.now() + 30_000;
+  while (Date.now() < expiresAt) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000), redirect: "error" });
+      if (response.ok && (await response.json()).configured === true) return;
+    } catch {} // The listener may not be up yet.
+    await delay(250);
+  }
+  process.exitCode = 1;
+}
+void wait();
+JS
 }
 
 launchd_loaded() {
@@ -390,7 +410,7 @@ service_restart() {
 restart_installed_service() {
   local dir="$1"
   [ "$PLATFORM" != "none" ] || fail "No supported service manager (systemd or launchd) is available; stop and start omp-web manually."
-  service_installed || fail "No background service is installed. Install one with: bash ~/code/omp-web/scripts/install.sh --service"
+  service_installed || fail "No background service is installed. Install one with: bash ~/code/omp-web/scripts/install.sh"
   # The receipt is removed before every build and recorded only after it succeeds.
   [ -f "$dir/.next/.omp-web-build.json" ] || fail "No completed build in $dir. Run: bash ~/code/omp-web/scripts/install.sh update"
   if [ "$PLATFORM" = "systemd" ] && [ -f "$HOLD_DROPIN" ]; then
@@ -405,26 +425,25 @@ restart_installed_service() {
   echo "  Logs: $(service_logs_hint "$dir")"
 }
 
-has_login() {
-  node -e 'try { process.exit(require("./bin/web-credentials.js").loadWebCredentials() ? 0 : 1); } catch (e) { console.error(e.message); process.exit(1); }' 2>/dev/null
-}
-
 setup_login() {
-  local tty="$1"
-  if [ -n "${OMP_WEB_PASSWORD:-}" ]; then
-    say "Saving the web login from OMP_WEB_USERNAME / OMP_WEB_PASSWORD"
-    printf '%s\n' "$OMP_WEB_PASSWORD" | node bin/omp-web.js passwd --username "${OMP_WEB_USERNAME:-admin}"
-    return
-  fi
-  if has_login; then
-    if confirm "A web login already exists. Replace it?" "$tty"; then
-      node bin/omp-web.js passwd <"$tty"
-    fi
-    return
-  fi
-  [ -n "$tty" ] || fail "No terminal for the login prompt. Re-run with OMP_WEB_USERNAME and OMP_WEB_PASSWORD set."
-  say "Set the web login (required; there is no anonymous access)"
-  node bin/omp-web.js passwd <"$tty"
+  node <<'JS'
+const { randomBytes } = require("node:crypto");
+const { loadWebCredentials, setWebCredentials } = require("./bin/web-credentials.js");
+async function setup() {
+  const existing = loadWebCredentials();
+  if (existing?.source === "file") return;
+  const username = existing?.username || process.env.OMP_WEB_USERNAME?.trim() || "admin";
+  const supplied = existing?.legacyPassword || process.env.OMP_WEB_PASSWORD;
+  const password = supplied || randomBytes(24).toString("base64url");
+  await setWebCredentials(username, password);
+  console.log(`  Web account: ${username}`);
+  if (!supplied) console.log(`  Initial password (save it now): ${password}`);
+}
+setup().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});
+JS
 }
 
 install_service() {
@@ -478,7 +497,6 @@ install_launchd_service() {
   node_bin="$(command -v node)"
   log="$dir/.local/logs/omp-web.log"
   mkdir -p "$dir/.local/logs" "$HOME/Library/LaunchAgents"
-  if launchd_loaded; then service_stop; fi
   say "Installing $LAUNCHD_PLIST"
   cat >"$LAUNCHD_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

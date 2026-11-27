@@ -66,17 +66,17 @@
 
 ## 安装与使用
 
-**主机需要** Linux 或 macOS、Node.js 22.19.0+、npm、Git，以及至少一个已安装并登录的 Agent。文件管理器的修改操作目前限 Linux。
+**主机需要** Linux（systemd）或 macOS、Node.js 22.19.0 或更新版本（包括 Node 26）、npm、Git，以及至少一个已安装并登录的 Agent。文件管理器的修改操作目前限 Linux。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service
+curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash
 ```
 
-1. 按提示设置网页账号，在主机打开 [127.0.0.1:30141](http://127.0.0.1:30141) 登录。同一局域网的设备可打开 `http://<主机局域网 IP>:30141`。默认监听所有 IPv4 接口；只允许本机访问时，安装命令加 `--host 127.0.0.1`。
+1. 安装器会启动后台服务，首次安装时输出 `admin` 的初始密码。在主机打开 [127.0.0.1:30141](http://127.0.0.1:30141) 登录；已有账号不会被替换。
 2. 选项目和引擎，拖入样本或粘贴截图，发出第一条需求。
 3. 看 diff，在内嵌终端跑测试；把需要复查的回复加入 Todo。
 
-远程访问请用 HTTPS 或私有网络，**不要把终端明文暴露到公网**。更新请在网页外运行 `bash ~/code/omp-web/scripts/install.sh update`；重建会中断聊天和终端。`bash ~/code/omp-web/scripts/install.sh restart` 只按现有构建重启已安装的服务，不更新。
+默认仅允许本机访问。远程访问请用 HTTPS 或私有网络，可用 `--service --host <地址>` 显式指定监听地址。**不要把终端明文暴露到公网**。更新请在网页外运行 `bash ~/code/omp-web/scripts/install.sh update`；重建会中断聊天和终端。`bash ~/code/omp-web/scripts/install.sh restart` 只按现有构建重启已安装的服务，不更新。
 
 [手动安装与终端](./docs/self-hosting.zh-CN.md) · [部署与更新](./docs/workspace.zh-CN.md) · [文件与附件](./docs/file-browser.zh-CN.md) · [Claude 高级控制](./docs/claude-code-advanced.zh-CN.md) · [全部文档](./docs/)
 

@@ -52,7 +52,7 @@
     "@lydell/node-pty": "1.1.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "13.2.0",
     "next": "16.2.12",
     "proper-lockfile": "4.1.2",
     "react": "^19.2.4",
@@ -90,7 +90,6 @@
   "allowScripts": {
     "@google/genai@1.52.0": true,
     "protobufjs@7.6.5": true,
-    "better-sqlite3@11.10.0": true,
     "sharp@0.34.5": true,
     "unrs-resolver@1.11.1": true
   }

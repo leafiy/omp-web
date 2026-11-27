@@ -246,15 +246,15 @@
         <article class="step reveal">
           <span class="step-num">1</span>
           <h3><span lang="en">Install on the agent host</span><span lang="zh-CN">安装到 Agent 主机</span></h3>
-          <p lang="en">Run it as the user whose agents are already logged in. <code>--service</code> adds a background service (systemd on Linux, launchd on macOS) that listens on <code>0.0.0.0:30141</code> by default. Later, <code>install.sh update</code> updates and restarts it in one step.</p>
-          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。<code>--service</code> 会安装自启动的后台服务（Linux 用 systemd，macOS 用 launchd），默认监听 <code>0.0.0.0:30141</code>。之后用 <code>install.sh update</code> 一键更新并重启。</p>
-          <div class="cmd"><code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash -s -- --service</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
+          <p lang="en">Run it as the user whose agents are already logged in. It starts omp-web on <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> and prints the initial <code>admin</code> password on first install. The next steps are optional for remote access.</p>
+          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。安装器会启动服务，在 <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> 提供本机访问，并在首次安装时输出 <code>admin</code> 的初始密码。后两步仅用于远程访问。</p>
+          <div class="cmd"><code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
         </article>
         <article class="step reveal">
           <span class="step-num">2</span>
           <h3><span lang="en">Reach it privately</span><span lang="zh-CN">通过私有网络访问</span></h3>
-          <p lang="en"><b>Tailscale:</b> put HTTPS in front of loopback, then add the <code>*.ts.net</code> name to <code>PI_WEB_ALLOWED_HOSTS</code>. <b>EasyTier:</b> install with <code>--host &lt;virtual-ip&gt;</code> and open it by IP.</p>
-          <p lang="zh-CN"><b>Tailscale：</b>用 Serve 给回环地址套上 HTTPS，并把 <code>*.ts.net</code> 域名加入 <code>PI_WEB_ALLOWED_HOSTS</code>。<b>EasyTier：</b>安装时加 <code>--host &lt;虚拟IP&gt;</code>，直接用 IP 访问。</p>
+          <p lang="en"><b>Tailscale:</b> put HTTPS in front of loopback, then add the <code>*.ts.net</code> name to <code>PI_WEB_ALLOWED_HOSTS</code>. <b>EasyTier:</b> install with <code>--service --host &lt;virtual-ip&gt;</code> and open it by IP.</p>
+          <p lang="zh-CN"><b>Tailscale：</b>用 Serve 给回环地址套上 HTTPS，并把 <code>*.ts.net</code> 域名加入 <code>PI_WEB_ALLOWED_HOSTS</code>。<b>EasyTier：</b>安装时加 <code>--service --host &lt;虚拟IP&gt;</code>，直接用 IP 访问。</p>
           <div class="cmd"><code>tailscale serve --bg 30141</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
         </article>
         <article class="step reveal">
