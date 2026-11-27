@@ -246,8 +246,8 @@
         <article class="step reveal">
           <span class="step-num">1</span>
           <h3><span lang="en">Install on the agent host</span><span lang="zh-CN">安装到 Agent 主机</span></h3>
-          <p lang="en">Run it as the user whose agents are already logged in. It starts omp-web on <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> and prints the initial <code>admin</code> password on first install. The next steps are optional for remote access.</p>
-          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。安装器会启动服务，在 <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> 提供本机访问，并在首次安装时输出 <code>admin</code> 的初始密码。后两步仅用于远程访问。</p>
+          <p lang="en">Run it as the user whose agents are already logged in. New services listen on all IPv4 interfaces on port 30141. Sign in locally at <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> with the initial <code>admin</code> password printed on first install.</p>
+          <p lang="zh-CN">用已经登录好 Agent 的那个用户运行。新服务默认监听所有 IPv4 网卡的 30141 端口。首次安装时会输出 <code>admin</code> 的初始密码，可在本机打开 <a href="http://127.0.0.1:30141">127.0.0.1:30141</a> 登录。</p>
           <div class="cmd"><code>curl -fsSL https://raw.githubusercontent.com/leafiy/omp-web/main/scripts/install.sh | bash</code><button class="copy" type="button"><span lang="en">Copy</span><span lang="zh-CN">复制</span></button></div>
         </article>
         <article class="step reveal">

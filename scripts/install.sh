@@ -19,7 +19,7 @@
 #   --service        explicitly install or reconfigure the background service
 #                    (Linux: systemd, starts on boot; macOS: launchd, starts at login)
 #   --no-service     do not provision a new service or start an inactive one
-#   --host HOST      listen address for a new/reconfigured service (default 127.0.0.1)
+#   --host HOST      listen address for a new/reconfigured service (default 0.0.0.0)
 #   --port PORT      listen port for the service (default 30141)
 #   --ref REF        Git branch to install (default main; update keeps the current branch)
 #   --force-build    rebuild even when the successful build is current
@@ -39,7 +39,7 @@ HOLD_ACTIVE="no"
 
 main() {
   local repo="${OMP_WEB_REPO:-https://github.com/leafiy/omp-web.git}"
-  local mode="install" ref="" host="127.0.0.1" port="30141" service="auto"
+  local mode="install" ref="" host="0.0.0.0" port="30141" service="auto"
   local dir="$HOME/code/omp-web"
   local force_build="no" force_install="no" total_started=$SECONDS options_given="no"
 

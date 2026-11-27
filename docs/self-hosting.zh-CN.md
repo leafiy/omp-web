@@ -60,7 +60,7 @@ npm ci --include=dev
 # 更新已有部署时先停止服务；仅在本目录构建
 npm run build
 
-# 默认仅监听回环地址；配置认证后再按需开放网络访问
+# 下面显式限制为本机访问；不传 --hostname 时默认监听 0.0.0.0
 node bin/omp-web.js --hostname 127.0.0.1 --port 2225 --no-open
 ```
 
